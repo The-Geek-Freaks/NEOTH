@@ -1,0 +1,24 @@
+{
+  "schema": "neoth.gold.wave2543.windows-collector.v1",
+  "base": "e935ea6ce3d7ad641641423ed9e7929b200b5a81",
+  "failedRun": "38040676999",
+  "status": "collector-repair-static-reviewed-hosted-pending",
+  "triagePath": "work/gold-20260906/wave2541-windows-repair-acceptance/ROOT_FAILURE_TRIAGE.json",
+  "triageSha256": "D582FB813DD85ED3178195368C8C291FE136CDB9F873D732D23B971C5A11ACBA",
+  "archiveSha256": "C712B1E128A050488AA4566236F717C015DB7073D9791FBDED39831FC9935B3E",
+  "libtestSummariesReportingSuccess": 9,
+  "collectorFalseNegativeShapeCases": 7,
+  "integrationCasesPassed": 2,
+  "nativeExitCodesInOldArtifact": false,
+  "changes": [
+    "Preserve native exit status before classifying test results",
+    "Permit diagnostic-interrupted named case output while requiring exact one-case discovery/start/terminal/summary",
+    "Store one verification JSON per case",
+    "Run twelve positive and negative collector contracts in Preflight and Windows"
+  ],
+  "collectorContractDefinitions": 12,
+  "newRustTestDefinitions": 0,
+  "localExecutableValidationRan": false,
+  "fullCiAccepted": false,
+  "goldComplete": false
+}

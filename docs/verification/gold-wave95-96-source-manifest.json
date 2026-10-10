@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T15:51:49.2836727Z",
-  "validationStatus": "minimal-hickory-hosted-admitted-full-integration-pending",
+  "capturedUtc": "2026-10-10T09:52:30.1052138Z",
+  "validationStatus": "core-audio-repair-published-validation-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -82,6 +82,16 @@
       "sha256": "AF99B7A292D7A3B5336BA325D0E8F93C1F42FAEEFA2503D6BC052E0D4CC7A0B9"
     },
     {
+      "path": ".github/scripts/test_verify_rust_case.py",
+      "bytes": 2873,
+      "sha256": "6A796EC65349CD2D34BF8E65A7F23EB7D945160CED453775525D4EAA0799A168"
+    },
+    {
+      "path": ".github/scripts/verify_rust_case.py",
+      "bytes": 2140,
+      "sha256": "50A278C94011B1F526AD350780135334C625198FD3B62A2E4AAC70B910BDC09A"
+    },
+    {
       "path": ".github/scripts/whatsapp/held-mcp.py",
       "bytes": 1998,
       "sha256": "1BADA3EA87E1DACEEF39BFD47324F5D2C3BD4048F02EBBC4DC14868228F96301"
@@ -123,8 +133,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 30623,
-      "sha256": "EECBEAB68966A2B04E69BF799163BEB88E3422135519975FEFA443DC693B1E70"
+      "bytes": 38840,
+      "sha256": "4A36A890AF56FB353AEA72D3A65F7331802E6A003069E322FF9B1FAAE1598EB8"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -253,8 +263,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 7613,
-      "sha256": "DB87C97368F25771F555019E649F0CA3DD1B809AC644A5673421B484AF86CE6F"
+      "bytes": 7672,
+      "sha256": "DD02FFD925BF82225B03AB1E34DE401B711343B7F194A0D22842E1C0A75DD7EA"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -328,8 +338,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 174720,
-      "sha256": "54242F9306A52EB11A5287148A996B1D393D00E07308320EECD71967F8207EB9"
+      "bytes": 175267,
+      "sha256": "59D5B947A9D9848F8DA142308D143DE78383060048AA12A1B4373A73A5282A80"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -4192,6 +4202,21 @@
       "sha256": "B3B5C467D8325EBC7F624A3DE2BB6F139C5B75BCF134690C94A6E630A3910F1B"
     },
     {
+      "path": "docs/verification/gold-wave2540-partial-owner-companion.json",
+      "bytes": 1403,
+      "sha256": "8227A8B3CAA8493B3002345C786644673C7D47FAD5F515C0E75A842F4C86A20F"
+    },
+    {
+      "path": "docs/verification/gold-wave2542-core-audio-clippy.json",
+      "bytes": 2630,
+      "sha256": "C7B11688E138298B9DD2066837880F597AEE9E22794E671F592171CEFBA322FA"
+    },
+    {
+      "path": "docs/verification/gold-wave2543-windows-collector.json",
+      "bytes": 1127,
+      "sha256": "1424C48082B142B2ED108745B3A66AC5AB5F75A5F7C084C79E90211A5AF2AB71"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5348,8 +5373,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2544667,
-      "sha256": "CBCCBB76152920886B83332D2C7EE6B879E3A80687AA42AF6F0CF40F6302E80A"
+      "bytes": 2548127,
+      "sha256": "B446E936DF90228A865EEF1EAF91FBCD56C56DF75BDFF6A017347666C752F85B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7208,8 +7233,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "bytes": 47423,
-      "sha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A"
+      "bytes": 52443,
+      "sha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE"
     },
     {
       "path": "SRC/neothd/src/daemon/auto_update.rs",
@@ -7303,8 +7328,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "bytes": 25031,
-      "sha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC"
+      "bytes": 33072,
+      "sha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6"
     },
     {
       "path": "SRC/neothd/src/daemon/conversation_owner.rs",
@@ -8003,8 +8028,8 @@
     },
     {
       "path": "SRC/neothd/src/media/dictation.rs",
-      "bytes": 32085,
-      "sha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
+      "bytes": 32067,
+      "sha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D"
     },
     {
       "path": "SRC/neothd/src/media/docling.rs",
@@ -8373,8 +8398,8 @@
     },
     {
       "path": "SRC/neothd/src/permissions/microphone.rs",
-      "bytes": 21239,
-      "sha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E"
+      "bytes": 23407,
+      "sha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093"
     },
     {
       "path": "SRC/neothd/src/permissions/mod.rs",
@@ -9018,8 +9043,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/microphone_receipts.rs",
-      "bytes": 10738,
-      "sha256": "7B4D308BCB07722DCB308E699608F51E77892D6C5787CE9522BC8F0182511AAA"
+      "bytes": 12806,
+      "sha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092"
     },
     {
       "path": "SRC/neothd/src/wal/mod.rs",

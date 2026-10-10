@@ -605,4 +605,190 @@ mod tests {
             ))
         ));
     }
+
+    /// Only consent preflight/denial is available. Any accidental turn, attach,
+    /// status or cancellation call makes the boundary regression fail.
+    struct ConsentRuntime {
+        response_boot: String,
+        foreign_request: bool,
+        preflights: Mutex<Vec<protocol::GuiChatPreflightRequest>>,
+        decisions: Mutex<Vec<protocol::GuiChatConsentDecisionRequest>>,
+    }
+
+    #[async_trait]
+    impl GuiChatRuntime for ConsentRuntime {
+        async fn preflight(
+            &self,
+            request: protocol::GuiChatPreflightRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatPreflightResponse> {
+            self.preflights.lock().unwrap().push(request.clone());
+            Ok(protocol::GuiChatPreflightResponse {
+                schema_version: 1,
+                expected_boot_id: self.response_boot.clone(),
+                preflight_id: protocol::GuiChatOpaqueCapability("preflight-fixture".into()),
+                preflight_descriptor_digest: protocol::GuiChatDigest("a".repeat(64)),
+                consent_challenge: protocol::GuiChatOpaqueCapability("challenge-fixture".into()),
+                attachment_manifest: vec![],
+                consent: protocol::GuiChatConsentPreflightState::ConfirmationRequired {
+                    prompt: protocol::GuiChatConsentPromptWire {
+                        request_id: if self.foreign_request {
+                            protocol::GuiChatRequestId(uuid::Uuid::now_v7())
+                        } else {
+                            request.request_id
+                        },
+                        routes: vec![protocol::GuiChatConsentRouteWire {
+                            provider: "fixture".into(),
+                            endpoint_origin: Some("https://example.invalid".into()),
+                        }],
+                        expires_at_unix_ms: 1234,
+                    },
+                },
+            })
+        }
+
+        async fn decide(
+            &self,
+            request: protocol::GuiChatConsentDecisionRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatConsentDecisionResponse> {
+            self.decisions.lock().unwrap().push(request);
+            Ok(protocol::GuiChatConsentDecisionResponse::Denied {
+                schema_version: 1,
+                expected_boot_id: self.response_boot.clone(),
+            })
+        }
+
+        async fn start(
+            &self,
+            _: protocol::GuiChatStartRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatStartResponse> {
+            panic!("consent preflight/denial must not start a turn")
+        }
+
+        async fn exchange_attach(
+            &self,
+            _: protocol::GuiChatAttachExchangeRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatAttachExchangeResponse> {
+            panic!("consent preflight/denial must not exchange attach")
+        }
+
+        async fn attach(
+            &self,
+            _: crate::daemon::audit_rpc::AuditStream,
+            _: protocol::GuiChatAttachRequest,
+        ) -> protocol::GuiChatResult<()> {
+            panic!("direct consent must not open audit transport")
+        }
+
+        async fn attach_frames(
+            &self,
+            _: protocol::GuiChatAttachRequest,
+            _: &mut dyn GuiChatFrameSink,
+        ) -> protocol::GuiChatResult<()> {
+            panic!("consent preflight/denial must not attach frames")
+        }
+
+        async fn replay(
+            &self,
+            _: protocol::GuiChatAttachRequest,
+        ) -> protocol::GuiChatResult<Vec<protocol::GuiChatStreamFrame>> {
+            panic!("consent preflight/denial must not replay")
+        }
+
+        async fn cancel(
+            &self,
+            _: protocol::GuiChatCancelRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatCancelResponse> {
+            panic!("consent preflight/denial must not cancel")
+        }
+
+        async fn status(
+            &self,
+            _: protocol::GuiChatStatusRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatStatusResponse> {
+            panic!("consent preflight/denial must not query status")
+        }
+
+        async fn active(
+            &self,
+            _: protocol::GuiChatActiveRequest,
+        ) -> protocol::GuiChatResult<protocol::GuiChatActiveResponse> {
+            panic!("consent preflight/denial must not query active turn")
+        }
+
+        async fn close_and_drain(&self) {}
+    }
+
+    #[tokio::test]
+    async fn direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt() {
+        for (response_boot, foreign_request) in [
+            ("other-boot", false),
+            ("owned-boot", true),
+            ("owned-boot", false),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let runtime = Arc::new(ConsentRuntime {
+                response_boot: response_boot.into(),
+                foreign_request,
+                preflights: Mutex::new(vec![]),
+                decisions: Mutex::new(vec![]),
+            });
+            let bridge = DirectConversationGuiChatBridge::new(
+                runtime.clone(),
+                home.path().to_path_buf(),
+                "owned-boot".into(),
+            );
+            let request_id = crate::daemon::gui_chat_bridge::GuiChatRequestId::new();
+            let result = bridge.preflight(GuiChatBridgePreflightInput {
+                request_id,
+                session_id: "owned-session".into(),
+                origin_surface: GuiChatSurface::Buddy,
+                message: "visible request".into(),
+                model: None,
+                skill_id: None,
+                incognito: false,
+                reasoning_display: false,
+                attachment_paths: vec![],
+            }).await;
+            assert!(runtime.decisions.lock().unwrap().is_empty());
+            assert!(bridge.active.lock().unwrap().is_none());
+            {
+                let observed = runtime.preflights.lock().unwrap();
+                assert_eq!(observed.len(), 1);
+                assert_eq!(observed[0].expected_boot_id, "owned-boot");
+                assert_eq!(observed[0].request_id.0, request_id.as_uuid());
+                assert_eq!(observed[0].session_id, "owned-session");
+                assert_eq!(observed[0].origin_surface, protocol::GuiChatSurface::Buddy);
+                assert_eq!(observed[0].message, "visible request");
+            }
+            if response_boot != "owned-boot" || foreign_request {
+                assert!(matches!(
+                    result,
+                    Err(error) if error.code == crate::daemon::gui_chat_bridge::GuiChatBridgeErrorCode::Unavailable
+                ));
+                continue;
+            }
+            let GuiChatBridgePreflight::ConfirmationRequired { receipt, prompt } = result.unwrap()
+            else {
+                panic!("valid bound preflight requires visible confirmation")
+            };
+            assert_eq!(prompt.request_id, request_id);
+            assert_eq!(prompt.expires_at_unix_ms, 1234);
+            assert_eq!(prompt.routes.len(), 1);
+            assert_eq!(prompt.routes[0].provider, "fixture");
+            assert_eq!(prompt.routes[0].endpoint_origin.as_deref(), Some("https://example.invalid"));
+            assert!(matches!(
+                bridge.decide(receipt, GuiChatConsentDecision::Deny).await.unwrap(),
+                GuiChatBridgeDecisionOutcome::Denied
+            ));
+            let decisions = runtime.decisions.lock().unwrap();
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(decisions[0].expected_boot_id, "owned-boot");
+            assert_eq!(decisions[0].preflight_id.0, "preflight-fixture");
+            assert_eq!(decisions[0].consent_challenge.0, "challenge-fixture");
+            assert_eq!(decisions[0].preflight_descriptor_digest.0, "a".repeat(64));
+            assert_eq!(decisions[0].decision, protocol::GuiChatConsentDecision::Deny);
+            assert!(decisions[0].consent_proof.is_none());
+            assert!(bridge.active.lock().unwrap().is_none());
+        }
+    }
 }

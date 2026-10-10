@@ -18882,3 +18882,21 @@ Run 37954256997 auf 1916b09f1ddd85e363965a0d76437ff74210a987 besteht die tatsäc
 hickory-net, hickory-proto und hickory-resolver stehen damit gemeinsam auf 0.26.3. Die geprüfte Lockdatei wird nur in den Git-Index übernommen; die bestehende uncommittete physische Lockdatei und .gitignore bleiben hashgleich. Die passenden Lizenzhinweise werden aus demselben geprüften Originalarchiv übernommen.
 
 Dies behebt den belegten Hickory-Compile-Konflikt und den dazugehörigen Stand der Lizenzhinweise. Die 56 Owner-Fokusfälle, Companion-/Workspace-Clippy-Abnahme, elf gezielten Windows-Fälle und die vollständige Integration benötigen den endgültigen Producer. Produktlaufzeit, native Geräte und signierte Releases sind dadurch nicht abgenommen; alle ursprünglichen Roadmap-Zeilen bleiben unverändert. Bericht: docs/verification/gold-wave2539-hickory-minimal-acceptance.json.
+
+### W2540 — 154 Teilprüfungen belegt, Workspace-Clippy bleibt offen
+
+Lauf 37955480986 auf e935ea6ce3d7ad641641423ed9e7929b200b5a81 besteht 56 Owner-/Updater-Fälle und 98 kanonische Companion-Fälle. Root prüft die drei Originalarchive und alle 170 Einträge, Quellenbindungen, Auswahl und tatsächlichen Einzelfall-Ergebnisse. Slim-Core-Clippy, Test-Typprüfung, CLI-Build und erzeugte CLI-Referenz bestehen ebenfalls. Die separate Teilabnahme lässt den Gesamtfehler bestehen: Workspace-Clippy meldet 35 Fehler. Die 29 Collector-Identitäten sind nur quellengebunden, nicht in diesem Lauf ausgeführt. Bericht: docs/verification/gold-wave2540-partial-owner-companion.json.
+
+### W2542 — Consent-, Mikrofon- und Abbruchbelege im Core-Testziel
+
+Vier zusätzliche Testdefinitionen prüfen gebundene GUI-Consent-Vorprüfung samt Ablehnung, dauerhafte Mikrofonfreigabe mit unabhängigem Widerruf, typisierte Fehlerbelege und die Übergabe eines tatsächlich beobachteten Cancelled-Terminals an den heimgebundenen WAL. Die Tests warten auf Writer-Abschluss und prüfen den gespeicherten Turn-Hash sowie User-/Stale-/Shutdown-Ursache. Bereits vorhandene Fälle prüfen nun zusätzlich die weitergereichte Bestätigung, AllowOnce-Admittedaten und die Zurückweisung eines nach Complete gerasten Abbruchbelegs. Zwei äquivalente Lint-Korrekturen ergänzen den Batch; keine pauschale Warnungsunterdrückung oder geöffnete Proof-Konstruktoren.
+
+Der bestehende CLI-Workflow erhält eine gezielte Auswahl aus zehn betroffenen Core-Tests mit 18 Quellenbindungen. Laufzeit-/Clippy-Nachweis auf dem veröffentlichten Producer bleibt bis zum tatsächlichen Hosted-Lauf offen. Lokaler BSOD-Hold, serielle Idle-/Ein-Kern-Arbeit, geschützte uncommittete Dateien und ursprünglicher Backlog bleiben erhalten. Bericht: docs/verification/gold-wave2542-core-audio-clippy.json.
+
+Workspace-Clippy läuft bei angeforderter Prüfung künftig vor den gelinkten Regressionstests und dem CLI-Build. Befehl, Featureauswahl, Warnungsgrenze und Zeitbudget bleiben unverändert; ein Lint-Fehler beendet die aufwendigere Folgearbeit früher.
+
+### W2541/W2543 — Windows-Testauswertung korrigieren, Fehlstatus erhalten
+
+Lauf 38040676999 auf e935ea6ce3d7ad641641423ed9e7929b200b5a81 kompiliert den Bibliothekstest-Runner. Alle neun ausgewählten Logs enthalten genau eine erfolgreiche Einzelfall-Zusammenfassung; beide Integrationstests bestehen im Workflow. Der Sammler meldet dennoch sieben Chat-Fälle als fehlgeschlagen, weil direkte Diagnoseausgaben die erwartete einzeilige Ausgabe test … ok unterbrechen. Root sichert das Originalarchiv mit 31 Einträgen und prüft die neun Testquellenbindungen. Die alten Artefakte behalten keine individuellen Prozess-Exitcodes; der fehlgeschlagene Gesamt-Lauf wird deshalb nicht nachträglich als vollständig erfolgreich abgenommen.
+
+W2543 speichert künftig die nativen Exitcodes und pro Fall einen JSON-Auswertungsbeleg. Die Prüfung verlangt weiterhin exakt eine Discovery-Identität, einen benannten gestarteten Fall, einen passenden Erfolgsterminal und eine einzige Zusammenfassung mit einem bestandenen, keinem fehlgeschlagenen und keinem ignorierten Test. Zwölf positive/negative Sammler-Verträge laufen in Hosted-Preflight und im Windows-Job. Die unveränderte Auswahl aus neun Bibliotheks- und zwei Integrationstests muss auf dem finalen Producer erneut bestehen. Bericht: docs/verification/gold-wave2543-windows-collector.json.

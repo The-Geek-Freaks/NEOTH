@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.gold.wave2542.core-audio-clippy-repair.v1",
+  "base": "e935ea6ce3d7ad641641423ed9e7929b200b5a81",
+  "status": "candidate-static-reviewed-hosted-pending",
+  "failedRun": 37955480986,
+  "diagnostics": 35,
+  "changes": [
+    "Exercise direct GUI bridge consent preflight and deny through retained runtime boundary",
+    "Observe confirmation prompt before supervisor decision and refuse cancellation WAL proof for raced Complete terminal",
+    "Consume real settled Cancelled proof into home-bound WAL, await writer completion, inspect exact User/Stale/Shutdown receipts",
+    "Exercise persistent microphone grant, independent-store revoke and bounded typed failure receipts",
+    "Apply collapsible-if and redundant-pattern Clippy suggestions",
+    "Run unchanged optional workspace-Clippy command before linked regression suites and CLI build to fail earlier"
+  ],
+  "newTests": [
+    {
+      "junitClass": "neoth",
+      "test": "daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt",
+      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding",
+      "sourceSha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
+      "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs"
+    }
+  ],
+  "hostedSelectionCount": 10,
+  "hostedSourceBindingCount": 18,
+  "productionChanges": [
+    "Equivalent let-chain in dropped-turn cleanup delivery failure"
+  ],
+  "blanketLintAllowsAdded": false,
+  "featureGatesWeakened": false,
+  "privateProofConstructorsAdded": false,
+  "localExecutableValidationRan": false,
+  "hostedValidation": "pending",
+  "nativeDeviceReleaseAccepted": false,
+  "goldComplete": false
+}

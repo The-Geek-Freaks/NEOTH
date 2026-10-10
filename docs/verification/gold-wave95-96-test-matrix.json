@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "minimal-hickory-hosted-admitted-full-integration-pending",
+  "status": "core-audio-repair-published-validation-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 413327,
-    "sha256": "AEE4D6A655DFF2C2917CBB619F61474AE9374E03C2F35E31E7877A8132B549C4"
+    "bytes": 414235,
+    "sha256": "0A24B1E5F1352DD7FB82ADEB5522002CFC1ED910915580CBF42ADEACE198A96C"
   },
-  "sourceInputs": 2255,
+  "sourceInputs": 2260,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3204,13 +3204,13 @@
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
       "junitClass": "neoth"
     },
     {
@@ -15997,73 +15997,73 @@
     {
       "test": "daemon::authorized_text_turn::tests::genuine_bridge_reasoning_event_never_reaches_voice_sink",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::genuine_bridge_delta_and_terminal_are_forwarded_in_order",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::sealed_start_cursor_replays_visible_delta_before_exchange_upper_bound",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::failed_exchange_cancels_and_observes_terminal_before_returning_error",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::partial_attach_error_commits_cursor_and_never_replays_speech",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::cancellation_preserves_terminal_delivered_before_later_attach_error",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::normal_preobserved_cancelled_terminal_never_mints_auto_cancel_proof",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::dropped_consumer_is_cancelled_and_settled_by_its_existing_supervisor",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::second_start_is_refused_before_any_second_bridge_start",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
       "junitClass": "neoth"
     },
     {
@@ -16081,13 +16081,13 @@
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC",
+      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC",
+      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
       "junitClass": "neoth"
     },
     {
@@ -16189,13 +16189,13 @@
     {
       "test": "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
       "junitClass": "neoth"
     },
     {
@@ -16225,37 +16225,37 @@
     {
       "test": "permissions::microphone::tests::once_is_config_bound_and_consumed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::denial_expiry_and_revoke_fail_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::independent_store_revoke_invalidates_stale_challenge_and_capability",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::oversized_or_nonregular_persisted_state_fails_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::symlinked_persisted_state_fails_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "7A5C233D5DEF2247E95483A7D9C5A8CB054F775893FD31C8DB79635469F1FA7E",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
       "junitClass": "neoth"
     },
     {
       "test": "wal::microphone_receipts::tests::consumed_admission_forms_one_sealed_intent_then_terminal_result",
       "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs",
-      "sourceSha256": "7B4D308BCB07722DCB308E699608F51E77892D6C5787CE9522BC8F0182511AAA",
+      "sourceSha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
       "junitClass": "neoth"
     },
     {
@@ -17367,6 +17367,30 @@
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "B1A174C20C8DCF6B614C17FD8A356345B023B0BEC5DA86FA78874ECDBD9C7DAD",
       "junitClass": "neoth"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal",
+      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt",
+      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open",
+      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs"
+    },
+    {
+      "junitClass": "neoth",
+      "test": "wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding",
+      "sourceSha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
+      "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs"
     }
   ],
   "requiredGuiTests": [
@@ -81087,6 +81111,98 @@
       }
     ],
     "note": "Actual locked cluster-iroh compile, five notice tests and reproduction passed; API/ZIP/raw-source and exact six text substitutions independently checked. Lock index-only, physical dirty lock preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2542CoreAudioClippy": {
+    "base": "e935ea6ce3d7ad641641423ed9e7929b200b5a81",
+    "sources": [
+      {
+        "path": ".github/scripts/test_verify_rust_case.py",
+        "bytes": 2873,
+        "sha256": "6A796EC65349CD2D34BF8E65A7F23EB7D945160CED453775525D4EAA0799A168",
+        "blob": "9a92793577d25a47cb45967b4c2473b632d97449"
+      },
+      {
+        "path": ".github/scripts/verify_rust_case.py",
+        "bytes": 2140,
+        "sha256": "50A278C94011B1F526AD350780135334C625198FD3B62A2E4AAC70B910BDC09A",
+        "blob": "a9555a34d51299a20b0151c768950b4029a0c5bc"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 38840,
+        "sha256": "4A36A890AF56FB353AEA72D3A65F7331802E6A003069E322FF9B1FAAE1598EB8",
+        "blob": "90d97d2c32c9a805c399ca8e40870d9d37650127"
+      },
+      {
+        "path": ".github/workflows/preflight.yml",
+        "bytes": 7672,
+        "sha256": "DD02FFD925BF82225B03AB1E34DE401B711343B7F194A0D22842E1C0A75DD7EA",
+        "blob": "21844c337ff80c3c0d2421e685076165405a92f8"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 175267,
+        "sha256": "59D5B947A9D9848F8DA142308D143DE78383060048AA12A1B4373A73A5282A80",
+        "blob": "35cc4a5da98904eaf2a2c2dbdec427d9b52085e5"
+      },
+      {
+        "path": "docs/verification/gold-wave2540-partial-owner-companion.json",
+        "bytes": 1403,
+        "sha256": "8227A8B3CAA8493B3002345C786644673C7D47FAD5F515C0E75A842F4C86A20F",
+        "blob": "021c6c72a8a8d1bf13dca168a204ee1a73e5a799"
+      },
+      {
+        "path": "docs/verification/gold-wave2542-core-audio-clippy.json",
+        "bytes": 2630,
+        "sha256": "C7B11688E138298B9DD2066837880F597AEE9E22794E671F592171CEFBA322FA",
+        "blob": "65f84f866412a0d4580dc6a8fa4d0b10d98bb028"
+      },
+      {
+        "path": "docs/verification/gold-wave2543-windows-collector.json",
+        "bytes": 1127,
+        "sha256": "1424C48082B142B2ED108745B3A66AC5AB5F75A5F7C084C79E90211A5AF2AB71",
+        "blob": "334b9a8760a916ff75dc22f573e86b6f8f5e4e1d"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2548127,
+        "sha256": "B446E936DF90228A865EEF1EAF91FBCD56C56DF75BDFF6A017347666C752F85B",
+        "blob": "f146eb367c605e9e60a7465830ea2c5dd318617a"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+        "bytes": 52443,
+        "sha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+        "blob": "8ff40384425ac6db425d06b71863921dccd2d6d4"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+        "bytes": 33072,
+        "sha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+        "blob": "78e1431f6c8da72a5e0f6fd5ed96206ff85e9bdc"
+      },
+      {
+        "path": "SRC/neothd/src/media/dictation.rs",
+        "bytes": 32067,
+        "sha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
+        "blob": "6fb327b064a1b3f2feef23bc9c1c7e58bb7b4577"
+      },
+      {
+        "path": "SRC/neothd/src/permissions/microphone.rs",
+        "bytes": 23407,
+        "sha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+        "blob": "2c563cb923e275b8d0f9bb4b0fb68acc6663b4fc"
+      },
+      {
+        "path": "SRC/neothd/src/wal/microphone_receipts.rs",
+        "bytes": 12806,
+        "sha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
+        "blob": "31890127d74aaf457a4cfddac4be8fa138a78c35"
+      }
+    ],
+    "note": "W2540 partial 154 cases accepted. W2542 core authority tests/lint repairs and W2543 Windows collector fix await hosted validation. Failed Windows run retains failed status; nine successful libtest summaries are not independent exit-code proof.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

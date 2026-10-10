@@ -617,12 +617,12 @@ impl Drop for AuthorizedTextTurn {
             detached,
             completion: completion_tx,
         };
-        if let Err(error) = self.owner.cleanup_tx.try_send(command) {
-            if let CleanupCommand::Settle { completion, .. } = error.into_inner() {
-                let _ = completion.send(Err(GuiChatBridgeError::invalid(
-                    "authorized_text_turn_cleanup_delivery_failed",
-                )));
-            }
+        if let Err(error) = self.owner.cleanup_tx.try_send(command)
+            && let CleanupCommand::Settle { completion, .. } = error.into_inner()
+        {
+            let _ = completion.send(Err(GuiChatBridgeError::invalid(
+                "authorized_text_turn_cleanup_delivery_failed",
+            )));
         }
     }
 }
@@ -858,6 +858,7 @@ mod tests {
         cancel_calls: Mutex<u32>,
         start_calls: Mutex<u32>,
         decisions: Mutex<VecDeque<GuiChatBridgeDecisionOutcome>>,
+        confirmation: Mutex<Option<GuiChatConsentPrompt>>,
     }
 
     impl ScriptedBridge {
@@ -873,6 +874,7 @@ mod tests {
                 attached_after: Mutex::new(Vec::new()),
                 cancel_calls: Mutex::new(0),
                 start_calls: Mutex::new(0),
+                confirmation: Mutex::new(None),
                 decisions: Mutex::new(
                     vec![GuiChatBridgeDecisionOutcome::Approved(decision())].into(),
                 ),
@@ -886,6 +888,12 @@ mod tests {
             &self,
             _input: GuiChatBridgePreflightInput,
         ) -> GuiChatBridgeResult<GuiChatBridgePreflight> {
+            if let Some(prompt) = self.confirmation.lock().unwrap().take() {
+                return Ok(GuiChatBridgePreflight::ConfirmationRequired {
+                    receipt: GuiChatBridgePreflightReceipt::from_live(vec![7]),
+                    prompt,
+                });
+            }
             Ok(GuiChatBridgePreflight::Ready {
                 decision: decision(),
             })
@@ -1137,6 +1145,14 @@ mod tests {
             AuthorizedTextTurnTerminal::Complete
         );
         assert!(settled.cancel_proof().is_none());
+        assert!(
+            crate::wal::microphone_receipts::TurnCancelAdmission::from_settled_turn(
+                settled,
+                crate::wal::microphone_receipts::TurnCancelCause::User,
+                123,
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1277,15 +1293,30 @@ mod tests {
         let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
             .await
             .unwrap();
-        let confirmation = AuthorizedTextTurnConfirmation {
-            receipt: GuiChatBridgePreflightReceipt::from_live(vec![7]),
-            prompt: GuiChatConsentPrompt {
-                request_id: GuiChatRequestId::new(),
-                routes: Vec::new(),
-                expires_at_unix_ms: 1,
-            },
-            surface: GuiChatSurface::Main,
+        let request = input();
+        let request_id = request.request_id;
+        *bridge.confirmation.lock().unwrap() = Some(GuiChatConsentPrompt {
+            request_id,
+            routes: vec![crate::daemon::gui_chat_bridge::GuiChatConsentRoute {
+                provider: "fixture".into(),
+                endpoint_origin: Some("https://example.invalid".into()),
+            }],
+            expires_at_unix_ms: 1234,
+        });
+        let AuthorizedTextTurnStart::ConfirmationRequired(confirmation) =
+            supervisor.start(request).await.unwrap()
+        else {
+            panic!("confirmation must be surfaced before any start");
         };
+        assert_eq!(confirmation.prompt.request_id, request_id);
+        assert_eq!(confirmation.prompt.expires_at_unix_ms, 1234);
+        assert_eq!(confirmation.prompt.routes.len(), 1);
+        assert_eq!(confirmation.prompt.routes[0].provider, "fixture");
+        assert_eq!(
+            confirmation.prompt.routes[0].endpoint_origin.as_deref(),
+            Some("https://example.invalid")
+        );
+        assert_eq!(*bridge.start_calls.lock().unwrap(), 0);
         assert!(matches!(
             supervisor
                 .decide(confirmation, GuiChatConsentDecision::AllowOnce)
@@ -1303,5 +1334,78 @@ mod tests {
         supervisor.wait_for_dropped_turn().await.unwrap();
         supervisor.shutdown_and_join().await.unwrap();
         drain_registry(&registry).await;
+    }
+
+    #[tokio::test]
+    async fn settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal() {
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_EXTENDED, ExtendedSubtype};
+        use crate::wal::microphone_receipts::{TurnCancelAdmission, TurnCancelCause};
+
+        for (cause, expected_cause) in [
+            (TurnCancelCause::User, "user"),
+            (TurnCancelCause::Stale, "stale"),
+            (TurnCancelCause::Shutdown, "shutdown"),
+        ] {
+            let bridge = Arc::new(ScriptedBridge::new(
+                1,
+                vec![Ok(attached(1))],
+                vec![AttachScript {
+                    events: vec![terminal(2, GuiChatTerminalState::Cancelled)],
+                    result: Ok(()),
+                }],
+            ));
+            let registry = task_registry();
+            let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
+                .await.unwrap();
+            let turn = open_authorized_text_turn(
+                Arc::clone(&supervisor.owner), decision(), GuiChatSurface::Main,
+            ).await.unwrap();
+            drop(turn);
+            let settled = supervisor.wait_for_dropped_turn().await.unwrap();
+            let mut digest = Sha256::new();
+            digest.update(b"neoth/a2/settled-authorized-turn/v1\0");
+            digest.update(bridge.started.metadata.turn_id.as_uuid().as_bytes());
+            let expected_hash = hex::encode(digest.finalize());
+            assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+            assert_eq!(settled.turn_id_sha256(), expected_hash);
+            assert_eq!(settled.cancel_proof().unwrap().turn_id_sha256(), expected_hash);
+            assert_eq!(*bridge.cancel_calls.lock().unwrap(), 1);
+
+            let home = tempfile::tempdir().unwrap();
+            let wal = home.path().join("wal");
+            std::fs::create_dir(&wal).unwrap();
+            let segment = crate::wal::writer::unique_standalone_segment_path(&wal, "turn-cancel");
+            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+                segment.clone(), home.path().to_path_buf(),
+            ).unwrap();
+            let admission = TurnCancelAdmission::from_settled_turn(settled, cause, 123).unwrap();
+            writer.append_realtime_turn_cancel(admission).await.unwrap();
+            drop(writer);
+            completion.wait().await.unwrap();
+            supervisor.shutdown_and_join().await.unwrap();
+            drain_registry(&registry).await;
+
+            let mut receipts = Vec::new();
+            let mut authenticated_markers = 0;
+            let bytes = std::fs::read(&segment).unwrap();
+            crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+                if frame.header.event_type == EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype == ExtendedSubtype::RealtimeTurnCancel as u8
+                {
+                    receipts.push(serde_json::from_slice::<serde_json::Value>(frame.payload)?);
+                }
+                if frame.header.event_type == EVENT_TYPE_COMPACTION_MARKER {
+                    authenticated_markers += 1;
+                }
+                Ok(())
+            }).unwrap();
+            assert_eq!(receipts, vec![serde_json::json!({
+                "schema_version": 1,
+                "turn_id": expected_hash,
+                "cause": expected_cause,
+                "cancelled_at_unix": 123,
+            })]);
+            assert!(authenticated_markers > 0, "closed receipts require authentication markers");
+        }
     }
 }

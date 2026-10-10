@@ -1235,6 +1235,8 @@ jobs:
           failed=0
           missing=0
           : > "$evidence/results.tsv"
+          : > "$evidence/case-exits.tsv"
+          python ../.github/scripts/test_verify_rust_case.py > "$evidence/collector-contract.log" 2>&1
 
           if [[ "$compile_status" -eq 0 ]]; then
             test_binary_native="$(python - "$binary_receipt" <<'PY'
@@ -1277,7 +1279,7 @@ jobs:
               total=$((total + 1))
               log="$evidence/logs/$(printf '%02d' "$index").log"
               list_status=0
-              "$test_binary" "$test_name" --exact --list > "$log" 2>&1 || list_status=$?
+              "$test_binary" "$test_name" --exact --list --color never > "$log" 2>&1 || list_status=$?
               selected_count="$(grep -Fxc "$test_name: test" "$log" || true)"
               if [[ "$list_status" -ne 0 || "$selected_count" -ne 1 ]]; then
                 missing=$((missing + 1))
@@ -1286,8 +1288,10 @@ jobs:
               fi
               listed=$((listed + 1))
               run_status=0
-              "$test_binary" "$test_name" --exact --test-threads=1 >> "$log" 2>&1 || run_status=$?
-              if [[ "$run_status" -eq 0 && "$(grep -Fxc "test $test_name ... ok" "$log" || true)" -eq 1 ]]; then
+              "$test_binary" "$test_name" --exact --test-threads=1 --color never >> "$log" 2>&1 || run_status=$?
+              printf '%02d\t%s\t%s\n' "$index" "$run_status" "$test_name" >> "$evidence/case-exits.tsv"
+              receipt="$evidence/logs/$(printf '%02d' "$index").verification.json"
+              if python ../../.github/scripts/verify_rust_case.py --identity "$test_name" --log "$log" --exit-code "$run_status" --receipt "$receipt"; then
                 passed=$((passed + 1))
                 printf '%02d\tpassed\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
               else
@@ -1304,8 +1308,8 @@ jobs:
           while IFS= read -r -d '' log; do
             sha256sum "$log" >> "$evidence/log-sha256sums.txt"
           done < <(find "$evidence/logs" -type f -name '*.log' -print0 | sort -z)
-          sha256sum "$evidence/selection-mode.txt" ../.github/workflows/windows-storage-regressions.yml neothd/src/cli/chat_turn_pipeline.rs ../.github/workflows/ci.yml .config/nextest.toml > "$evidence/repair-input-sha256sums.txt"
-          sha256sum "$evidence/repair-input-sha256sums.txt" "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$artifact_log" "$binary_receipt" "$binary_sha256" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
+          sha256sum "$evidence/selection-mode.txt" ../.github/workflows/windows-storage-regressions.yml ../.github/scripts/verify_rust_case.py ../.github/scripts/test_verify_rust_case.py neothd/src/cli/chat_turn_pipeline.rs ../.github/workflows/ci.yml .config/nextest.toml > "$evidence/repair-input-sha256sums.txt"
+          sha256sum "$evidence/repair-input-sha256sums.txt" "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$artifact_log" "$binary_receipt" "$binary_sha256" "$evidence/results.tsv" "$evidence/case-exits.tsv" "$evidence/collector-contract.log" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
           printf 'compile_status=%s\n' "$compile_status" >> "$GITHUB_OUTPUT"
           if [[ "$selection_valid" -ne 1 || "$compile_status" -ne 0 || "$total" -ne "$expected" || "$listed" -ne "$expected" || "$failed" -ne 0 || "$missing" -ne 0 ]]; then
             exit 1

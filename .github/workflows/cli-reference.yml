@@ -3,6 +3,10 @@ name: Generate CLI reference
 on:
   workflow_dispatch:
     inputs:
+      core_audio_regressions:
+        description: 'Also run exact consent, settled cancellation and microphone receipt regressions without audio devices'
+        type: boolean
+        default: false
       companion_regressions:
         description: 'Also run canonical mobile core plus retained companion authority and revoke regressions'
         type: boolean
@@ -45,7 +49,7 @@ jobs:
     name: Export exact-source CLI reference
     if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions) && 75 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.core_audio_regressions || inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions) && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -101,6 +105,16 @@ jobs:
         timeout-minutes: 15
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
+
+      # Refuse workspace lint failures before spending time on linked regression
+      # suites and the CLI binary. The command and acceptance requirement are unchanged.
+      - name: Check exact Linux-quality workspace Clippy
+        if: ${{ inputs.workspace_clippy }}
+        # The successful Core614 gate took 28m20s; Core309 hit 30m without
+        # compiler diagnostics. Keep the same check with enough hosted time.
+        timeout-minutes: 45
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       # This optional contract is deliberately narrow: each listed identity is
       # discovered and run once, while the ordinary type check, public CLI
@@ -387,6 +401,75 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Run exact core-audio authority regressions
+        if: ${{ inputs.core_audio_regressions }}
+        timeout-minutes: 25
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-core-audio-regressions"
+          mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          cat > "$proof_dir/selection.txt" <<'EOF'
+          daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible
+          daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof
+          daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal
+          daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt
+          daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection
+          daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection
+          permissions::microphone::tests::once_is_config_bound_and_consumed
+          permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open
+          wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding
+          media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block
+          EOF
+          cat > "$proof_dir/source-paths.txt" <<'EOF'
+          .github/workflows/cli-reference.yml
+          SRC/Cargo.lock
+          SRC/Cargo.toml
+          SRC/neothd/Cargo.toml
+          SRC/neothd/src/lib.rs
+          SRC/neothd/src/daemon/mod.rs
+          SRC/neothd/src/daemon/authorized_text_turn.rs
+          SRC/neothd/src/daemon/conversation_gui_bridge.rs
+          SRC/neothd/src/daemon/conversation_session.rs
+          SRC/neothd/src/daemon/gui_chat_bridge.rs
+          SRC/neothd/src/daemon/gui_chat_protocol.rs
+          SRC/neothd/src/permissions/microphone.rs
+          SRC/neothd/src/wal/microphone_receipts.rs
+          SRC/neothd/src/wal/writer.rs
+          SRC/neothd/src/wal/events.rs
+          SRC/neothd/src/wal/header.rs
+          SRC/neothd/src/wal/scan.rs
+          SRC/neothd/src/media/dictation.rs
+          EOF
+          while IFS= read -r source; do
+            sha256sum "$source" >> "$proof_dir/SHA256SUMS.txt"
+          done < "$proof_dir/source-paths.txt"
+          selected=0
+          passed=0
+          while IFS= read -r identity; do
+            selected=$((selected + 1))
+            (cd SRC && cargo test -p neoth --lib --locked "$identity" -- --exact --list) 2>&1 | tee "$proof_dir/$selected.discovery.log"
+            test "$(grep -Fxc "$identity: test" "$proof_dir/$selected.discovery.log")" -eq 1
+            (cd SRC && cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture) 2>&1 | tee "$proof_dir/$selected.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$selected.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$selected.log")" -eq 1
+            passed=$((passed + 1))
+          done < "$proof_dir/selection.txt"
+          test "$selected" -eq 10
+          test "$passed" -eq 10
+          printf 'selected=%s\npassed=%s\n' "$selected" "$passed" > "$proof_dir/final-counts.txt"
+
+      - name: Upload core-audio authority regression evidence
+        if: ${{ always() && inputs.core_audio_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-audio-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-core-audio-regressions/
+          if-no-files-found: error
+
       - name: Build current public CLI
         timeout-minutes: 25
         working-directory: SRC
@@ -412,14 +495,6 @@ jobs:
           name: generated-cli-reference
           path: ${{ runner.temp }}/neoth-cli-reference/
           if-no-files-found: error
-
-      - name: Check exact Linux-quality workspace Clippy
-        if: ${{ inputs.workspace_clippy }}
-        # The successful Core614 gate took 28m20s; Core309 hit 30m without
-        # compiler diagnostics. Keep the same check with enough hosted time.
-        timeout-minutes: 45
-        working-directory: SRC
-        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       # Publish one immutable, successful compile checkpoint per lockfile.
       # Failed or cancelled gates never save state, and cache contents do not
@@ -494,6 +569,75 @@ jobs:
 
       # The native harness resolves target/debug/neoth beside its test executable;
       # build the real public CLI before running its GUI callback path.
+      - name: Run exact core-audio authority regressions
+        if: ${{ inputs.core_audio_regressions }}
+        timeout-minutes: 25
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-core-audio-regressions"
+          mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          cat > "$proof_dir/selection.txt" <<'EOF'
+          daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible
+          daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof
+          daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal
+          daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt
+          daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection
+          daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection
+          permissions::microphone::tests::once_is_config_bound_and_consumed
+          permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open
+          wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding
+          media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block
+          EOF
+          cat > "$proof_dir/source-paths.txt" <<'EOF'
+          .github/workflows/cli-reference.yml
+          SRC/Cargo.lock
+          SRC/Cargo.toml
+          SRC/neothd/Cargo.toml
+          SRC/neothd/src/lib.rs
+          SRC/neothd/src/daemon/mod.rs
+          SRC/neothd/src/daemon/authorized_text_turn.rs
+          SRC/neothd/src/daemon/conversation_gui_bridge.rs
+          SRC/neothd/src/daemon/conversation_session.rs
+          SRC/neothd/src/daemon/gui_chat_bridge.rs
+          SRC/neothd/src/daemon/gui_chat_protocol.rs
+          SRC/neothd/src/permissions/microphone.rs
+          SRC/neothd/src/wal/microphone_receipts.rs
+          SRC/neothd/src/wal/writer.rs
+          SRC/neothd/src/wal/events.rs
+          SRC/neothd/src/wal/header.rs
+          SRC/neothd/src/wal/scan.rs
+          SRC/neothd/src/media/dictation.rs
+          EOF
+          while IFS= read -r source; do
+            sha256sum "$source" >> "$proof_dir/SHA256SUMS.txt"
+          done < "$proof_dir/source-paths.txt"
+          selected=0
+          passed=0
+          while IFS= read -r identity; do
+            selected=$((selected + 1))
+            (cd SRC && cargo test -p neoth --lib --locked "$identity" -- --exact --list) 2>&1 | tee "$proof_dir/$selected.discovery.log"
+            test "$(grep -Fxc "$identity: test" "$proof_dir/$selected.discovery.log")" -eq 1
+            (cd SRC && cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture) 2>&1 | tee "$proof_dir/$selected.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$selected.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$selected.log")" -eq 1
+            passed=$((passed + 1))
+          done < "$proof_dir/selection.txt"
+          test "$selected" -eq 10
+          test "$passed" -eq 10
+          printf 'selected=%s\npassed=%s\n' "$selected" "$passed" > "$proof_dir/final-counts.txt"
+
+      - name: Upload core-audio authority regression evidence
+        if: ${{ always() && inputs.core_audio_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-audio-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-core-audio-regressions/
+          if-no-files-found: error
+
       - name: Build current public CLI for native GUI harness
         timeout-minutes: 45
         working-directory: SRC

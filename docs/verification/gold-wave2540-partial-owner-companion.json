@@ -1,0 +1,33 @@
+{
+  "schema": "neoth.gold.wave2540.partial-owner-companion.v1",
+  "producer": "e935ea6ce3d7ad641641423ed9e7929b200b5a81",
+  "run": 37955480986,
+  "attempt": 1,
+  "job": 113904793218,
+  "status": "partial-hosted-accepted-workspace-clippy-failed",
+  "proofPath": "work/gold-20260906/wave2540-owner-workspace-acceptance/partial-owner-admission/ROOT_PARTIAL_ADMISSION.json",
+  "proofSha256": "2F7C9EFE22121C876A83B428ECB913DBD4F2BB6470E0EAF3D87323D09AC2BF15",
+  "ownerCasesPassed": 56,
+  "companionCasesPassed": 98,
+  "archiveEntriesVerified": 170,
+  "successfulSteps": [
+    "Slim-core production Clippy",
+    "Core test-target typecheck",
+    "Current CLI build",
+    "Generated CLI reference"
+  ],
+  "failedStep": "Check exact Linux-quality workspace Clippy",
+  "diagnosticCount": 35,
+  "checkoutHashException": {
+    "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
+    "reason": "Exact producer gitattributes require eol=crlf. Raw Git blob and LF-to-CRLF materialization checked separately.",
+    "rawSha256": "38C4FC268FB4C85D1D5575870BFEA2A361671984D956B5C821EAAC2EE3CD8B32",
+    "checkoutSha256": "B0DAB6A695D3008ABD9758376ACD1B7AFDF1611E8C1C497B3ECA211C7181CCC9"
+  },
+  "collectorIdentitiesSourceBoundOnly": 29,
+  "collectorTestsExecuted": false,
+  "localExecutableValidationRan": false,
+  "fullCiAccepted": false,
+  "nativeDeviceReleaseAccepted": false,
+  "goldComplete": false
+}

@@ -496,8 +496,54 @@ mod tests {
             .decide(challenge, MicDecision::AllowOnce, 14)
             .unwrap()
             .unwrap();
-        assert_eq!(s.consume_for_open(c, A, 15).unwrap().config_digest(), A);
+        let admission = s.consume_for_open(c, A, 15).unwrap();
+        assert_eq!(admission.config_digest(), A);
+        assert_eq!(admission.permission_revision(), 0);
+        assert_eq!(admission.admitted_at_unix(), 15);
+        assert!(admission.allow_once());
+        assert_eq!(admission.operation_id().len(), 64);
+        assert!(admission.operation_id().bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(matches!(
+            s.preflight(A, 16).unwrap(),
+            MicPreflight::ConfirmationRequired { .. }
+        ));
     }
+    #[test]
+    fn persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open() {
+        let home = tempdir().unwrap();
+        let mut store = MicConsentStore::open(home.path()).unwrap();
+        let MicPreflight::ConfirmationRequired { challenge } = store.preflight(A, 10).unwrap()
+        else {
+            panic!("fresh store requires consent");
+        };
+        let capability = store.decide(challenge, MicDecision::AllowAlways, 11).unwrap().unwrap();
+        let first = store.consume_for_open(capability, A, 12).unwrap();
+        assert!(!first.allow_once());
+        assert_eq!(first.permission_revision(), 1);
+        let mut reopened = MicConsentStore::open(home.path()).unwrap();
+        let MicPreflight::Granted { capability } = reopened.preflight(A, 13).unwrap() else {
+            panic!("persisted consent must grant a fresh capability");
+        };
+        let second = reopened.consume_for_open(capability, A, 14).unwrap();
+        assert!(!second.allow_once());
+        assert_eq!(second.permission_revision(), first.permission_revision());
+        assert_eq!(second.config_digest(), A);
+        assert_eq!(second.admitted_at_unix(), 14);
+        assert_ne!(second.operation_id(), first.operation_id());
+        let MicPreflight::Granted { capability } = reopened.preflight(A, 15).unwrap() else {
+            panic!("grant remains active");
+        };
+        store.revoke().unwrap();
+        assert_eq!(
+            reopened.consume_for_open(capability, A, 16).unwrap_err(),
+            MicError::ConfigDrift
+        );
+        assert!(matches!(
+            reopened.preflight(A, 17).unwrap(),
+            MicPreflight::ConfirmationRequired { .. }
+        ));
+    }
+
     #[test]
     fn denial_expiry_and_revoke_fail_closed() {
         let home = tempdir().unwrap();
