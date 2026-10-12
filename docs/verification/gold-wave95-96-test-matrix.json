@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2555 hosted synthetic comparison contracts accepted on5571bc91; W2556 proposals retained open; full acceptance remains source-bound and incomplete.",
+  "status": "W2556 ten open Jarvis proposals reflected in derived release-gate counts; source owner mapping added; hosted recheck pending.",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 417918,
-    "sha256": "C21B19D70EE4375C97FAC2549FF2F61F602ED89D9C493059F801133F16C667A6"
+    "bytes": 417895,
+    "sha256": "A97F4D9CCFC2C1B1399900FB097F1B1B1DA392A432EF4506F5A6790F33F8A4D7"
   },
   "sourceInputs": 2279,
   "requiredNativeTests": [
@@ -81513,6 +81513,26 @@
       }
     ],
     "note": "13 actual comparator CLI regression methods passed in Preflight38221800056; CodeQuality38221800358 passed; immutable source review found no new defect. W2556 ten proposals received from authorized Jarvis chat; no device/runtime adoption claimed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2556RoadmapCountRepair": {
+    "base": "50404471b0a006f16bdaf098deee9588a8d7347e",
+    "sources": [
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 54816,
+        "sha256": "CF00A1915CDECFE16C85E5D7E081F5782A38BF4347A4A319A236882399CE5129",
+        "blob": "23aa4c070b0da76545aa138d0394945264d6e893"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2579642,
+        "sha256": "37CBAE7981D85F066A32C803776116AC8EA99EA8B5E52F2D497202A863B9A17A",
+        "blob": "3a432f4204d214d40647a4ec9d12fc220ec2ae3c"
+      }
+    ],
+    "note": "Fix Preflight38228088209 stale published summary:1342 total1081done259open2partial261raw260pretag. No checkbox closure and no gate/test weakening.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

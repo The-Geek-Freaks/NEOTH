@@ -289,3 +289,22 @@ Der begrenzte Rueckblick im benannten Chat findet kein separates bereits zugeste
 | JM-EX-07 | Bedingter JM-08-Connector | Haushaltsansage nur bei konkretem autorisiertem Connector: Entwurf, erforderliche Bestaetigung, Signalton, Zustellung, Terminal. Angenommen bedeutet nicht hoerbar abgespielt. |
 
 Die ersten sechs Eintraege praezisieren bestehende verbindliche Port-Pakete; die Ansage bleibt ein bedingter Vorschlag. Kein zweiter Delivery-/Session-/Timer-Owner. Performance-Ideen aus spaeteren Jarvis-Geraetefixes werden nur nach Messung am NEOTH-Ziel uebernommen; WebView-/Hardwaretricks und Modell-/Wake-Diagnostik werden nicht pauschal in Flutter portiert. Keine neue Roadmap-Checkbox und keine Schliessung bestehender Abnahmen.
+
+## W2556: received Jarvis handoff and existing NEOTH owners (2026-10-12)
+
+The source chat explicitly delivered ten open proposals. The detailed handoff SHA-256 is `DD3508DD4148A557DE2D90E56C341797C67C9739DA1E7269610B578A93646984`. A remote source read at `5571bc91a38e049d956aa52fd63709aea4921813` maps them as follows. This maps ownership and remaining work; it is not physical-device or release acceptance. W2554/JM-EX-01..07 remain in force.
+
+| Proposal | Existing owner to extend | Remaining boundary |
+| --- | --- | --- |
+| JARVIS-ADOPT-01 capability/leases | `SRC/neothd/src/daemon/companion_authority.rs`, `companion_runtime.rs`, `companion_protocol.rs` | Retain existing identity, revoke and status-lease authority; prove missing capability discovery and per-resource admission rather than adding another device coordinator. |
+| JARVIS-ADOPT-02 capture/talk | `SRC/neothd/src/media/conversation_loop.rs`, `live_capture.rs`, `playback.rs`, `conversation_scope.rs` | Existing session, audio-work permit and bounded queues already own capture/STT/TTS/playback. Extend missing behavior there and obtain actual device evidence. |
+| JARVIS-ADOPT-03 silence | Existing conversation session and cancellation scope | Proposed seven-second policy must use qualified speech, monotonic time and current session identity. No verified implementation or physical result is claimed. |
+| JARVIS-ADOPT-04 tool/subagent progress | `SRC/neothd/src/mcp/dispatch_loop.rs`, daemon companion activity projection, `bridges/companion-native/src/lib.rs` | Existing bounded real-MCP activity path supplies authority; extend missing activity types and prove the rendered device journey. |
+| JARVIS-ADOPT-05 presentation/saver | `apps/neoth_companion/lib/companion_controller.dart`, `conversation_models.dart` | Reuse current offline/history/epoch state. A saver and its interruption rules remain new work. |
+| JARVIS-ADOPT-06 camera/audio | Existing audio ownership plus companion presentation | Camera/PiP admission, native implementation and explicit microphone coexistence remain unproven. |
+| JARVIS-ADOPT-07 door call | Companion device authority and future authenticated camera event | No dedicated door-call admission/30-second lifecycle was established by this source read. |
+| JARVIS-ADOPT-08 announcement/media | Existing effect owner; for WhatsApp, `SRC/neothd/src/channels/whatsapp_baileys.rs` and bridge runtime/state/reconcile | Channel idempotency is an existing pattern, not proof of household-media capability. New targets require concrete adapters and outcome receipts. |
+| JARVIS-ADOPT-09 reconnect recovery | Companion authority/runtime/protocol and existing Flutter controller | Preserve durable markers, pending requests and bounded terminal history; add only demonstrated missing recovery cases. |
+| JARVIS-ADOPT-10 Android/Pi OTA | Existing packaging/release authenticity boundary, with platform adapters | Compiled APKs and desktop signing work do not establish signed mobile/Pi OTA. Adapter, interruption, rollback and device proof remain open. |
+
+Implementation order follows the existing owners: prove resource admission and session behavior first, then presentation/camera/target effects, then OTA. A proposed fixed duration is a product rule awaiting its NEOTH boundary test, not an imported claim that Jarvis already proved that constant. The source handoff is project feedback, not a replacement for user authority or NEOTH tests.

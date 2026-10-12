@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T09:06:20.5710756Z",
-  "validationStatus": "W2555 hosted synthetic comparison contracts accepted on5571bc91; W2556 proposals retained open; full acceptance remains source-bound and incomplete.",
+  "capturedUtc": "2026-10-12T09:12:33.8395195Z",
+  "validationStatus": "W2556 ten open Jarvis proposals reflected in derived release-gate counts; source owner mapping added; hosted recheck pending.",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5458,8 +5458,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 51373,
-      "sha256": "52FDB4726EBC4D0E9F005970252E35927AF49022B99A616DAED41397E9169BE3"
+      "bytes": 54816,
+      "sha256": "CF00A1915CDECFE16C85E5D7E081F5782A38BF4347A4A319A236882399CE5129"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5468,8 +5468,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2579076,
-      "sha256": "CF5B5144BBD020041AA173E7DFD59D12FE0097DB2925EC74E82215C6B9840166"
+      "bytes": 2579642,
+      "sha256": "37CBAE7981D85F066A32C803776116AC8EA99EA8B5E52F2D497202A863B9A17A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
