@@ -1,0 +1,81 @@
+{
+  "schema": "neoth.gold.wave2551.windows-repair-acceptance.v1",
+  "producer": "11f890affa65c3abeaae65ff7069f8fcac3c6a10",
+  "run": "38212546488",
+  "artifact": {
+    "id": 11732115158,
+    "name": "windows-storage-regressions-11f890affa65c3abeaae65ff7069f8fcac3c6a10",
+    "zipSha256": "f63b0f66810193595cacdd43394db77bc760de27063cc593dafe1d2b73d7c5a0",
+    "apiDigest": "sha256:f63b0f66810193595cacdd43394db77bc760de27063cc593dafe1d2b73d7c5a0"
+  },
+  "archiveEntries": 42,
+  "libraryCases": 9,
+  "integrationCases": 2,
+  "collectorContracts": 12,
+  "sourceBindings": 20,
+  "additionalSourceBindings": [
+    {
+      "path": ".github/workflows/windows-storage-regressions.yml",
+      "sha256": "59d5b947a9d9848f8da142308d143de78383060048aa12a1b4373a73a5282a80"
+    },
+    {
+      "path": ".github/scripts/verify_rust_case.py",
+      "sha256": "50a278c94011b1f526ad350780135334c625198fd3b62a2e4aac70b910bdc09a"
+    },
+    {
+      "path": ".github/scripts/test_verify_rust_case.py",
+      "sha256": "6a796ec65349cd2d34bf8e65a7f23eb7d945160ced453775525d4eaa0799a168"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "47ff179a45aa18995a72689426ea523e1777283f3aa2d36e66e12625080e75b5"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "194c0820394bf0d9b1e4f0971d2c7196a204846b4b223a7f048cb05e66eea387"
+    },
+    {
+      "path": "SRC/.config/nextest.toml",
+      "sha256": "279339b1c6c8b6d8af543ba28da71f092de560b563ca77590642a20d02e1ec47"
+    },
+    {
+      "path": "SRC/neothd/tests/attachment_wiring_source_gate.rs",
+      "sha256": "591a0931b86f2bc423f7a8338715061fc5a4dee8ebece622697b03bd669efddc"
+    },
+    {
+      "path": "SRC/neothd/tests/no_outbound_network.rs",
+      "sha256": "69ab5e91bc7c1644449bc77e62557fcdf026d740b0711ef207dc414eb03b3532"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "b1a174c20c8dcf6b614c17fd8a356345b023b0bec5da86fa78874ecdbd9c7dad"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "47ff179a45aa18995a72689426ea523e1777283f3aa2d36e66e12625080e75b5"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "6cb6188c26019cdede860a2ba599ea066f70c299b12b1ade16f60926087c43b0"
+    },
+    {
+      "path": ".github/workflows/windows-storage-regressions.yml",
+      "sha256": "59d5b947a9d9848f8da142308d143de78383060048aa12a1b4373a73a5282a80"
+    }
+  ],
+  "proofPath": "work/gold-20260906/wave2543-windows-collector-validation/ROOT_WINDOWS_REPAIR_ADMISSION.json",
+  "proofSha256": "269E7EC57D8EE8FF6E9563668E3C0D19C216433A3835DC7649227F038FB01F1A",
+  "binaryIdentityMatched": true,
+  "binaryDigestReceipt": "a81700f29af8a2948961b2be8d0a6f7e1a5177be0b81c11e6a429ea5220c82b2",
+  "admissionHelperChange": {
+    "reason": "Git Bash /d/ and Cargo D:/ path spelling; entire rest compared case-sensitively",
+    "beforeSha256": "3526B40CBF2054962BDB1DE3B437807CB8A752B26725ABB4F6FC8C5D7C84DE54",
+    "afterSha256": "40DFFE82ECD8005CBEF1006DA6DA32A7D537DCA4757E0A2036791E255163A487"
+  },
+  "accepted": true,
+  "localRuntimeExecuted": false,
+  "fullWindowsAccepted": false,
+  "nativeDeviceAccepted": false,
+  "releaseAccepted": false,
+  "goldComplete": false
+}

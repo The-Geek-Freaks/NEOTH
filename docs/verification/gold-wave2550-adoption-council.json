@@ -1,0 +1,1700 @@
+{
+  "schema": "neoth.adoption-council.v1",
+  "date": "2026-10-12",
+  "producer": "11f890affa65c3abeaae65ff7069f8fcac3c6a10",
+  "scope": "51 user inputs: 48 original GitHub repositories plus exact Jay article, Anatomy and MASS publication. Code-level sample, not exhaustive repository/security audit.",
+  "inputCount": 51,
+  "pinnedRepositories": 50,
+  "unresolvedInputs": 1,
+  "method": {
+    "remoteResearchAgents": 9,
+    "rootOnlyLocalOperations": true,
+    "localRuntimeExecuted": false,
+    "thirdPartyInstalled": false,
+    "sourceImported": false,
+    "limits": "Features, release/change evidence, licenses and at least two concrete source bodies per resolved repository sampled. Skill repositories use instruction assets as executable workflow source, not falsely characterized as product code. Upstream test/benchmark claims not independently run.",
+    "cleanRoom": "No clean-room claim. Reading source then rewriting does not establish independent clean-room separation. Any actual reuse needs applicable file/asset terms and notices; copyleft is not an automatic prohibition.",
+    "council": "Independent domain reports followed by one cross-domain critique; Root decisions preserve disagreement and existing product ownership, not unanimous correctness."
+  },
+  "sourceRecords": [
+    {
+      "id": "SRC-01",
+      "group": "finance-work",
+      "input": "LosaLosSantos/aurelio-finance",
+      "url": "https://github.com/LosaLosSantos/aurelio-finance",
+      "repo": "LosaLosSantos/aurelio-finance",
+      "sha": "29727d84416b4f8d6c57381c4a8f27a08fbd78d4",
+      "commitDate": "2026-10-11",
+      "license": "MIT",
+      "releaseOrChange": "Recent b6a03ac adds persisted before/after changes to chat context; upstream test claims not rerun.",
+      "implementationSources": [
+        {
+          "path": "backend/app/chat.py",
+          "url": "https://github.com/LosaLosSantos/aurelio-finance/blob/29727d84416b4f8d6c57381c4a8f27a08fbd78d4/backend/app/chat.py"
+        },
+        {
+          "path": "backend/app/chain.py",
+          "url": "https://github.com/LosaLosSantos/aurelio-finance/blob/29727d84416b4f8d6c57381c4a8f27a08fbd78d4/backend/app/chain.py"
+        }
+      ],
+      "findings": "Chat separates proposed changes from confirmed CRUD/UoW effects; bounded analyst/confidant calls and per-step costs.",
+      "decision": "Reuse existing NEOTH approval/effect owner; add user-visible verified before/after receipts where absent.",
+      "work": "A04"
+    },
+    {
+      "id": "SRC-02",
+      "group": "finance-work",
+      "input": "Cloeille/picsou-finance",
+      "url": "https://github.com/Cloeille/picsou-finance",
+      "repo": "Cloeille/picsou-finance",
+      "sha": "b0a038ffd83100f98cd8b1e50cf52a87e5e23aae",
+      "commitDate": null,
+      "license": "Apache-2.0 plus Commons Clause/custom additional conditions; concrete reuse compatibility unresolved",
+      "releaseOrChange": "Bank-sync docs distinguish active EnableBanking and disabled/unvalidated Powens; release not established.",
+      "implementationSources": [
+        {
+          "path": "backend/src/main/java/com/picsou/port/BankConnectorPort.java",
+          "url": "https://github.com/Cloeille/picsou-finance/blob/b0a038ffd83100f98cd8b1e50cf52a87e5e23aae/backend/src/main/java/com/picsou/port/BankConnectorPort.java"
+        },
+        {
+          "path": "backend/src/main/java/com/picsou/service/SyncService.java",
+          "url": "https://github.com/Cloeille/picsou-finance/blob/b0a038ffd83100f98cd8b1e50cf52a87e5e23aae/backend/src/main/java/com/picsou/service/SyncService.java"
+        }
+      ],
+      "findings": "OAuth state binds member and nonce; a consumed-session checkpoint precedes fallible balance updates; retries and reconnect preserve external identity.",
+      "decision": "Use connector state/checkpoint requirements only; no banking product or source import.",
+      "work": "A04"
+    },
+    {
+      "id": "SRC-03",
+      "group": "finance-work",
+      "input": "Worklenz/worklenz",
+      "url": "https://github.com/Worklenz/worklenz",
+      "repo": "Worklenz/worklenz",
+      "sha": "98a874697806dec810600755cc7c4e6c33cb40a8",
+      "commitDate": "2026-10-09",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "Current commit is dependency maintenance, not proof of a newly shipped recurrence feature.",
+      "implementationSources": [
+        {
+          "path": "worklenz-backend/src/controllers/task-recurring-controller.ts",
+          "url": "https://github.com/Worklenz/worklenz/blob/98a874697806dec810600755cc7c4e6c33cb40a8/worklenz-backend/src/controllers/task-recurring-controller.ts"
+        },
+        {
+          "path": "worklenz-backend/src/cron_jobs/recurring-tasks.ts",
+          "url": "https://github.com/Worklenz/worklenz/blob/98a874697806dec810600755cc7c4e6c33cb40a8/worklenz-backend/src/cron_jobs/recurring-tasks.ts"
+        }
+      ],
+      "findings": "Recurring task configuration and scheduled instance creation are separate responsibilities.",
+      "decision": "Optional recurring task templates on existing scheduler; combine with CMMS, not a second project manager.",
+      "work": "C01"
+    },
+    {
+      "id": "SRC-04",
+      "group": "finance-work",
+      "input": "Grashjs/cmms",
+      "url": "https://github.com/Grashjs/cmms",
+      "repo": "Grashjs/cmms",
+      "sha": "347c0e24995c0205d926c1f2f6851665283d73a8",
+      "commitDate": "2026-10-05",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "Current change fixes translated placeholders; root README unavailable in council retrieval.",
+      "implementationSources": [
+        {
+          "path": "api/src/main/java/com/grash/model/WorkOrder.java",
+          "url": "https://github.com/Grashjs/cmms/blob/347c0e24995c0205d926c1f2f6851665283d73a8/api/src/main/java/com/grash/model/WorkOrder.java"
+        },
+        {
+          "path": "api/src/main/java/com/grash/model/PreventiveMaintenance.java",
+          "url": "https://github.com/Grashjs/cmms/blob/347c0e24995c0205d926c1f2f6851665283d73a8/api/src/main/java/com/grash/model/PreventiveMaintenance.java"
+        }
+      ],
+      "findings": "Work-order status/ownership and preventive-maintenance schedule are distinct model concepts.",
+      "decision": "Optional accountable recurring task instances; no separate maintenance suite.",
+      "work": "C01"
+    },
+    {
+      "id": "SRC-05",
+      "group": "finance-work",
+      "input": "jo-duchan/tapflow",
+      "url": "https://github.com/jo-duchan/tapflow",
+      "repo": "jo-duchan/tapflow",
+      "sha": "72c761d59e08309122c6ce7f4691058cc350e003",
+      "commitDate": "2026-10-11",
+      "license": "MIT",
+      "releaseOrChange": "Latest stores flow video during upload; iOS changelog describes bounded reconnect/teardown; roadmap action timeline remains unimplemented.",
+      "implementationSources": [
+        {
+          "path": "packages/cli/src/lib/approval-prompt.ts",
+          "url": "https://github.com/jo-duchan/tapflow/blob/72c761d59e08309122c6ce7f4691058cc350e003/packages/cli/src/lib/approval-prompt.ts"
+        },
+        {
+          "path": "packages/android-agent/src/emulator/EmulatorVideo.ts",
+          "url": "https://github.com/jo-duchan/tapflow/blob/72c761d59e08309122c6ce7f4691058cc350e003/packages/android-agent/src/emulator/EmulatorVideo.ts"
+        }
+      ],
+      "findings": "Explicit approval UI; emulator frames use bounded backpressure and teardown handles EPIPE/late frames. Protocol docs bind sessions to authenticated user/client identity.",
+      "decision": "Keep as optional remote device-test adapter reference; no local emulators or runtime under hold.",
+      "work": "C02"
+    },
+    {
+      "id": "SRC-06",
+      "group": "finance-work",
+      "input": "prasadpatil25/MindSpark",
+      "url": "https://github.com/prasadpatil25/MindSpark",
+      "repo": "prasadpatil25/MindSpark",
+      "sha": "f2fd2f551bb4fc240b83f72162ae2c5ca26613ef",
+      "commitDate": "2026-09-29",
+      "license": "MIT",
+      "releaseOrChange": "cd97615 hardens legacy map claim, metadata and relay event authority.",
+      "implementationSources": [
+        {
+          "path": "worker/auth-core.js",
+          "url": "https://github.com/prasadpatil25/MindSpark/blob/f2fd2f551bb4fc240b83f72162ae2c5ca26613ef/worker/auth-core.js"
+        },
+        {
+          "path": "worker/collab-do.js",
+          "url": "https://github.com/prasadpatil25/MindSpark/blob/f2fd2f551bb4fc240b83f72162ae2c5ca26613ef/worker/collab-do.js"
+        }
+      ],
+      "findings": "Owner/editor/viewer capabilities and protected-resource claims; relay must not accept server-owned event types from clients.",
+      "decision": "Map to existing NEOTH companion authority and regressions; do not create a second collaboration service.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-07",
+      "group": "documents-data",
+      "input": "MODSetter/SurfSense",
+      "url": "https://github.com/MODSetter/SurfSense",
+      "repo": "MODSetter/SurfSense",
+      "sha": "552e05631c7df9b6252c21aa94cd0302fd00e7ce",
+      "commitDate": "2026-10-09",
+      "license": "Apache-2.0 except proprietary subtree under BSL-1.1",
+      "releaseOrChange": "Desktop v2.2.0; no changelog found by council.",
+      "implementationSources": [
+        {
+          "path": "surfsense_backend/app/indexing_pipeline/document_chunker.py",
+          "url": "https://github.com/MODSetter/SurfSense/blob/552e05631c7df9b6252c21aa94cd0302fd00e7ce/surfsense_backend/app/indexing_pipeline/document_chunker.py"
+        },
+        {
+          "path": "surfsense_backend/app/indexing_pipeline/document_embedder.py",
+          "url": "https://github.com/MODSetter/SurfSense/blob/552e05631c7df9b6252c21aa94cd0302fd00e7ce/surfsense_backend/app/indexing_pipeline/document_embedder.py"
+        }
+      ],
+      "findings": "Markdown table-aware chunks retain table structure and line spans; embeddings follow indexing chunks.",
+      "decision": "Native bounded table/section chunks and stable citation anchors, following NEOTH staging authority.",
+      "work": "A03"
+    },
+    {
+      "id": "SRC-08",
+      "group": "documents-data",
+      "input": "baserow/baserow",
+      "url": "https://github.com/baserow/baserow",
+      "repo": "baserow/baserow",
+      "sha": "ae95e512e1675db6cb1b73e8ac2266b9369b4061",
+      "commitDate": "2026-10-09",
+      "license": "OSE/client MIT; docs CC-BY-SA; premium/enterprise have separate terms",
+      "releaseOrChange": "2.4.0 September 30: row action sequences, field permissions, workspace providers and workflow cancellation.",
+      "implementationSources": [
+        {
+          "path": "backend/src/baserow/contrib/database/table/handler.py",
+          "url": "https://github.com/baserow/baserow/blob/ae95e512e1675db6cb1b73e8ac2266b9369b4061/backend/src/baserow/contrib/database/table/handler.py"
+        },
+        {
+          "path": "backend/src/baserow/contrib/database/rows/handler.py",
+          "url": "https://github.com/baserow/baserow/blob/ae95e512e1675db6cb1b73e8ac2266b9369b4061/backend/src/baserow/contrib/database/rows/handler.py"
+        }
+      ],
+      "findings": "Dynamic table/row mutations include transaction, dependency-cache and search maintenance.",
+      "decision": "Optional read-only view snapshot connector with stable row/revision/source identity; no dynamic database engine import.",
+      "work": "C03"
+    },
+    {
+      "id": "SRC-09",
+      "group": "documents-data",
+      "input": "Systaro/DocuVault",
+      "url": "https://github.com/Systaro/DocuVault",
+      "repo": "Systaro/DocuVault",
+      "sha": "d82c07944df7013303abf1539df625fc04dfa8e0",
+      "commitDate": "2026-10-03",
+      "license": "BSL-1.1 with competitive-service restriction and future Apache conversion",
+      "releaseOrChange": "v0.8.5 commit; v0.8.4 September 30 includes AI-created separate documents.",
+      "implementationSources": [
+        {
+          "path": "backend/src/main/kotlin/com/docuvault/service/DocumentPersistService.kt",
+          "url": "https://github.com/Systaro/DocuVault/blob/d82c07944df7013303abf1539df625fc04dfa8e0/backend/src/main/kotlin/com/docuvault/service/DocumentPersistService.kt"
+        },
+        {
+          "path": "backend/src/main/kotlin/com/docuvault/service/DocumentLineageService.kt",
+          "url": "https://github.com/Systaro/DocuVault/blob/d82c07944df7013303abf1539df625fc04dfa8e0/backend/src/main/kotlin/com/docuvault/service/DocumentLineageService.kt"
+        }
+      ],
+      "findings": "Persistence spans file/Git, database and embeddings; lineage traces moves and original authorship.",
+      "decision": "Native logical-document lineage; preserve revisions and citation identity across rename, do not conflate content equality with identity.",
+      "work": "A03"
+    },
+    {
+      "id": "SRC-10",
+      "group": "documents-data",
+      "input": "gyaaniguy/personal-drive",
+      "url": "https://github.com/gyaaniguy/personal-drive",
+      "repo": "gyaaniguy/personal-drive",
+      "sha": "3ce0d278a4511e64035a45522329c3997572e796",
+      "commitDate": "2026-10-02",
+      "license": "Apache-2.0",
+      "releaseOrChange": "v2.0 September 13; changelog includes queued-upload cancellation, encrypted ZIPs and viewer/path handling.",
+      "implementationSources": [
+        {
+          "path": "app/Http/Controllers/DriveControllers/FileManagerController.php",
+          "url": "https://github.com/gyaaniguy/personal-drive/blob/3ce0d278a4511e64035a45522329c3997572e796/app/Http/Controllers/DriveControllers/FileManagerController.php"
+        },
+        {
+          "path": "app/Http/Controllers/ShareControllers/ShareFilesGenController.php",
+          "url": "https://github.com/gyaaniguy/personal-drive/blob/3ce0d278a4511e64035a45522329c3997572e796/app/Http/Controllers/ShareControllers/ShareFilesGenController.php"
+        }
+      ],
+      "findings": "File staging/share controls, including direct shares restricted to a single file.",
+      "decision": "Add cancel/staging proof only if absent in current document route; do not build a duplicate drive.",
+      "work": "A03"
+    },
+    {
+      "id": "SRC-11",
+      "group": "documents-data",
+      "input": "sorathiya903/pastedb",
+      "url": "https://github.com/sorathiya903/pastedb",
+      "repo": "sorathiya903/pastedb",
+      "sha": "be621edb655fa3d5f6a6c2fb3b8cb4c813feaa95",
+      "commitDate": "2026-10-09",
+      "license": "MIT",
+      "releaseOrChange": "No release/changelog found.",
+      "implementationSources": [
+        {
+          "path": "backend/main.py",
+          "url": "https://github.com/sorathiya903/pastedb/blob/be621edb655fa3d5f6a6c2fb3b8cb4c813feaa95/backend/main.py"
+        },
+        {
+          "path": "backend/collab.py",
+          "url": "https://github.com/sorathiya903/pastedb/blob/be621edb655fa3d5f6a6c2fb3b8cb4c813feaa95/backend/collab.py"
+        }
+      ],
+      "findings": "Mongo TTL/search with raw API-key lookup and in-process collaborative presence; advertised expiry is not durable audit proof.",
+      "decision": "Defer paste/collaboration service; any ephemeral export must separate payload expiry from retained audit metadata.",
+      "work": "C04"
+    },
+    {
+      "id": "SRC-12",
+      "group": "documents-data",
+      "input": "AnanthaRajuC/QueryAPIGate",
+      "url": "https://github.com/AnanthaRajuC/QueryAPIGate",
+      "repo": "AnanthaRajuC/QueryAPIGate",
+      "sha": "087e9419348658bded66f7551c9ab405516fa976",
+      "commitDate": "2026-10-12",
+      "license": "FSL-1.1-MIT; present noncompeting terms, later MIT",
+      "releaseOrChange": "Current Helm upgrade tests; changelog labels several MCP/OAuth/quota/audit features experimental.",
+      "implementationSources": [
+        {
+          "path": "queryapigate/auditchain.py",
+          "url": "https://github.com/AnanthaRajuC/QueryAPIGate/blob/087e9419348658bded66f7551c9ab405516fa976/queryapigate/auditchain.py"
+        },
+        {
+          "path": "queryapigate/services/audit.py",
+          "url": "https://github.com/AnanthaRajuC/QueryAPIGate/blob/087e9419348658bded66f7551c9ab405516fa976/queryapigate/services/audit.py"
+        }
+      ],
+      "findings": "Transactional audit hash chain, HMAC rotation and retained anchors.",
+      "decision": "NEOTH already has authenticated WAL/receipt anchors and history-bound key retention. Evidence/reference only; no new audit engine.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-13",
+      "group": "communications",
+      "input": "getopenpost/openpost",
+      "url": "https://github.com/getopenpost/openpost",
+      "repo": "getopenpost/openpost",
+      "sha": "2b81d9d983a2f9701238ea9500c6bb7d030017fa",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "v7.17.5 October 11.",
+      "implementationSources": [
+        {
+          "path": "apps/cli/internal/commands/publication.go",
+          "url": "https://github.com/getopenpost/openpost/blob/2b81d9d983a2f9701238ea9500c6bb7d030017fa/apps/cli/internal/commands/publication.go"
+        },
+        {
+          "path": "apps/cli/internal/commands/schedule.go",
+          "url": "https://github.com/getopenpost/openpost/blob/2b81d9d983a2f9701238ea9500c6bb7d030017fa/apps/cli/internal/commands/schedule.go"
+        }
+      ],
+      "findings": "Distinct draft/rendition/validation/publish/retry operations; expected revision guards updates; weekly schedules validated separately.",
+      "decision": "Add provider-specific draft/rendition binding through current canonical effect authority, optional self-hosted API adapter later.",
+      "work": "A04"
+    },
+    {
+      "id": "SRC-14",
+      "group": "communications",
+      "input": "Maildun/maildun",
+      "url": "https://github.com/Maildun/maildun",
+      "repo": "Maildun/maildun",
+      "sha": "9077877c8d0c307c99dc41cf5dccbcdde41c109f",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0 plus stated section-7 attribution/origin/trademark terms; root license inspected, compatibility not resolved",
+      "releaseOrChange": "v0.1.0-beta.1 October 2; 9068aab makes unsubscribe/system merge fields server-owned.",
+      "implementationSources": [
+        {
+          "path": "app/Actions/Transactional/QueueTransactionalEmail.php",
+          "url": "https://github.com/Maildun/maildun/blob/9077877c8d0c307c99dc41cf5dccbcdde41c109f/app/Actions/Transactional/QueueTransactionalEmail.php"
+        },
+        {
+          "path": "app/Actions/Automations/AdvanceAutomationRun.php",
+          "url": "https://github.com/Maildun/maildun/blob/9077877c8d0c307c99dc41cf5dccbcdde41c109f/app/Actions/Automations/AdvanceAutomationRun.php"
+        }
+      ],
+      "findings": "Idempotency key bound to canonical template/recipient/data fingerprint; mismatches conflict; duplicate insert races recover prior record.",
+      "decision": "Use as cross-adapter regression requirements; existing canonical admission remains owner. No bulk-mail platform.",
+      "work": "A04"
+    },
+    {
+      "id": "SRC-15",
+      "group": "communications",
+      "input": "karatektus/pl_mail",
+      "url": "https://github.com/karatektus/pl_mail",
+      "repo": "karatektus/pl_mail",
+      "sha": "f19818fa5098385e5e233a6673f4105a44006da1",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "No releases; current delete-forever operation defaults off per user.",
+      "implementationSources": [
+        {
+          "path": "src/Service/Imap/ImapAccountSyncer.php",
+          "url": "https://github.com/karatektus/pl_mail/blob/f19818fa5098385e5e233a6673f4105a44006da1/src/Service/Imap/ImapAccountSyncer.php"
+        },
+        {
+          "path": "src/Service/Rule/MailRuleEngine.php",
+          "url": "https://github.com/karatektus/pl_mail/blob/f19818fa5098385e5e233a6673f4105a44006da1/src/Service/Rule/MailRuleEngine.php"
+        }
+      ],
+      "findings": "Mailbox structure sync first, vanished folders skipped, individual failure cleanup; ordered rules with explicit stop behavior.",
+      "decision": "Inspect NEOTH email per-unit recovery gap; preserve prior successful sink effects and explicit unknown outcomes.",
+      "work": "A04"
+    },
+    {
+      "id": "SRC-16",
+      "group": "communications",
+      "input": "degoog-org/degoog",
+      "url": "https://github.com/degoog-org/degoog",
+      "repo": "degoog-org/degoog",
+      "sha": "5cd67cec74d38944792db498b604790624a1cbbe",
+      "commitDate": "2026-10-10",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "1.1.0 October 10.",
+      "implementationSources": [
+        {
+          "path": "src/server/search/engine-selection.ts",
+          "url": "https://github.com/degoog-org/degoog/blob/5cd67cec74d38944792db498b604790624a1cbbe/src/server/search/engine-selection.ts"
+        },
+        {
+          "path": "src/server/search/engine-timeout.ts",
+          "url": "https://github.com/degoog-org/degoog/blob/5cd67cec74d38944792db498b604790624a1cbbe/src/server/search/engine-timeout.ts"
+        }
+      ],
+      "findings": "Input/capability engine selection, stable masked config fingerprint, bounded provider timeout.",
+      "decision": "Optional bounded federated-search adapter descriptors after registry overlap check; no arbitrary executable plugin framework.",
+      "work": "C05"
+    },
+    {
+      "id": "SRC-17",
+      "group": "communications",
+      "input": "helpin-ai/helpin",
+      "url": "https://github.com/helpin-ai/helpin",
+      "repo": "helpin-ai/helpin",
+      "sha": "7d50197435c797ad329f71888173f8bdecc8dd88",
+      "commitDate": "2026-10-11",
+      "license": "Community AGPL-3.0-only; any ee directory enterprise; listed SDK/widget directories Apache-2.0; root scope confirmed",
+      "releaseOrChange": "server-v0.95.474; recent reversible conversation merging and edge-case correction.",
+      "implementationSources": [
+        {
+          "path": "server/internal/agentcontract/interaction_contracts.go",
+          "url": "https://github.com/helpin-ai/helpin/blob/7d50197435c797ad329f71888173f8bdecc8dd88/server/internal/agentcontract/interaction_contracts.go"
+        },
+        {
+          "path": "server/internal/decision/policy.go",
+          "url": "https://github.com/helpin-ai/helpin/blob/7d50197435c797ad329f71888173f8bdecc8dd88/server/internal/decision/policy.go"
+        }
+      ],
+      "findings": "Typed ask/approval/checkpoint contracts; explicit off/shadow/primary semantic routing and limits.",
+      "decision": "Reuse existing consent owner; extend typed mobile projection/handoff only for demonstrated gaps. Shadow cannot dispatch.",
+      "work": "A01,A05"
+    },
+    {
+      "id": "SRC-18",
+      "group": "communications",
+      "input": "zackb/tether",
+      "url": "https://github.com/zackb/tether",
+      "repo": "zackb/tether",
+      "sha": "62b4670b50ce5422e4ceeb510849790a512ee10d",
+      "commitDate": "2026-10-10",
+      "license": "MIT",
+      "releaseOrChange": "v0.2.37 October 10.",
+      "implementationSources": [
+        {
+          "path": "src/core/src/bluetooth/messages.cpp",
+          "url": "https://github.com/zackb/tether/blob/62b4670b50ce5422e4ceeb510849790a512ee10d/src/core/src/bluetooth/messages.cpp"
+        },
+        {
+          "path": "src/core/src/otp.cpp",
+          "url": "https://github.com/zackb/tether/blob/62b4670b50ce5422e4ceeb510849790a512ee10d/src/core/src/otp.cpp"
+        }
+      ],
+      "findings": "Deterministic local/provider echo reconciliation and bounded retention; OTP TTL and registrable-domain binding.",
+      "decision": "Apply proven-ID echo semantics to Jarvis/WhatsApp mobile port; Apple/MAP stack and OTP automation deferred.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-19",
+      "group": "scheduling-ops",
+      "input": "harshalgajjar/Reminal",
+      "url": "https://github.com/harshalgajjar/Reminal",
+      "repo": "harshalgajjar/Reminal",
+      "sha": "06da92d4b7f26f9248546067b3059c9953d049c5",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0-or-later",
+      "releaseOrChange": "v3.16.4; latest changelog-format checks.",
+      "implementationSources": [
+        {
+          "path": "internal/session/restore.go",
+          "url": "https://github.com/harshalgajjar/Reminal/blob/06da92d4b7f26f9248546067b3059c9953d049c5/internal/session/restore.go"
+        },
+        {
+          "path": "internal/atrest/atrest.go",
+          "url": "https://github.com/harshalgajjar/Reminal/blob/06da92d4b7f26f9248546067b3059c9953d049c5/internal/atrest/atrest.go"
+        }
+      ],
+      "findings": "Sealed restore uses locks/atomic publication before legacy deletion; keystore transient lock distinguished from lost key; corrupt state quarantined.",
+      "decision": "Reference existing NEOTH restore/authority tests; no terminal manager import.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-20",
+      "group": "scheduling-ops",
+      "input": "flohoss/gocron",
+      "url": "https://github.com/flohoss/gocron",
+      "repo": "flohoss/gocron",
+      "sha": "1d4629f282eec3510e1b041f5d22b8a626ee62f8",
+      "commitDate": "2026-10-05",
+      "license": "MIT",
+      "releaseOrChange": "v0.13.2 warns about timezone configuration.",
+      "implementationSources": [
+        {
+          "path": "internal/scheduler/scheduler.go",
+          "url": "https://github.com/flohoss/gocron/blob/1d4629f282eec3510e1b041f5d22b8a626ee62f8/internal/scheduler/scheduler.go"
+        },
+        {
+          "path": "services/jobs.go",
+          "url": "https://github.com/flohoss/gocron/blob/1d4629f282eec3510e1b041f5d22b8a626ee62f8/services/jobs.go"
+        }
+      ],
+      "findings": "Stop context, persisted jobs, boot recovery and rejected config preserving prior schedule.",
+      "decision": "Current NEOTH scheduler already has generation-scoped completion and rejected reload. Map proof, no new scheduler.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-21",
+      "group": "scheduling-ops",
+      "input": "ptweezy/cronstable",
+      "url": "https://github.com/ptweezy/cronstable",
+      "repo": "ptweezy/cronstable",
+      "sha": "1e32c6cdbe3491b90b58f928ba0fb1facf528fad",
+      "commitDate": "2026-10-12",
+      "license": "MIT software; brand assets reserved separately",
+      "releaseOrChange": "1.2.63 October 11; current dependency bump.",
+      "implementationSources": [
+        {
+          "path": "cronstable/cron.py",
+          "url": "https://github.com/ptweezy/cronstable/blob/1e32c6cdbe3491b90b58f928ba0fb1facf528fad/cronstable/cron.py"
+        },
+        {
+          "path": "cronstable/recovery.py",
+          "url": "https://github.com/ptweezy/cronstable/blob/1e32c6cdbe3491b90b58f928ba0fb1facf528fad/cronstable/recovery.py"
+        }
+      ],
+      "findings": "Leases, retry/timeout pools; content-bound DAG recovery refuses changed config/nonterminal state and preserves completed nodes.",
+      "decision": "Selective replay only behind plan/version/effect receipts and no automatic retry of unknown external effects.",
+      "work": "A01"
+    },
+    {
+      "id": "SRC-22",
+      "group": "scheduling-ops",
+      "input": "rustrak/rustrak",
+      "url": "https://github.com/rustrak/rustrak",
+      "repo": "rustrak/rustrak",
+      "sha": "ad995239537ac72e916f7a0bed20df151622d751",
+      "commitDate": "2026-10-09",
+      "license": "GPL-3.0",
+      "releaseOrChange": "v0.16.2 unhandled sessions.",
+      "implementationSources": [
+        {
+          "path": "packages/client/src/result.ts",
+          "url": "https://github.com/rustrak/rustrak/blob/ad995239537ac72e916f7a0bed20df151622d751/packages/client/src/result.ts"
+        },
+        {
+          "path": "packages/mcp/src/tools/agents.ts",
+          "url": "https://github.com/rustrak/rustrak/blob/ad995239537ac72e916f7a0bed20df151622d751/packages/mcp/src/tools/agents.ts"
+        }
+      ],
+      "findings": "Typed failure distinct from absent data; bounded trace, latency, token and tool-call queries.",
+      "decision": "Add explicit unknown/cost-attribution views using NEOTH telemetry; no observability server import.",
+      "work": "A02"
+    },
+    {
+      "id": "SRC-23",
+      "group": "scheduling-ops",
+      "input": "TimWitzdam/GitSave",
+      "url": "https://github.com/TimWitzdam/GitSave",
+      "repo": "TimWitzdam/GitSave",
+      "sha": "1f01edc3d586fb7ab9fce7169a4cd75284168a9b",
+      "commitDate": "2026-09-26",
+      "license": "Apache-2.0",
+      "releaseOrChange": "v1.4.0 secret generator replacement.",
+      "implementationSources": [
+        {
+          "path": "backend/services/schedule.service.ts",
+          "url": "https://github.com/TimWitzdam/GitSave/blob/1f01edc3d586fb7ab9fce7169a4cd75284168a9b/backend/services/schedule.service.ts"
+        },
+        {
+          "path": "backend/server.ts",
+          "url": "https://github.com/TimWitzdam/GitSave/blob/1f01edc3d586fb7ab9fce7169a4cd75284168a9b/backend/server.ts"
+        }
+      ],
+      "findings": "Scheduled mirror clone, history/snapshots, retention and timeouts.",
+      "decision": "Optional backup catalog after core acceptance; same existing scheduler and owner, preserve last verified generation.",
+      "work": "C06"
+    },
+    {
+      "id": "SRC-24",
+      "group": "scheduling-ops",
+      "input": "mvschwarz/openrig",
+      "url": "https://github.com/mvschwarz/openrig",
+      "repo": "mvschwarz/openrig",
+      "sha": "3001cc436656c435e54425443e708e3e2d8c7d68",
+      "commitDate": "2026-10-11",
+      "license": "Apache-2.0",
+      "releaseOrChange": "v0.6.9 restore guidance.",
+      "implementationSources": [
+        {
+          "path": "packages/cli/src/atomic-text-write.ts",
+          "url": "https://github.com/mvschwarz/openrig/blob/3001cc436656c435e54425443e708e3e2d8c7d68/packages/cli/src/atomic-text-write.ts"
+        },
+        {
+          "path": "packages/cli/src/commands/reconcile-session.ts",
+          "url": "https://github.com/mvschwarz/openrig/blob/3001cc436656c435e54425443e708e3e2d8c7d68/packages/cli/src/commands/reconcile-session.ts"
+        }
+      ],
+      "findings": "Private temporary-file publication; reconciliation can observe/rebind session without launching or sending input; unknown continuity remains unknown.",
+      "decision": "Recovery regression reference for existing owner-bound NEOTH state; no new agent manager.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-25",
+      "group": "personal-apps",
+      "input": "ancsemi/Haven",
+      "url": "https://github.com/ancsemi/Haven",
+      "repo": "ancsemi/Haven",
+      "sha": "0c0e8af1c8d2805b7870a29c5143725529fdb1bf",
+      "commitDate": "2026-10-12",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "Current DM GIF button change; not a privacy semantic change.",
+      "implementationSources": [
+        {
+          "path": "src/auth.js",
+          "url": "https://github.com/ancsemi/Haven/blob/0c0e8af1c8d2805b7870a29c5143725529fdb1bf/src/auth.js"
+        },
+        {
+          "path": "src/deletedAttachments.js",
+          "url": "https://github.com/ancsemi/Haven/blob/0c0e8af1c8d2805b7870a29c5143725529fdb1bf/src/deletedAttachments.js"
+        }
+      ],
+      "findings": "Purpose-bound TOTP/session tokens; two-stage attachment retention sweeper with retry on locked files. Does not establish derived-data erasure completeness.",
+      "decision": "Use retention retry visibility as extension of current lifecycle; no chat server import.",
+      "work": "A03"
+    },
+    {
+      "id": "SRC-26",
+      "group": "personal-apps",
+      "input": "yuzicapp/yuzic",
+      "url": "https://github.com/yuzicapp/yuzic",
+      "repo": "yuzicapp/yuzic",
+      "sha": "4305d585cc47a5d1eb853ad3851a6c7a5c9c2f24",
+      "commitDate": "2026-09-30",
+      "license": "GPL-3.0",
+      "releaseOrChange": "Current merge Release 2.17.0 supersedes earlier 2.1.1 search result.",
+      "implementationSources": [
+        {
+          "path": "src/features/offline/offlineMutations.ts",
+          "url": "https://github.com/yuzicapp/yuzic/blob/4305d585cc47a5d1eb853ad3851a6c7a5c9c2f24/src/features/offline/offlineMutations.ts"
+        },
+        {
+          "path": "src/features/offline/networkPolicy.ts",
+          "url": "https://github.com/yuzicapp/yuzic/blob/4305d585cc47a5d1eb853ad3851a6c7a5c9c2f24/src/features/offline/networkPolicy.ts"
+        }
+      ],
+      "findings": "Typed persisted destination-bound queue; target-specific collapse; original scrobble time/expiry; disconnect drops. Unknown network is allowed in its Wi-Fi policy.",
+      "decision": "Reuse queue/expiry requirements through NEOTH canonical owner. Explicit per-capability unknown-network policy; do not inherit permissive music-download policy.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-27",
+      "group": "personal-apps",
+      "input": "open-wanderer/wanderer",
+      "url": "https://github.com/open-wanderer/wanderer",
+      "repo": "open-wanderer/wanderer",
+      "sha": "e343edf761a35d8c543a9c99e4599ded15556d6f",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "v0.21.0 September 28; current dockerignore maintenance.",
+      "implementationSources": [
+        {
+          "path": "db/hooks/api_tokens.go",
+          "url": "https://github.com/open-wanderer/wanderer/blob/e343edf761a35d8c543a9c99e4599ded15556d6f/db/hooks/api_tokens.go"
+        },
+        {
+          "path": "db/federation/delete.go",
+          "url": "https://github.com/open-wanderer/wanderer/blob/e343edf761a35d8c543a9c99e4599ded15556d6f/db/federation/delete.go"
+        }
+      ],
+      "findings": "Raw-once API token with hashed storage; deletes activity snapshots and propagates deletion to recorded audiences.",
+      "decision": "Reference derived/replicated erasure receipts; optional GPX read adapter remains separate.",
+      "work": "A03,C07"
+    },
+    {
+      "id": "SRC-28",
+      "group": "personal-apps",
+      "input": "dedicatedcode/reitti",
+      "url": "https://github.com/dedicatedcode/reitti",
+      "repo": "dedicatedcode/reitti",
+      "sha": "3fcd4db2871954db1e4ca7cf2e2a702fb4510dae",
+      "commitDate": "2026-10-10",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "Older v5.1.0 release is not current behavior proof; current source/date checked, full semantic diff not established.",
+      "implementationSources": [
+        {
+          "path": "src/main/java/com/dedicatedcode/reitti/controller/api/v2/LocationApiController.java",
+          "url": "https://github.com/dedicatedcode/reitti/blob/3fcd4db2871954db1e4ca7cf2e2a702fb4510dae/src/main/java/com/dedicatedcode/reitti/controller/api/v2/LocationApiController.java"
+        },
+        {
+          "path": "src/main/java/com/dedicatedcode/reitti/controller/api/ProcessedVisitApiController.java",
+          "url": "https://github.com/dedicatedcode/reitti/blob/3fcd4db2871954db1e4ca7cf2e2a702fb4510dae/src/main/java/com/dedicatedcode/reitti/controller/api/ProcessedVisitApiController.java"
+        }
+      ],
+      "findings": "Separate raw location streams and zone-aware processed visit summaries; time/access-level guards. Full guard-chain behavior not audited.",
+      "decision": "Optional location context with independently specified raw/derived retention and time-range scopes; no default tracking.",
+      "work": "C07"
+    },
+    {
+      "id": "SRC-29",
+      "group": "personal-apps",
+      "input": "TraceApps/cooktrace",
+      "url": "https://github.com/TraceApps/cooktrace",
+      "repo": "TraceApps/cooktrace",
+      "sha": "870bdc51257776f68250091f4177db3383b81c13",
+      "commitDate": "2026-10-11",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "1.4.0 October 2; latest README Unraid update.",
+      "implementationSources": [
+        {
+          "path": "server/lib/api-tokens.js",
+          "url": "https://github.com/TraceApps/cooktrace/blob/870bdc51257776f68250091f4177db3383b81c13/server/lib/api-tokens.js"
+        },
+        {
+          "path": "server/lib/mcp/server.js",
+          "url": "https://github.com/TraceApps/cooktrace/blob/870bdc51257776f68250091f4177db3383b81c13/server/lib/mcp/server.js"
+        }
+      ],
+      "findings": "Hashed expiring/revocable PATs, read/write/destroy scopes, separate destructive gate; stateless per-request MCP relies on router authorization.",
+      "decision": "Optional recipe/pantry connector only through existing NEOTH permissions; no duplicate cooking app.",
+      "work": "C08"
+    },
+    {
+      "id": "SRC-30",
+      "group": "personal-apps",
+      "input": "man15h/holm",
+      "url": "https://github.com/man15h/holm",
+      "repo": "man15h/holm",
+      "sha": "59da72c6fcdcbe22e1581a6c52b51b21c3dd2ace",
+      "commitDate": "2026-10-09",
+      "license": "MIT",
+      "releaseOrChange": "v0.5.0 merge; unreviewed UI feature delta not inferred.",
+      "implementationSources": [
+        {
+          "path": "src/lib/server/session.js",
+          "url": "https://github.com/man15h/holm/blob/59da72c6fcdcbe22e1581a6c52b51b21c3dd2ace/src/lib/server/session.js"
+        },
+        {
+          "path": "src/lib/server/sessionToken.js",
+          "url": "https://github.com/man15h/holm/blob/59da72c6fcdcbe22e1581a6c52b51b21c3dd2ace/src/lib/server/sessionToken.js"
+        }
+      ],
+      "findings": "Master-key-context-derived session signing, expiry and constant-time signature verification. App visibility rules not established by these files.",
+      "decision": "Per-user service launcher optional later; session primitives already exist, no launcher server import.",
+      "work": "C08"
+    },
+    {
+      "id": "SRC-31",
+      "group": "visual-systems",
+      "input": "screentinker/screentinker",
+      "url": "https://github.com/screentinker/screentinker",
+      "repo": "screentinker/screentinker",
+      "sha": "104ef0db4ad5ec31b570f3e5d1b0c1780fda0cd4",
+      "commitDate": "2026-10-11",
+      "license": "MIT",
+      "releaseOrChange": "v2.5.1 October 9.",
+      "implementationSources": [
+        {
+          "path": "server/lib/device-identity.js",
+          "url": "https://github.com/screentinker/screentinker/blob/104ef0db4ad5ec31b570f3e5d1b0c1780fda0cd4/server/lib/device-identity.js"
+        },
+        {
+          "path": "server/lib/unpair-gate.js",
+          "url": "https://github.com/screentinker/screentinker/blob/104ef0db4ad5ec31b570f3e5d1b0c1780fda0cd4/server/lib/unpair-gate.js"
+        }
+      ],
+      "findings": "Persistent device ID preferred, weaker fallback identifiers also exist; local PIN gate for unpairing.",
+      "decision": "Reference lifecycle UI only. Never infer proven identity from fallback fingerprint or make on-device PIN mandatory for already-authorized owner revocation.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-32",
+      "group": "visual-systems",
+      "input": "oleost/VisionState",
+      "url": "https://github.com/oleost/VisionState",
+      "repo": "oleost/VisionState",
+      "sha": "859722fc21d65b6cb2da224d53c1e457e96dc06f",
+      "commitDate": "2026-10-10",
+      "license": "Apache-2.0",
+      "releaseOrChange": "v0.8.0.",
+      "implementationSources": [
+        {
+          "path": "visionstate/backend/visionstate/engine/state.py",
+          "url": "https://github.com/oleost/VisionState/blob/859722fc21d65b6cb2da224d53c1e457e96dc06f/visionstate/backend/visionstate/engine/state.py"
+        },
+        {
+          "path": "visionstate/backend/visionstate/engine/training.py",
+          "url": "https://github.com/oleost/VisionState/blob/859722fc21d65b6cb2da224d53c1e457e96dc06f/visionstate/backend/visionstate/engine/training.py"
+        }
+      ],
+      "findings": "Settings snapshot, debounce/object tracking and per-sensor classifiers from labeled examples.",
+      "decision": "Optional observed-state sensor adapter after separate data/model/resource assessment; no default camera inference.",
+      "work": "C09"
+    },
+    {
+      "id": "SRC-33",
+      "group": "visual-systems",
+      "input": "crivion/laranode",
+      "url": "https://github.com/crivion/laranode",
+      "repo": "crivion/laranode",
+      "sha": "8a0a4b27051771be87bfc5c8fe0f283783a55e6f",
+      "commitDate": "2026-09-23",
+      "license": "MIT",
+      "releaseOrChange": "No release confirmed.",
+      "implementationSources": [
+        {
+          "path": "app/Jobs/RunBackupJob.php",
+          "url": "https://github.com/crivion/laranode/blob/8a0a4b27051771be87bfc5c8fe0f283783a55e6f/app/Jobs/RunBackupJob.php"
+        },
+        {
+          "path": "app/Filesystem/SafeFileProcess.php",
+          "url": "https://github.com/crivion/laranode/blob/8a0a4b27051771be87bfc5c8fe0f283783a55e6f/app/Filesystem/SafeFileProcess.php"
+        }
+      ],
+      "findings": "Persisted backup job status and privileged process facade.",
+      "decision": "Existing NEOTH job outcomes cover generic idea; no VPS control panel or privileged facade import.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-34",
+      "group": "visual-systems",
+      "input": "Nethera-io/nethera",
+      "url": "https://github.com/Nethera-io/nethera",
+      "repo": "Nethera-io/nethera",
+      "sha": "f056cf0792aa912d60eafced257f99a851c634b3",
+      "commitDate": "2026-08-10",
+      "license": "MIT",
+      "releaseOrChange": "No release confirmed.",
+      "implementationSources": [
+        {
+          "path": "agent/enroll.go",
+          "url": "https://github.com/Nethera-io/nethera/blob/f056cf0792aa912d60eafced257f99a851c634b3/agent/enroll.go"
+        },
+        {
+          "path": "agent/jobs.go",
+          "url": "https://github.com/Nethera-io/nethera/blob/f056cf0792aa912d60eafced257f99a851c634b3/agent/jobs.go"
+        }
+      ],
+      "findings": "Credential reuse binds endpoint/environment; bounded job command/output/timeout handling.",
+      "decision": "Add endpoint/environment change cases to companion pairing acceptance; canonical authority remains daemon.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-35",
+      "group": "visual-systems",
+      "input": "ar3ac/lucius",
+      "url": "https://github.com/ar3ac/lucius",
+      "repo": "ar3ac/lucius",
+      "sha": "c454e7614d2d36fac362cae724be46e6c2dad5bf",
+      "commitDate": "2026-09-26",
+      "license": "MIT",
+      "releaseOrChange": "v1.0.0.",
+      "implementationSources": [
+        {
+          "path": "main.py",
+          "url": "https://github.com/ar3ac/lucius/blob/c454e7614d2d36fac362cae724be46e6c2dad5bf/main.py"
+        },
+        {
+          "path": "static/sw.js",
+          "url": "https://github.com/ar3ac/lucius/blob/c454e7614d2d36fac362cae724be46e6c2dad5bf/static/sw.js"
+        }
+      ],
+      "findings": "PIN-gated named commands with execution/output bounds and PWA caching.",
+      "decision": "Typed approved mobile action cards if missing in current companion; no unrestricted shell/PWA engine import.",
+      "work": "A05"
+    },
+    {
+      "id": "SRC-36",
+      "group": "visual-systems",
+      "input": "eseifert/altero",
+      "url": "https://github.com/eseifert/altero",
+      "repo": "eseifert/altero",
+      "sha": "0a258e1b86b3f82e40ccbcb0990cea4712cfc143",
+      "commitDate": "2026-10-09",
+      "license": "AGPL-3.0",
+      "releaseOrChange": "Current master source inspected; release not confirmed.",
+      "implementationSources": [
+        {
+          "path": "src/altero/api/batch.py",
+          "url": "https://github.com/eseifert/altero/blob/0a258e1b86b3f82e40ccbcb0990cea4712cfc143/src/altero/api/batch.py"
+        },
+        {
+          "path": "src/altero/db.py",
+          "url": "https://github.com/eseifert/altero/blob/0a258e1b86b3f82e40ccbcb0990cea4712cfc143/src/altero/db.py"
+        }
+      ],
+      "findings": "Library/revision/idempotency locking, object savepoints, successful subset with structured failures and atomic activity; SQLite WAL/FKs.",
+      "decision": "Explicit per-tool partial-batch policy using existing transactions; optional Zotero adapter separately scoped.",
+      "work": "A04,C03"
+    },
+    {
+      "id": "SRC-37",
+      "group": "agent-harnesses",
+      "input": "tigerless-labs/autoharness",
+      "url": "https://github.com/tigerless-labs/autoharness",
+      "repo": "tigerless-labs/autoharness",
+      "sha": "9eec6232587ff2c4deeded00ac467de19532d763",
+      "commitDate": "2026-10-09",
+      "license": "MIT",
+      "releaseOrChange": "No changelog/release; latest redaction respects validators.",
+      "implementationSources": [
+        {
+          "path": "src/autoharness/lib/validate.py",
+          "url": "https://github.com/tigerless-labs/autoharness/blob/9eec6232587ff2c4deeded00ac467de19532d763/src/autoharness/lib/validate.py"
+        },
+        {
+          "path": "src/autoharness/hook/promoter.py",
+          "url": "https://github.com/tigerless-labs/autoharness/blob/9eec6232587ff2c4deeded00ac467de19532d763/src/autoharness/hook/promoter.py"
+        }
+      ],
+      "findings": "Proposer/promoter distinction, path/schema/self-authored gate checks, materialized evidence and atomic skill publication.",
+      "decision": "Current installed-skill authority stays owner; verify admission receipt coverage rather than adding autonomous promotion.",
+      "work": "A01"
+    },
+    {
+      "id": "SRC-38",
+      "group": "agent-harnesses",
+      "input": "tigerless-labs/cost-xray",
+      "url": "https://github.com/tigerless-labs/cost-xray",
+      "repo": "tigerless-labs/cost-xray",
+      "sha": "069733fabdc1416f2535148c0652cdfbb5bb7bee",
+      "commitDate": "2026-09-29",
+      "license": "MIT",
+      "releaseOrChange": "Latest UTF-8/ASCII locale capture test.",
+      "implementationSources": [
+        {
+          "path": "cost_xray/addon.py",
+          "url": "https://github.com/tigerless-labs/cost-xray/blob/069733fabdc1416f2535148c0652cdfbb5bb7bee/cost_xray/addon.py"
+        },
+        {
+          "path": "cost_xray/cost.py",
+          "url": "https://github.com/tigerless-labs/cost-xray/blob/069733fabdc1416f2535148c0652cdfbb5bb7bee/cost_xray/cost.py"
+        },
+        {
+          "path": "cost_xray/detectors.py",
+          "url": "https://github.com/tigerless-labs/cost-xray/blob/069733fabdc1416f2535148c0652cdfbb5bb7bee/cost_xray/detectors.py"
+        }
+      ],
+      "findings": "Proxy captures sessions; heuristic skill-detection patterns can miss or misattribute usage.",
+      "decision": "Native prompt-component attribution at NEOTH assembly boundary; no MITM raw-secret capture proxy.",
+      "work": "A02"
+    },
+    {
+      "id": "SRC-39",
+      "group": "agent-harnesses",
+      "input": "Jakeschincariol/replica-skill",
+      "url": "https://github.com/Jakeschincariol/replica-skill",
+      "repo": "Jakeschincariol/replica-skill",
+      "sha": "77c9436fb3d18c3d58169efb8caf4fe906b0dc51",
+      "commitDate": "2026-10-03",
+      "license": "MIT",
+      "releaseOrChange": "v1.0 only observed release.",
+      "implementationSources": [
+        {
+          "path": "replica-recon/SKILL.md",
+          "url": "https://github.com/Jakeschincariol/replica-skill/blob/77c9436fb3d18c3d58169efb8caf4fe906b0dc51/replica-recon/SKILL.md"
+        },
+        {
+          "path": "replica-diff/parity.py",
+          "url": "https://github.com/Jakeschincariol/replica-skill/blob/77c9436fb3d18c3d58169efb8caf4fe906b0dc51/replica-diff/parity.py"
+        }
+      ],
+      "findings": "Screen/state/data-model reconnaissance plus CSV parity scoring; completion score is not quality or runtime acceptance.",
+      "decision": "Map to GOLD-R4-05 canonical capability/parity inventory; no duplicate score or completion claim.",
+      "work": "covered"
+    },
+    {
+      "id": "SRC-40",
+      "group": "agent-harnesses",
+      "input": "addyosmani/agent-skills",
+      "url": "https://github.com/addyosmani/agent-skills",
+      "repo": "addyosmani/agent-skills",
+      "sha": "1be8e34187e34647bb83adc3a1323b26ae6f6abe",
+      "commitDate": "2026-10-10",
+      "license": "MIT",
+      "releaseOrChange": "Recent simplifier ignored-block preservation/workspace cleanup.",
+      "implementationSources": [
+        {
+          "path": "skills/spec-driven-development/SKILL.md",
+          "url": "https://github.com/addyosmani/agent-skills/blob/1be8e34187e34647bb83adc3a1323b26ae6f6abe/skills/spec-driven-development/SKILL.md"
+        },
+        {
+          "path": "skills/code-review-and-quality/SKILL.md",
+          "url": "https://github.com/addyosmani/agent-skills/blob/1be8e34187e34647bb83adc3a1323b26ae6f6abe/skills/code-review-and-quality/SKILL.md"
+        }
+      ],
+      "findings": "Workflow instruction assets define spec, review and completion expectations; not a daemon verifier implementation.",
+      "decision": "Use explicit handoff/exit contracts as method; repository skill text is untrusted input, not session authority.",
+      "work": "A01"
+    },
+    {
+      "id": "SRC-41",
+      "group": "agent-harnesses",
+      "input": "https://jays.fyi/blog/open-prompt-injection-scanner-for-ai-agents",
+      "url": "https://jays.fyi/blog/open-prompt-injection-scanner-for-ai-agents",
+      "repo": null,
+      "sha": null,
+      "commitDate": null,
+      "license": "Exact article/source identity unresolved",
+      "releaseOrChange": "Exact URL returned internal error; related translated article is a different slug.",
+      "implementationSources": [],
+      "findings": "Related Jays localized posts discuss TextCortex/laya-cybersec, but they do not prove the supplied English URL resolves there. Related runtime/model review retained separately, no substitution.",
+      "decision": "Unresolved source tracked explicitly; no adoption from an unverified identity. Optional classifier research only after exact attribution and model license/calibration.",
+      "work": "C10"
+    },
+    {
+      "id": "SRC-42",
+      "group": "creative-mobile",
+      "input": "Albert-Weasker/niubigeo",
+      "url": "https://github.com/Albert-Weasker/niubigeo",
+      "repo": "Albert-Weasker/niubigeo",
+      "sha": "014c649739b5beb5d6f55243e5c1e53a53dbd986",
+      "commitDate": "2026-10-10",
+      "license": "Apache-2.0",
+      "releaseOrChange": "Current project/notification race fixes; upstream 268 pass/10 skipped claim not rerun.",
+      "implementationSources": [
+        {
+          "path": "src/admission/question-admission.ts",
+          "url": "https://github.com/Albert-Weasker/niubigeo/blob/014c649739b5beb5d6f55243e5c1e53a53dbd986/src/admission/question-admission.ts"
+        },
+        {
+          "path": "src/baselines/baseline-comparator.ts",
+          "url": "https://github.com/Albert-Weasker/niubigeo/blob/014c649739b5beb5d6f55243e5c1e53a53dbd986/src/baselines/baseline-comparator.ts"
+        }
+      ],
+      "findings": "Scope/target admission; baseline comparisons reject mismatched project/language/prompt-set/rules/run-count/entity scope and eligibility.",
+      "decision": "Narrow comparable-run checks around existing curated replay; no marketing analytics suite.",
+      "work": "A01"
+    },
+    {
+      "id": "SRC-43",
+      "group": "creative-mobile",
+      "input": "storytold/cadcraft",
+      "url": "https://github.com/storytold/cadcraft",
+      "repo": "storytold/cadcraft",
+      "sha": "c57879a5c8f5e3a6be574a820add5e28eb25e9b1",
+      "commitDate": "2026-10-12",
+      "license": "MIT OR Apache-2.0",
+      "releaseOrChange": "v0.5.0 October 11; current GPU-loss autosave repair.",
+      "implementationSources": [
+        {
+          "path": "crates/engine/src/autosave.rs",
+          "url": "https://github.com/storytold/cadcraft/blob/c57879a5c8f5e3a6be574a820add5e28eb25e9b1/crates/engine/src/autosave.rs"
+        },
+        {
+          "path": "crates/constraints/src/lm.rs",
+          "url": "https://github.com/storytold/cadcraft/blob/c57879a5c8f5e3a6be574a820add5e28eb25e9b1/crates/constraints/src/lm.rs"
+        }
+      ],
+      "findings": "Pure autosave plan separated from I/O with instance-bound recovery filenames; bounded damped solver with finite/singular checks.",
+      "decision": "Defer CAD engine; recovery-plan reference only if NEOTH canvas feature requires it.",
+      "work": "C11"
+    },
+    {
+      "id": "SRC-44",
+      "group": "creative-mobile",
+      "input": "morluto/rea",
+      "url": "https://github.com/morluto/rea",
+      "repo": "morluto/rea",
+      "sha": "98d8470d36cfbf7cd25820a4ed430aebae20c0c5",
+      "commitDate": "2026-10-12",
+      "license": "MIT",
+      "releaseOrChange": "Current managed-snapshot/cleanup fix; rea-agents 4.1.0 documentation.",
+      "implementationSources": [
+        {
+          "path": "src/domain/evidence.ts",
+          "url": "https://github.com/morluto/rea/blob/98d8470d36cfbf7cd25820a4ed430aebae20c0c5/src/domain/evidence.ts"
+        },
+        {
+          "path": "src/application/investigation/EvidenceLedger.ts",
+          "url": "https://github.com/morluto/rea/blob/98d8470d36cfbf7cd25820a4ed430aebae20c0c5/src/application/investigation/EvidenceLedger.ts"
+        }
+      ],
+      "findings": "Typed subject/provider/environment evidence, observed/derived/inferred distinction, canonical ID validation and immutable idempotent imports.",
+      "decision": "Use distinctions in workflow/evidence projections; NEOTH existing ledger remains source of truth, no binary-analysis engine import.",
+      "work": "A01,A06"
+    },
+    {
+      "id": "SRC-45",
+      "group": "creative-mobile",
+      "input": "ayghri/i-have-adhd",
+      "url": "https://github.com/ayghri/i-have-adhd",
+      "repo": "ayghri/i-have-adhd",
+      "sha": "1ecea1993b7fce257ffbd686c070948b5e07eda6",
+      "commitDate": "2026-10-11",
+      "license": "MIT",
+      "releaseOrChange": "Current French README merge; does not establish runtime delta.",
+      "implementationSources": [
+        {
+          "path": "extensions/i-have-adhd.ts",
+          "url": "https://github.com/ayghri/i-have-adhd/blob/1ecea1993b7fce257ffbd686c070948b5e07eda6/extensions/i-have-adhd.ts"
+        },
+        {
+          "path": "hooks/always-on.mjs",
+          "url": "https://github.com/ayghri/i-have-adhd/blob/1ecea1993b7fce257ffbd686c070948b5e07eda6/hooks/always-on.mjs"
+        }
+      ],
+      "findings": "Opt-in session state, one-time context insertion, visible indicator and restore after compaction; hook intentionally ignores operational failures.",
+      "decision": "Merge reversible explicit presentation override into GOLD-R4-11; no diagnostic/medical inference, no authority change.",
+      "work": "A07"
+    },
+    {
+      "id": "SRC-46",
+      "group": "creative-mobile",
+      "input": "QingYunA/answer-me-with-html",
+      "url": "https://github.com/QingYunA/answer-me-with-html",
+      "repo": "QingYunA/answer-me-with-html",
+      "sha": "5d5b86ddbeea500b7fec6b3e80ad273ad875b005",
+      "commitDate": "2026-10-12",
+      "license": "MIT",
+      "releaseOrChange": "v0.4.9; current DSH update-path fix.",
+      "implementationSources": [
+        {
+          "path": "src/render.js",
+          "url": "https://github.com/QingYunA/answer-me-with-html/blob/5d5b86ddbeea500b7fec6b3e80ad273ad875b005/src/render.js"
+        },
+        {
+          "path": "src/cli.js",
+          "url": "https://github.com/QingYunA/answer-me-with-html/blob/5d5b86ddbeea500b7fec6b3e80ad273ad875b005/src/cli.js"
+        }
+      ],
+      "findings": "Parse/lint/panel/template pipeline with embedded assets and source; loopback preview default with explicit LAN option.",
+      "decision": "Optional deterministic sanitized single-file explanation export; separate inert default from declared active renderer.",
+      "work": "A06"
+    },
+    {
+      "id": "SRC-47",
+      "group": "creative-mobile",
+      "input": "alchaincyf/huashu-art-motion",
+      "url": "https://github.com/alchaincyf/huashu-art-motion",
+      "repo": "alchaincyf/huashu-art-motion",
+      "sha": "9ff59339f934e08483ba0a5b1db20f4c2c421b35",
+      "commitDate": "2026-10-10",
+      "license": "MIT code; separate font and demo asset terms",
+      "releaseOrChange": "v1 October 6; current showcase asset correction.",
+      "implementationSources": [
+        {
+          "path": "scripts/engine/render.py",
+          "url": "https://github.com/alchaincyf/huashu-art-motion/blob/9ff59339f934e08483ba0a5b1db20f4c2c421b35/scripts/engine/render.py"
+        },
+        {
+          "path": "scripts/engine/lib/render.js",
+          "url": "https://github.com/alchaincyf/huashu-art-motion/blob/9ff59339f934e08483ba0a5b1db20f4c2c421b35/scripts/engine/lib/render.js"
+        }
+      ],
+      "findings": "Loopback allowlisted asset server renders Chromium frames to ffmpeg; failures propagate; substantive Canvas renderer.",
+      "decision": "Defer animation engine/assets, optional future export worker with separate license/resource gate.",
+      "work": "C11"
+    },
+    {
+      "id": "SRC-48",
+      "group": "creative-mobile",
+      "input": "Niko1221/Strata",
+      "url": "https://github.com/Niko1221/Strata",
+      "repo": "Niko1221/Strata",
+      "sha": "7695859aa13afb248bdb4d36f9b2e95707db079d",
+      "commitDate": "2026-10-11",
+      "license": "MIT",
+      "releaseOrChange": "v0.1.39 October 4; current canonical Q2_0 pack.",
+      "implementationSources": [
+        {
+          "path": "serve/responses.py",
+          "url": "https://github.com/Niko1221/Strata/blob/7695859aa13afb248bdb4d36f9b2e95707db079d/serve/responses.py"
+        },
+        {
+          "path": "serve/server.py",
+          "url": "https://github.com/Niko1221/Strata/blob/7695859aa13afb248bdb4d36f9b2e95707db079d/serve/server.py"
+        }
+      ],
+      "findings": "Responses compatibility maps instructions/input/function tools/events and drops hosted tools; queue/cancellation are server concerns.",
+      "decision": "Provider contract regression reference: explicit unsupported features, store:false and content preservation. No new model engine.",
+      "work": "A08"
+    },
+    {
+      "id": "SRC-49",
+      "group": "creative-mobile",
+      "input": "HunxByts/GhostTrack",
+      "url": "https://github.com/HunxByts/GhostTrack",
+      "repo": "HunxByts/GhostTrack",
+      "sha": "a5cb8ad4c08acd803f166fb067b7dac724d6cb3d",
+      "commitDate": "2024-01-11",
+      "license": "No repository license found in inspected complete tree",
+      "releaseOrChange": "Last observed requirements update 2024; no release found.",
+      "implementationSources": [
+        {
+          "path": "GhostTR.py",
+          "url": "https://github.com/HunxByts/GhostTrack/blob/a5cb8ad4c08acd803f166fb067b7dac724d6cb3d/GhostTR.py"
+        },
+        {
+          "path": "requirements.txt",
+          "url": "https://github.com/HunxByts/GhostTrack/blob/a5cb8ad4c08acd803f166fb067b7dac724d6cb3d/requirements.txt"
+        }
+      ],
+      "findings": "Plain HTTP ipwho.is lookup, coarse IP metadata, offline phone metadata, username HTTP-status heuristic; missing timeout/schema checks and weak match evidence.",
+      "decision": "Do not import stale/unlicensed source. User-initiated network diagnostics may be designed independently; not a prohibition on legitimate OSINT.",
+      "work": "C12"
+    },
+    {
+      "id": "SRC-50",
+      "group": "visual-explanation",
+      "input": "wheresryan22/anatomy",
+      "url": "https://github.com/wheresryan22/anatomy",
+      "repo": "wheresryan22/anatomy",
+      "sha": "689dcf966e63d92be10a5d593c6e19e10acd4422",
+      "commitDate": "2026-10-12",
+      "license": "MIT",
+      "releaseOrChange": "Current merge; WebGL/3D remains beta per README.",
+      "implementationSources": [
+        {
+          "path": "kit/audit.mjs",
+          "url": "https://github.com/wheresryan22/anatomy/blob/689dcf966e63d92be10a5d593c6e19e10acd4422/kit/audit.mjs"
+        },
+        {
+          "path": "scripts/capture.mjs",
+          "url": "https://github.com/wheresryan22/anatomy/blob/689dcf966e63d92be10a5d593c6e19e10acd4422/scripts/capture.mjs"
+        }
+      ],
+      "findings": "Agent skill and Node isometric SVG/WebGL kit; geometry/motion audit and headless Chrome capture check illustration geometry, not factual truth. Runtime Node >=20.10, install CLI >=22.20 per README.",
+      "decision": "Useful optional proactive Codex renderer on permitted remote host after supplied facts; NEOTH optional ExplanationArtifact seam. Not installed/run under BSOD hold.",
+      "work": "A06"
+    },
+    {
+      "id": "SRC-51",
+      "group": "training-research",
+      "input": "https://pub.sakana.ai/mass/",
+      "url": "https://pub.sakana.ai/mass/",
+      "repo": "SakanaAI/mass",
+      "sha": "fb403581bed2c974b3f99e7236224169da643079",
+      "commitDate": "2026-10-09",
+      "license": "NOTICE explicitly assigns no public open-source license to MASS-specific code; no code reuse granted",
+      "releaseOrChange": "October 2026 publication; README notes driver differs from paper and some ablations not shipped.",
+      "implementationSources": [
+        {
+          "path": "harness_improvement/iterate_multi_agent_prompt.py",
+          "url": "https://github.com/SakanaAI/mass/blob/fb403581bed2c974b3f99e7236224169da643079/harness_improvement/iterate_multi_agent_prompt.py"
+        },
+        {
+          "path": "mass/pipeline.py",
+          "url": "https://github.com/SakanaAI/mass/blob/fb403581bed2c974b3f99e7236224169da643079/mass/pipeline.py"
+        },
+        {
+          "path": "docs/running.md",
+          "url": "https://github.com/SakanaAI/mass/blob/fb403581bed2c974b3f99e7236224169da643079/docs/running.md"
+        },
+        {
+          "path": "NOTICE.md",
+          "url": "https://github.com/SakanaAI/mass/blob/fb403581bed2c974b3f99e7236224169da643079/NOTICE.md"
+        }
+      ],
+      "findings": "Research implementation searches workflows, ranks trajectories and performs LoRA. Evidence can motivate model-specific training but is not NEOTH product acceptance. Full reported training used 6 H100/about19h SFT alone; data/search/evaluation extra.",
+      "decision": "Use bounded handoff contracts now; preserve conditional NEOTH-domain training research after workflow-only baseline and heldout evaluation. No local run, autonomous self-promotion or code import.",
+      "work": "A01,R01"
+    }
+  ],
+  "baseline": [
+    {
+      "path": "SRC/neothd/src/recipes/schema.rs",
+      "finding": "Typed input parameters, subrecipes, retry success_check already exist; no general artifact-verifier contract in the inspected schema.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/cli/workflow_replay.rs",
+      "finding": "Curated prompt corpus with contains-v1, config/skill/source hashes and empty MCP scope; not a general correctness grader.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/council/types.rs",
+      "finding": "Typed responses/refusals/verdicts and metadata-only agreement; preserve absent/not-evaluated evidence.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "finding": "Existing budget reservation and council precharge ownership.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/cron/scheduler.rs",
+      "finding": "Generation-aware reload/completion, rejected config and durable checkpoints already exist.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/wal/context_evidence_receipts.rs",
+      "finding": "Bounded authenticated receipt ledger, generation anchors and predecessor retention already exist.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/wal/scan.rs",
+      "finding": "Retained authenticated history constrains HMAC key rotation/retention.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/memory/document_claims.rs",
+      "finding": "Source+claim+scope applied-once ledger shares savepoint with fact mutation; document text remains untrusted BulkText.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "finding": "Seen-item ledger, quarantine and local-before-external sink order already present; proposed unit recovery requires a demonstrated missing case, not an assumption of absent durability.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/cli/todo.rs",
+      "finding": "Canonical external task write admission already implemented.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/cli/calendar.rs",
+      "finding": "Read grant and payload-bound write admission already exist.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/security/injection_tracker.rs",
+      "finding": "Existing deterministic canary/sender/turn-signal handling must not be replaced by an uncalibrated classifier.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "apps/neoth_companion/lib/companion_controller.dart",
+      "finding": "Authority epoch, offline state and pending request recovery already present; no new mobile queue owner.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "apps/neoth_companion/lib/conversation_models.dart",
+      "finding": "Pending request/conversation identity invariants already enforced.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    },
+    {
+      "path": "SRC/neothd/src/recall/parity_batch_plan.rs",
+      "finding": "Immutable redacted plan and canonical digest can anchor comparison provenance; extend existing evidence, no second evaluator authority.",
+      "inspection": "bounded static text inspection, not runtime acceptance"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "A04",
+      "priority": "first",
+      "state": "planned-gap-validation",
+      "owner": "Root / existing connector and effect owners",
+      "title": "Connector outcomes and outbound draft revisions",
+      "sources": [
+        "SRC-01",
+        "SRC-02",
+        "SRC-13",
+        "SRC-14",
+        "SRC-15",
+        "SRC-36"
+      ],
+      "existing": [
+        "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "SRC/neothd/src/cli/todo.rs",
+        "SRC/neothd/src/cli/calendar.rs",
+        "SRC/neothd/src/memory/document_claims.rs"
+      ],
+      "scope": "Begin with a gap case in email sink recovery, then extend the existing receipt/cursor owner. Unit key includes connector/account/item/revision/input hash. States committed, retryable, terminal_failure, unknown_outcome remain distinct. Explicit per-tool atomic-or-partial batch policy. Optional publication drafts bind destination rendition, payload revision and existing approval.",
+      "acceptance": [
+        "Prove a currently missing case before changing existing admission; no duplicate canonical owner.",
+        "Crash after external success/before receipt never blindly retries an indeterminate effect; reconcile provider evidence or require replan.",
+        "One failed unit cannot erase successful receipts or mark the whole scan complete.",
+        "Same idempotency key/different destination, content or grant conflicts; changed rendition requires current approval.",
+        "Reserved connector/daemon metadata cannot be overridden by model payload."
+      ]
+    },
+    {
+      "id": "A01",
+      "priority": "second",
+      "state": "planned-gap-validation",
+      "owner": "Root / existing council, recipe and replay owners",
+      "title": "Evidence-bound workflow handoffs and comparable trials",
+      "sources": [
+        "SRC-17",
+        "SRC-21",
+        "SRC-37",
+        "SRC-40",
+        "SRC-42",
+        "SRC-44",
+        "SRC-51"
+      ],
+      "existing": [
+        "SRC/neothd/src/recipes/schema.rs",
+        "SRC/neothd/src/council/types.rs",
+        "SRC/neothd/src/cli/workflow_replay.rs",
+        "SRC/neothd/src/recall/parity_batch_plan.rs",
+        "SRC/neothd/src/providers/cost_authorization.rs"
+      ],
+      "scope": "An immutable contract sidecar binds workflow/version, inputs/config/corpus/skill hashes, declared effects, output schema and versioned verifier. Existing effect/WAL/replay paths own state. Compare curated run artifacts using existing parity provenance; do not equate contains-v1 with product correctness.",
+      "acceptance": [
+        "Verifier outcome is verified/failed/inconclusive/not-run; missing, stale or foreign verifier evidence cannot admit dependent effect.",
+        "Only declared dependencies block, not unrelated work; artifact without independent verification is not fact.",
+        "Selective recovery lists preserved/rerun units and requires terminal source, exact contract/plan/input bindings plus effect receipts; otherwise needs_manual_replan.",
+        "Unknown external outcome never reruns automatically. Same reservation/budget owner persists through retry/cancel.",
+        "Comparable reports preserve both candidates, evaluator identity/version, criteria and config mismatches; no self-voted automatic policy/model promotion."
+      ]
+    },
+    {
+      "id": "A02",
+      "priority": "third",
+      "state": "planned-gap-validation",
+      "owner": "Root / prompt assembly and existing cost owner",
+      "title": "Prompt-component cost attribution",
+      "sources": [
+        "SRC-22",
+        "SRC-38"
+      ],
+      "existing": [
+        "SRC/neothd/src/providers/cost_authorization.rs",
+        "SRC/neothd/src/cli/cost.rs"
+      ],
+      "scope": "Attach component identity/count metadata to existing reservation: system, workflow, skill, retrieval, tool result, user, unattributed. Retain provider/model/tokenizer/rate versions; capture at assembly, not MITM.",
+      "acceptance": [
+        "No second precharge or billing owner.",
+        "Observed provider totals reconcile with attributed plus unattributed usage; estimates stay distinct and need not equal provider billing.",
+        "Missing usage remains unknown, including timeout after send; no raw prompt or secret leakage.",
+        "Repeated/reused prompt components are accounted under explicit cached/uncached rules where provider evidence exists."
+      ]
+    },
+    {
+      "id": "A03",
+      "priority": "fourth",
+      "state": "planned-gap-validation",
+      "owner": "Root / current document staging, recall and lifecycle owners",
+      "title": "Structure-preserving source projections and document lineage",
+      "sources": [
+        "SRC-07",
+        "SRC-09",
+        "SRC-10",
+        "SRC-25",
+        "SRC-27"
+      ],
+      "existing": [
+        "SRC/neothd/src/skills/document_staging.rs",
+        "SRC/neothd/src/media/document.rs",
+        "SRC/neothd/src/memory/document_claims.rs",
+        "SRC/neothd/src/wal/context_evidence_receipts.rs"
+      ],
+      "scope": "Add bounded source projections for headings/tables/lists/code and original ranges; logical document/revision/rename lineage follows the existing staging and source/claim/scope owner. Purge lineage includes derived projections; payload erasure and minimum audit metadata remain distinct.",
+      "acceptance": [
+        "Same source and parser version yields deterministic bounded projection; oversized blocks follow explicit overflow policy instead of unbounded whole-table retention.",
+        "Every citation resolves to the exact source revision/range; moved/repeated equal blocks are not silently the same identity.",
+        "Cancellation never publishes a partial index as complete; rename does not replace content history.",
+        "Derived data deletion failures remain visible/retryable and cannot be declared erased prematurely.",
+        "Existing applied-once document claims and source/scope authority remain unchanged."
+      ]
+    },
+    {
+      "id": "A05",
+      "priority": "parallel-product-track-not-same-patch",
+      "state": "merge-existing-Jarvis-mobile-port",
+      "owner": "Root / canonical companion daemon and Flutter projection",
+      "sources": [
+        "SRC-06",
+        "SRC-17",
+        "SRC-18",
+        "SRC-26",
+        "SRC-31",
+        "SRC-34",
+        "SRC-35"
+      ],
+      "existing": [
+        "apps/neoth_companion/lib/companion_controller.dart",
+        "apps/neoth_companion/lib/conversation_models.dart",
+        "apps/neoth_companion/lib/companion_activity_presentation.dart"
+      ],
+      "scope": "Extend W2485 Jarvis/WhatsApp tool-call mobile port only where current companion lacks projection. Single daemon delivery/effect owner; client ID correlates to canonical event ID. Display pending/unknown/failed/confirmed faithfully, typed approvals/action cards and endpoint/environment rebind.",
+      "acceptance": [
+        "Provider echo joins only proven message identity; identical text alone never deduplicates messages.",
+        "Disconnected mobile never labels unacknowledged mutation sent or resends an unknown outcome automatically.",
+        "Offline queue is a bounded projection/submission buffer with no independent effect/retry authority; reconnect revalidates canonical state.",
+        "Approval binds current tool/destination/payload revision; session/incognito/subject switches cannot leak previous state.",
+        "Endpoint/environment switch rejects stale credential binding; owner-authorized revocation remains possible.",
+        "Hosted contract/UI evidence then actual device acceptance separately; no .slint edits under current hold."
+      ]
+    },
+    {
+      "id": "A06",
+      "priority": "optional-product-and-tooling",
+      "state": "planned-no-install",
+      "owner": "Root / artifact export owner and optional approved remote renderer",
+      "sources": [
+        "SRC-44",
+        "SRC-46",
+        "SRC-50"
+      ],
+      "existing": [
+        "SRC/neothd/src/wal/context_evidence_receipts.rs",
+        "apps/neoth_companion/lib/companion_activity_presentation.dart"
+      ],
+      "scope": "ExplanationArtifact for selected verified activity/architecture/source facts. Inert HTML/SVG export is default; interactive Anatomy rendering is a separately declared active-content mode. Preserve input/source hashes, model/renderer revision and illustrative/observed/derived labels. No renderer dependency for daemon startup.",
+      "acceptance": [
+        "Export exactly selected approved facts; no illustrative geometry promoted to verification.",
+        "No external requests or arbitrary embedded input HTML/script in inert mode; redact before export.",
+        "Active renderer has explicit allowlisted assets, resource/deadline caps and isolated approved host; failure cannot mark artifact verified.",
+        "Output digest/source revisions retained before publication; accessible static fallback, keyboard/reduced motion where interactive.",
+        "BSOD hold: no local Node, browser or rendering. Current research is not installed-tool or rendered-artifact acceptance."
+      ]
+    },
+    {
+      "id": "A07",
+      "priority": "merge-existing-profile-work",
+      "state": "merge-GOLD-R4-11",
+      "owner": "Root / communication profile and presentation owners",
+      "sources": [
+        "SRC-45"
+      ],
+      "existing": [
+        "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-11",
+        "SRC/neothd/src/profile/injection.rs"
+      ],
+      "scope": "Visible reversible explicit session/device presentation override, with preference precedence and compaction restoration inside the existing profile engine. Complements existing default-on adaptation; no second profile store.",
+      "acceptance": [
+        "Explicit selection outranks inferred preference; off/reset is durable and visible.",
+        "Compaction/reconnect preserve declared scope without leaking across users/incognito.",
+        "Never infer ADHD/medical labels or change permissions/tool effects from presentation preference.",
+        "No arbitrary response-length cap copied from an upstream skill."
+      ]
+    },
+    {
+      "id": "A08",
+      "priority": "merge-existing-provider-contracts",
+      "state": "planned-gap-validation",
+      "owner": "Root / provider adapter owner",
+      "sources": [
+        "SRC-48"
+      ],
+      "existing": [
+        "SRC/neothd/src/providers"
+      ],
+      "scope": "Compare current Responses/provider adapter against explicit capability descriptors. Unsupported hosted tools, store:false, tool arguments/results, reasoning/redaction and cancellation must be represented honestly; no Strata engine dependency.",
+      "acceptance": [
+        "Unsupported tool cannot silently drop and report success.",
+        "Store:false cannot be upgraded to durable remote storage.",
+        "Queue/cancel/unknown-terminal state remains typed; authority and source policies enforced by existing owner.",
+        "Only add regression for a demonstrated gap; no second inference server."
+      ]
+    },
+    {
+      "id": "R01",
+      "priority": "conditional-research-not-1.0-release-gate",
+      "state": "experiment-design-only",
+      "owner": "Root / model evaluation research; no current compute dispatch",
+      "title": "NEOTH-domain multi-agent trajectory training",
+      "sources": [
+        "SRC-51"
+      ],
+      "existing": [
+        "SRC/neothd/src/cli/workflow_replay.rs",
+        "SRC/neothd/src/recall/parity_batch_plan.rs",
+        "SRC/neothd/src/providers/cost_authorization.rs"
+      ],
+      "scope": "Potentially improve a trainable model used by NEOTH. First compare fixed-model task-specific handoff workflows against baseline. Only then a separately budgeted remote SFT/LoRA pilot using permitted model/data/training tools. No MASS-specific code copy without grant; no automatic model replacement.",
+      "acceptance": [
+        "Preregister disjoint train/development/heldout task families, corpus hashes, objective checks, independent blinded judgments and quality/cost/latency thresholds before optimization.",
+        "Equal total inference/evaluation budget for workflow-only comparisons; report all trials, failures, confidence intervals and retained baseline, not only champions.",
+        "Training corpus consists of licensed/authorized curated or synthetic successful and failure/recovery trajectories; no automatic private WAL/chat harvesting or hidden reasoning extraction.",
+        "Measure task completion, tool/permission/side-effect correctness, recovery, retention of coding skills, total tokens/latency/cost including search/data generation/training.",
+        "New model wins defined NEOTH target tasks without violating effect authority or regressing required functions; otherwise retain baseline.",
+        "Record model/adapter/data/optimizer/evaluator provenance, checkpoint rollback and cancellation; isolated compute with fixed resource cap. No local workload under BSOD hold.",
+        "Question about benefit does not authorize paid GPU rental, production deployment or training run. Concrete compute/model selection and cost cap remain prerequisites."
+      ]
+    }
+  ],
+  "conditional": [
+    {
+      "id": "C01",
+      "title": "Recurring task templates and work-order instances",
+      "sources": [
+        "SRC-03",
+        "SRC-04"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "After core task delivery; reuse current scheduler; revision/timezone/instance idempotency, no maintenance-suite clone."
+    },
+    {
+      "id": "C02",
+      "title": "Remote device-test adapter",
+      "sources": [
+        "SRC-05"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Only bounded approved remote devices; session ownership, disconnect/cancel/reap and resource budget; no local emulator."
+    },
+    {
+      "id": "C03",
+      "title": "Read-only structured data/Zotero connectors",
+      "sources": [
+        "SRC-08",
+        "SRC-36"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Concrete connector demand, documented API/license, snapshot/source/row identity; no database or library engine embedding."
+    },
+    {
+      "id": "C04",
+      "title": "Ephemeral shared artifact",
+      "sources": [
+        "SRC-11"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Separate payload expiry, revocation, share authority and retained minimal audit; no in-process presence as truth."
+    },
+    {
+      "id": "C05",
+      "title": "Federated search descriptors",
+      "sources": [
+        "SRC-16"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Registry overlap check, per-provider source/destination permission, bounded fan-out/timeout, result provenance, explicit unavailable state."
+    },
+    {
+      "id": "C06",
+      "title": "Backup catalog",
+      "sources": [
+        "SRC-23"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "No new scheduler; verify new generation before retention deletes old; backup identity separate from Recall evidence."
+    },
+    {
+      "id": "C07",
+      "title": "Optional location/trail context",
+      "sources": [
+        "SRC-27",
+        "SRC-28"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Explicit chosen source, raw/derived separation, time-range scope and retention, manual import first; no default location collection."
+    },
+    {
+      "id": "C08",
+      "title": "Optional pantry/recipe or service-launcher connector",
+      "sources": [
+        "SRC-29",
+        "SRC-30"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Existing credential/permission owners; read/write/destructive distinct; no replacement apps."
+    },
+    {
+      "id": "C09",
+      "title": "Optional visual sensor",
+      "sources": [
+        "SRC-32"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Prove useful bounded observed-state task before camera/model pipeline; accuracy/resource/retention limits; no inference acceptance from code inspection."
+    },
+    {
+      "id": "C10",
+      "title": "Advisory injection classifier",
+      "sources": [
+        "SRC-41"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "Resolve exact article; model license and independent multilingual corpus/calibration; deterministic untrusted framing stays authoritative; classifier never grants permission."
+    },
+    {
+      "id": "C11",
+      "title": "Canvas recovery / animation / CAD",
+      "sources": [
+        "SRC-43",
+        "SRC-47"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "No current product requirement for embedded CAD/solver/animation engine. Separate optional future artifact worker; owner-bound recovery and asset licenses."
+    },
+    {
+      "id": "C12",
+      "title": "User-initiated network diagnostics",
+      "sources": [
+        "SRC-49"
+      ],
+      "state": "conditional-or-deferred",
+      "condition": "No GhostTrack source import; stale/no license/weak HTTP-hit heuristic. If useful, design bounded HTTPS/source-labeled diagnostics independently with minimal retention."
+    }
+  ],
+  "councilCorrections": [
+    "Replace generic proposed new audit/consent/scheduler/skill systems with mapping to existing owners.",
+    "WorkflowContract is immutable sidecar plus existing admission; version/hash verifier, preserve inconclusive and unknown outcomes.",
+    "Connector unit semantics before broader adoption. Mobile remains its existing separate Jarvis adapter track, not a combined backend rewrite.",
+    "Stable document identity cannot be inferred from equal content alone; oversized tables need explicit bound.",
+    "Maildun license resolved from actual root text; Helpin community/enterprise/SDK scopes resolved. NOASSERTION did not mean no license.",
+    "Exact Jay URL unresolved; related Laya material is not substituted for the requested article.",
+    "User followup: model training may improve NEOTH's model, so preserve conditional research R01 rather than categorically rejecting training. No resource expenditure initiated."
+  ],
+  "acceptance": {
+    "researchAndPlanOnly": true,
+    "newProductBehaviorImplemented": false,
+    "fullGoldAccepted": false,
+    "nativeDeviceAccepted": false
+  },
+  "relatedUnresolvedArticleResearch": {
+    "articleIdentityVerified": false,
+    "localizedPages": [
+      "https://jays.fyi/de/blog/prompt-injection-scanner-laeuft-auf-cpu",
+      "https://jays.fyi/fr/blog/scanner-injection-prompt-cpu"
+    ],
+    "model": "https://huggingface.co/TextCortex/laya-cybersec",
+    "modelLicense": "other; reuse grant unresolved",
+    "runtime": "https://github.com/NandhaKishorM/laya",
+    "runtimeSha": "682ac6719faa5b1c04b529501feb93e58ee91f3d",
+    "runtimeLicense": "Apache-2.0",
+    "sourcePaths": [
+      "laya/agent.py",
+      "laya/onnx_agent.py"
+    ],
+    "finding": "Runtime digest/layout checks and CPU fallback inspected by council. Published classification metrics are not independently verified or attributed to exact supplied URL."
+  }
+}
