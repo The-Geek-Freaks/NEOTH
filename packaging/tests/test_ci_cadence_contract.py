@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 import re
 import unittest
@@ -202,6 +204,27 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_live_audio_catalog_matches_checked_out_sources(self) -> None:
+        # Catch stale pins on every push, before the costly platform builds.
+        catalog = json.loads(
+            (ROOT / "docs/verification/gold-wave186-live-audio-tests.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(catalog["schema"], "neoth-live-audio-tests/v1")
+        cases = catalog["requiredTests"]
+        self.assertTrue(cases)
+        self.assertEqual(len(cases), len({case["test"] for case in cases}))
+        for case in cases:
+            with self.subTest(test=case["test"], source=case["sourcePath"]):
+                source = (ROOT / case["sourcePath"]).resolve()
+                self.assertTrue(source.is_relative_to(ROOT.resolve()))
+                self.assertEqual(
+                    hashlib.sha256(source.read_bytes()).hexdigest(),
+                    case["sourceSha256"].lower(),
+                    "Rebind the reviewed source; do not remove the exact fixture.",
+                )
+
     def test_live_audio_reusable_lane_is_required_by_gold_ci(self) -> None:
         triggers = trigger_block(LIVE_AUDIO_TEXT)
         self.assertRegex(triggers, r"(?m)^  workflow_call:\s*$")
@@ -379,6 +402,7 @@ class CiCadenceContractTests(unittest.TestCase):
                         "python3 packaging/tests/test_release_capability_contract.py",
                         "python3 packaging/tests/test_release_gate_contract.py",
                         "python3 packaging/tests/test_workflow_replay_gate.py",
+                        "python3 packaging/tests/test_workflow_compare_gate.py",
                         "python3 packaging/test_bootstrap_verifier.py",
                         "python3 .github/release-tools/test-release-isolation.py",
                         "python3 scripts/test_lost_feature_integrity.py",

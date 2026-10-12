@@ -1,7 +1,7 @@
 {
   "schema": "neoth-live-audio-tests/v1",
   "feature": "live-audio",
-  "status": "52 registered exact cases; source hashes rebound to W2406 shared terminal callback repair; hosted execution pending",
+  "status": "52 registered exact cases; W2553 rebinds the two dictation cases after reviewed W2542/W2543 test-only Clippy and hosted formatting changes; fresh live-audio hosted execution pending",
   "requiredTests": [
     {
       "test": "media::live_capture::tests::terminal_published_during_pcm_wait_survives_every_wait_result",
@@ -61,12 +61,12 @@
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7"
     },
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",

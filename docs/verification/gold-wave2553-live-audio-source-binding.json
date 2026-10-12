@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.gold.wave2553.live-audio-source-binding.v1",
+  "producer": "92534440a83db37fae6f72979b47c006ab263c6f",
+  "failedRun": 38217375243,
+  "failedJobs": [
+    114705190506,
+    114705190575,
+    114705190594
+  ],
+  "failure": "W186 fixture source SHA-256 mismatch: SRC/neothd/src/media/dictation.rs",
+  "rootCause": {
+    "catalog": "docs/verification/gold-wave186-live-audio-tests.json",
+    "source": "SRC/neothd/src/media/dictation.rs",
+    "oldSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+    "newSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
+    "diffBase": "50231f6d232c06c9493004fc2e2b30eb405dd684",
+    "reviewedChange": "Test-only matches!(value, None) to value.is_none(), followed by hosted formatting; no production change."
+  },
+  "changes": [
+    "Rebind exactly two dictation case pins; preserve all 52 case names, source paths and ordering.",
+    "Existing Preflight CiCadenceContractTests now checks live-audio catalog source containment, case-name uniqueness and source hashes on each push. No separate workflow or runtime added."
+  ],
+  "staticEvidence": {
+    "caseCount": 52,
+    "uniqueSources": 10,
+    "allCandidateBindingsMatch": true,
+    "caseIdentityOrderPreserved": true,
+    "independentReview": "adoption_scheduling_ops; minimal candidate accepted; source inspected remotely at producer",
+    "localProof": "work/gold-20260906/wave2553-live-audio-source-binding/ROOT_STATIC_CHECKS.json"
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedPreflight": "pending",
+    "freshLiveAudioLinux": "pending",
+    "freshLiveAudioWindows": "pending",
+    "freshLiveAudioMacos": "pending",
+    "nativeMicrophoneOrSpeaker": false,
+    "roadmapItemsClosed": 0
+  }
+}

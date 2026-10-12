@@ -1,0 +1,91 @@
+{
+  "schema": "neoth.gold.wave2554.jarvis-adoption-reconciliation.v1",
+  "producer": "92534440a83db37fae6f72979b47c006ab263c6f",
+  "sourceChat": {
+    "title": "Alexa mit Jarvis verbinden",
+    "threadId": "01a0f174-3180-7820-848b-5a90983da860",
+    "method": "Bounded read_thread pages, filtered original user/assistant messages. No write or message to that chat."
+  },
+  "explicitPriorNeothHandoffPacketFound": false,
+  "baseline": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md including W2485 and W2520",
+  "deltas": [
+    {
+      "id": "JM-EX-01",
+      "parent": "JM-01/JM-08",
+      "feature": "Event-driven camera preview lease",
+      "sourceItems": [
+        "01a1115b-6b87-73b2-af26-35dbd2ba7c00",
+        "msg_006c34e5278cef08016ac4f9d9456887d2892a2da22f2246f1"
+      ],
+      "acceptance": "Configured expiry closes only the originating preview generation; manual reopen survives old timers; failed stream returns without claiming live video."
+    },
+    {
+      "id": "JM-EX-02",
+      "parent": "JM-08",
+      "feature": "Follow-up conversation window after audio completion",
+      "sourceItems": [
+        "msg_0971308462479a38016ac153e5767c87d2a3a18228f71e9784",
+        "msg_0971308462479a38016ac15b48723887d2ac38ee06474d80eb",
+        "msg_0971308462479a38016ac15ddea13087d291ebbb4f5a96f30b"
+      ],
+      "acceptance": "Speaking -> FollowUpWindow -> Closed uses actual audio completion; replacing the session invalidates old expiry/completion events; historic duration is not silently made a NEOTH default."
+    },
+    {
+      "id": "JM-EX-03",
+      "parent": "JM-06 / ADOPT-20261012-A04/A05",
+      "feature": "One visible progress record per incoming message",
+      "sourceItems": [
+        "01a108da-3d90-78b3-9632-b51e7abef27f",
+        "msg_0c6302b239ad1c70016ac2c8761d5087d28e272abeab2b57ee"
+      ],
+      "acceptance": "Exact account/message/run identity owns one status record and terminal state across retry/restart; unknown external outcome never triggers blind resend."
+    },
+    {
+      "id": "JM-EX-04",
+      "parent": "JM-08 / W2520 media",
+      "feature": "Observed audio route and bounded recovery",
+      "sourceItems": [
+        "msg_006c34e5278cef08016ac38613a61487d29f59eaeb97005447",
+        "msg_006c34e5278cef08016ac4d1cca0c887d29e08e699452bd6b8"
+      ],
+      "acceptance": "Desired route differs from observed route; disconnect/reconnect recovery is bounded, old callbacks are rejected, capture is released; OS route proof is not human audibility."
+    },
+    {
+      "id": "JM-EX-05",
+      "parent": "JM-03/JM-04",
+      "feature": "Tool completion and fallback presentation",
+      "sourceItems": [
+        "msg_0c6302b239ad1c70016ac2d27b601087d291235d105b66e647"
+      ],
+      "acceptance": "Selecting a tool is not completion; cards carry actual observed terminal state and a bounded fallback reason."
+    },
+    {
+      "id": "JM-EX-06",
+      "parent": "JM-01 / W2520 chat-camera",
+      "feature": "Separate photo capture and recipient-bound delivery",
+      "sourceItems": [
+        "msg_0c6302b239ad1c70016ac2d27b601087d291235d105b66e647"
+      ],
+      "acceptance": "Capture creates no implicit send; delivery needs the existing exact destination/subject/authority binding and receipt."
+    },
+    {
+      "id": "JM-EX-07",
+      "parent": "JM-08 optional connector",
+      "feature": "Staged household announcement",
+      "sourceItems": [
+        "msg_0c6302b239ad1c70016ac2d27b601087d291235d105b66e647"
+      ],
+      "acceptance": "Optional only when a concrete authorized connector exists: compose, required confirmation, chime, delivery, typed terminal; accepted does not mean audibly played.",
+      "conditional": true
+    }
+  ],
+  "status": "Requirements reconciled; implementation and NEOTH acceptance remain open in existing parent work packages.",
+  "notTransferred": [
+    "Personal household/account/credential configuration",
+    "Jarvis runtimes or private device state",
+    "Historical Jarvis acceptance as NEOTH acceptance",
+    "Hardware-specific rendering tweaks as generic Flutter optimization"
+  ],
+  "roadmapCheckboxesAdded": 0,
+  "roadmapCheckboxesClosed": 0
+}

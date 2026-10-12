@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "roadmap-metadata-corrected-hosted-preflight-pending",
+  "status": "W2553 audio catalog corrected; W2554 Jarvis deltas mapped; W2555 offline comparison implemented; hosted fast checks pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 416704,
-    "sha256": "58EE84C398CA78A5F6495574B4C8141AF513F8A6D48B4A907FEFEE16F4852668"
+    "bytes": 417893,
+    "sha256": "262CF67697F7DCB406274D1CC172ED6574C7F5929B50AD642AFCAB3B44C679B9"
   },
-  "sourceInputs": 2273,
+  "sourceInputs": 2279,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81413,6 +81413,80 @@
       }
     ],
     "note": "Eight new mandatory adoption tasks plus conditional training research; historical1324checkboxes unchanged, only derived dashboard counts refreshed to1332/1081/249/2. Gate code and tests unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2553Through2555": {
+    "base": "92534440a83db37fae6f72979b47c006ab263c6f",
+    "sources": [
+      {
+        "path": ".github/workflows/preflight.yml",
+        "bytes": 7736,
+        "sha256": "1DCC24EF33D33AF14D9340887BB031EE4300623DB7546E8DFA48A26FB3BAD1CE",
+        "blob": "b2c6468794d8a26a06c6d18351a9c6240c6b4899"
+      },
+      {
+        "path": "docs/gold-wave2555-workflow-comparison.md",
+        "bytes": 5720,
+        "sha256": "BCFAD076883EB78307D36DA440772524C90A4FDB8913E0CA3809ABCEA393081B",
+        "blob": "74ba185d9c6c9407552294fecde8ee615fa8841a"
+      },
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 14625,
+        "sha256": "6A66D3B73AFFF63E4F2E1D11E1B9AB78F6F7D0F312231876F3431BFB74C9DC59",
+        "blob": "2a7d5a87e7ca173ae55daaa07befc802a410218b"
+      },
+      {
+        "path": "docs/verification/gold-wave2553-live-audio-source-binding.json",
+        "bytes": 1790,
+        "sha256": "2925FD16AE4B2685FB972672D26AE2F823A08CF71BD1DFFC05AA5A73F2A52366",
+        "blob": "49e69dc644419dae83c7bdeffb113b2fe79baaed"
+      },
+      {
+        "path": "docs/verification/gold-wave2554-jarvis-adoption-reconciliation.json",
+        "bytes": 4143,
+        "sha256": "8DCF17126F580D348682699229374EA46911D8CFE0EDE9451EE12761BF33CA26",
+        "blob": "bfee491830f0844fb7a98bef12fca58f1190608f"
+      },
+      {
+        "path": "docs/verification/gold-wave2555-workflow-comparison.json",
+        "bytes": 2163,
+        "sha256": "88180DAF69DEFFD018E46EB56B558BF37FEABE07F931DF409A0DC88D700BB78A",
+        "blob": "4ddbce13e8bd547fc70276ed74c0743e20fcf86c"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 63395,
+        "sha256": "900DC6B27242C45B93296D95DF72C02043A00FEE451C6AF4F4E4A810931A8A54",
+        "blob": "ea02a1c1316efe15571e3057dbaa6d4c79b28c75"
+      },
+      {
+        "path": "packaging/tests/test_workflow_compare_gate.py",
+        "bytes": 13825,
+        "sha256": "7DB82A4B048C51B6A249DD330CA1124D8CB7DC8EEE5D643F2A517BD95670D9E1",
+        "blob": "13ba1f9a845d8230b424458cd497207ab490073f"
+      },
+      {
+        "path": "packaging/workflow_compare_gate.py",
+        "bytes": 11593,
+        "sha256": "272E9B0CF9AA5B521E8F41237191884B04D10C026C5176FCB07D9B415C020C56",
+        "blob": "c39fbd4b6a4899a057c620d79516daf4806dd8e8"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 51373,
+        "sha256": "52FDB4726EBC4D0E9F005970252E35927AF49022B99A616DAED41397E9169BE3",
+        "blob": "12b9beb89863506dc27f669c7c0e989ab6615ad5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2568763,
+        "sha256": "3F9DFB1BF239D50397D741B19E399D544012AE32A10140CDB2DAE1C0D05C6686",
+        "blob": "73381a51b38df9c3b415f8204df4c1efadab393c"
+      }
+    ],
+    "note": "No Rust product changes. Active full-CI38217375243 remains bound to92534440; one existing full stream retained. Local runtime prohibited; original roadmap prefix and all checkbox lines preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

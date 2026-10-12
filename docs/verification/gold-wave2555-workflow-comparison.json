@@ -1,0 +1,34 @@
+{
+  "schema": "neoth.gold.wave2555.workflow-comparison.v1",
+  "producer": "92534440a83db37fae6f72979b47c006ab263c6f",
+  "scope": "R01A content-minimal offline comparison of two operator-retained single-turn selected-skill replay reports",
+  "changes": [
+    "New standalone packaging/workflow_compare_gate.py uses existing bounded JSON/provenance helpers; original release-witness validator and Rust runtime unchanged.",
+    "Exact protocol SHA supplied separately; source/corpus/config/ordered cases/skill versions bound before objective count comparison.",
+    "Early errors with no observed skill preserved in denominator and identified as unobserved; fail/error never silently upgraded to pass.",
+    "Output contains hashes/counts/indices only; no prompts, responses, failure reasons or episode names.",
+    "Thirteen actual-CLI synthetic regression methods added to the existing Preflight stream; no new provider workflow or scheduler."
+  ],
+  "status": "implemented candidate; static reviewed against actual Rust reporter; hosted validation pending",
+  "localExecutableValidationRan": false,
+  "trainingRunStarted": false,
+  "providerRunStarted": false,
+  "trainingBenefitDemonstrated": false,
+  "automaticPromotion": false,
+  "unknownMeasurements": [
+    "token usage",
+    "currency cost",
+    "actual provider attempts/retries"
+  ],
+  "existingReleaseWitnessChanged": false,
+  "mandatoryRoadmapCheckboxesAdded": 0,
+  "mandatoryRoadmapCheckboxesClosed": 0,
+  "boundaries": [
+    "contains-v1 counts are not general quality, tool safety, council evaluation or training evidence.",
+    "The separately supplied protocol hash binds bytes, not the historical moment of preregistration.",
+    "Configured max_per_request equality is not equal observed runtime cost.",
+    "Reports are operator-provided evidence; no independent run authenticity is asserted.",
+    "Future live pilot still needs an explicit model, licensed data/model/trainer, remote resource and cost cap."
+  ],
+  "independentStaticReview": "adoption_scheduling_ops: accepted with report-only containment and explicit inconclusive state for missing variant observation; both incorporated."
+}
