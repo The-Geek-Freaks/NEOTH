@@ -14,12 +14,14 @@ env:
   CARGO_BUILD_JOBS: '1'
   CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_TERM_COLOR: never
 
 jobs:
   product-canary:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -44,6 +46,68 @@ jobs:
       - name: Build current public CLI
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked
+      - name: Verify bounded email-to-Paperless recovery cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          export W2557_ROOT="$RUNNER_TEMP/w2557-email-paperless"
+          mkdir -p "$W2557_ROOT"/{logs,receipts}
+          git rev-parse HEAD > "$W2557_ROOT/source-head.txt"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path.cwd()
+          evidence = Path(os.environ["W2557_ROOT"])
+          catalog_path = root / "docs/verification/gold-wave2557-email-paperless-recovery-tests.json"
+          catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
+          cases = catalog["requiredTests"]
+          assert len(cases) == 25 and len({case["test"] for case in cases}) == 25
+          bindings = {}
+          for case in cases:
+              assert not any(char.isspace() for char in case["test"])
+              source = root / case["sourcePath"]
+              assert source.resolve().is_relative_to(root.resolve())
+              actual = hashlib.sha256(source.read_bytes()).hexdigest()
+              assert actual == case["sourceSha256"].lower(), case["sourcePath"]
+              bindings[case["sourcePath"]] = actual
+          for name in catalog["sourcePaths"] + ["SRC/Cargo.lock", ".github/workflows/paperless-product.yml", ".github/scripts/verify_rust_case.py", str(catalog_path.relative_to(root))]:
+              bindings[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+          (evidence / "source-bindings.json").write_text(json.dumps(bindings, indent=2) + "\n")
+          (evidence / "case-identities.json").write_text(json.dumps(cases, indent=2) + "\n")
+          (evidence / "cases.txt").write_text("".join(case["test"] + "\n" for case in cases))
+          PY
+          cd SRC
+          timeout --kill-after=15s 3600s cargo test -p neoth --locked --lib --features imap_fetch --no-run 2>&1 | tee "$W2557_ROOT/logs/compile.log"
+          ordinal=0
+          while IFS= read -r identity; do
+            ordinal=$((ordinal+1))
+            discovery="$W2557_ROOT/logs/$ordinal-discovery.log"
+            actual="$W2557_ROOT/logs/$ordinal-actual.log"
+            combined="$W2557_ROOT/logs/$ordinal-combined.log"
+            cargo test -p neoth --locked --lib --features imap_fetch "$identity" -- --exact --list > "$discovery" 2>&1
+            set +e
+            timeout --kill-after=10s 180s cargo test -p neoth --locked --lib --features imap_fetch "$identity" -- --exact --test-threads=1 > "$actual" 2>&1
+            code=$?
+            set -e
+            cat "$discovery" "$actual" > "$combined"
+            if ! python3 ../.github/scripts/verify_rust_case.py --identity "$identity" --log "$combined" --exit-code "$code" --receipt "$W2557_ROOT/receipts/$ordinal.json"; then
+              cat "$combined"
+              exit 1
+            fi
+          done < "$W2557_ROOT/cases.txt"
+          test "$ordinal" -eq 25
+
+      - name: Upload exact email recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w2557-email-paperless-${{ github.sha }}
+          path: ${{ runner.temp }}/w2557-email-paperless/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Save completed CLI-reference Cargo checkpoint
         if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

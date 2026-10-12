@@ -62,9 +62,31 @@ fn tls_config() -> Arc<ClientConfig> {
 /// untested shell; failures surface the IMAP/TLS error context only —
 /// never the password / access token.
 pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Vec<InboundEmail>> {
+    Ok(fetch_unseen_page(cfg, limit, UnseenPageCursor::default()).await?.emails)
+}
+
+/// Selection only; resetting this cursor cannot grant a second external effect.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnseenPageCursor {
+    pub(crate) uid_validity: Option<u32>,
+    before: Option<u32>,
+}
+
+pub struct UnseenPage {
+    pub emails: Vec<InboundEmail>,
+    pub next: UnseenPageCursor,
+}
+
+/// Cycle through all server-UNSEEN UIDs without changing the operator's read
+/// state. The mailbox-bound caller retains this cursor between cron ticks.
+pub async fn fetch_unseen_page(
+    cfg: &ImapConnectionConfig,
+    limit: usize,
+    cursor: UnseenPageCursor,
+) -> Result<UnseenPage> {
     let limit = limit.min(MAX_FETCH_LIMIT);
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(UnseenPage { emails: Vec::new(), next: cursor });
     }
     if !cfg.use_tls {
         anyhow::bail!("imap_fetch refuses a non-TLS connection (STARTTLS/143 not supported)");
@@ -102,7 +124,7 @@ pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Ve
         }
     };
 
-    session
+    let mailbox = session
         .select("INBOX")
         .await
         .context("SELECT INBOX failed")?;
@@ -111,10 +133,9 @@ pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Ve
         .uid_search("UNSEEN")
         .await
         .context("UID SEARCH UNSEEN failed")?;
-    // Newest-first: highest UIDs are the most recent arrivals.
-    let mut uid_vec: Vec<u32> = uids.into_iter().collect();
-    uid_vec.sort_unstable_by(|a, b| b.cmp(a));
-    uid_vec.truncate(limit);
+    let uid_validity = mailbox.uid_validity.filter(|value| *value > 0)
+        .context("IMAP mailbox lacks a valid UIDVALIDITY")?;
+    let (uid_vec, next) = select_unseen_page(uids.into_iter().collect(), limit, cursor, uid_validity);
 
     let mut out = Vec::with_capacity(uid_vec.len());
     for uid in uid_vec {
@@ -135,7 +156,26 @@ pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Ve
 
     // Best-effort logout; a failure here doesn't invalidate what we fetched.
     let _ = session.logout().await;
-    Ok(out)
+    Ok(UnseenPage { emails: out, next })
+}
+
+fn select_unseen_page(
+    mut uids: Vec<u32>,
+    limit: usize,
+    cursor: UnseenPageCursor,
+    uid_validity: u32,
+) -> (Vec<u32>, UnseenPageCursor) {
+    uids.sort_unstable_by(|a, b| b.cmp(a));
+    uids.dedup();
+    if cursor.uid_validity == Some(uid_validity) {
+        if let Some(before) = cursor.before {
+            let start = uids.iter().position(|uid| *uid < before).unwrap_or(0);
+            uids.rotate_left(start);
+        }
+    }
+    uids.truncate(limit.min(MAX_FETCH_LIMIT));
+    let next = UnseenPageCursor { uid_validity: Some(uid_validity), before: uids.last().copied() };
+    (uids, next)
 }
 
 /// Parse a raw RFC822 message into an [`InboundEmail`]. Pure. Pulls the
@@ -247,6 +287,29 @@ fn param_value(header: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unseen_pages_visit_pending_older_units_and_wrap_without_duplicates() {
+        let (first, cursor) = select_unseen_page(vec![1, 2, 3, 4, 5], 2, UnseenPageCursor::default(), 7);
+        assert_eq!(first, vec![5, 4]);
+        let (second, cursor) = select_unseen_page(vec![1, 2, 3, 4, 5, 6], 2, cursor, 7);
+        assert_eq!(second, vec![3, 2]);
+        let (third, cursor) = select_unseen_page(vec![1, 2, 3, 4, 5, 6], 2, cursor, 7);
+        assert_eq!(third, vec![1, 6]);
+        let (fourth, _) = select_unseen_page(vec![1, 2, 3, 4, 5, 6], 2, cursor, 7);
+        assert_eq!(fourth, vec![5, 4]);
+    }
+
+    #[test]
+    fn unseen_page_resets_reused_uids_on_uidvalidity_change_and_keeps_cap() {
+        let (_, cursor) = select_unseen_page(vec![1, 2, 3], 2, UnseenPageCursor::default(), 7);
+        let (reset, _) = select_unseen_page(vec![1, 2, 3], 2, cursor, 8);
+        assert_eq!(reset, vec![3, 2]);
+        let (bounded, _) = select_unseen_page((1..=500).collect(), usize::MAX, cursor, 7);
+        assert_eq!(bounded.len(), MAX_FETCH_LIMIT);
+        let (unique, _) = select_unseen_page(vec![1, 1, 2], 100, UnseenPageCursor::default(), 7);
+        assert_eq!(unique, vec![2, 1]);
+    }
 
     #[test]
     fn parse_plain_email_extracts_headers_and_body() {

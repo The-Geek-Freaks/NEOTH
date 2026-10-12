@@ -6,6 +6,8 @@ pub mod builder;
 pub mod compaction;
 /// W2311 closed exact receipts for Companion enrollment/revocation mutations.
 pub(crate) mod companion_mutation_receipts;
+/// W2557 writer-owned pre-send claims for non-idempotent Paperless POSTs.
+pub(crate) mod paperless_post_receipts;
 /// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).

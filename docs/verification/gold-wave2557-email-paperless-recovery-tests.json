@@ -1,0 +1,199 @@
+{
+  "schema": "neoth.email-paperless-recovery.v1",
+  "status": "22 new plus 3 existing compatibility cases; hosted execution pending",
+  "feature": "imap_fetch",
+  "requiredTests": [
+    {
+      "test": "wal::writer::tests::paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_blocks_retry_after_cancellation_inside_transport",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_completion_requires_intent_and_remains_terminal_after_restart",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_pending_bound_allows_completion_to_release_capacity",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_real_http_cancellation_reconciles_original_without_second_post",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_descriptor_separates_unit_identity_from_request_drift_and_private_text",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_descriptor_rejects_noncanonical_or_unknown_schema",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_completion_cannot_release_capacity_for_a_different_open_binding",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::exact_document_reconciliation_downloads_original_bytes",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_ambiguous_incomplete_or_wrong_filename_rows",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_unsupported_server_before_any_effect",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_wrong_oversize_and_redirected_originals",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::upload_rejects_unbound_parts_before_transport_and_retains_exact_marker",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::empty_original_requires_200_not_no_content_or_partial_response",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::imap_fetch::tests::unseen_pages_visit_pending_older_units_and_wrap_without_duplicates",
+      "sourcePath": "SRC/neothd/src/email/imap_fetch.rs",
+      "sourceSha256": "B5790B3F07E49D0D52DEDEBF90A1D799AAB179C37526949FEB4E6BFD94FCEEE3",
+      "newCase": true,
+      "requiresImapFeature": true
+    },
+    {
+      "test": "email::imap_fetch::tests::unseen_page_resets_reused_uids_on_uidvalidity_change_and_keeps_cap",
+      "sourcePath": "SRC/neothd/src/email/imap_fetch.rs",
+      "sourceSha256": "B5790B3F07E49D0D52DEDEBF90A1D799AAB179C37526949FEB4E6BFD94FCEEE3",
+      "newCase": true,
+      "requiresImapFeature": true
+    },
+    {
+      "test": "wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": false,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "newCase": false,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::events::tests::extended_event_escape_hatch_registered",
+      "sourcePath": "SRC/neothd/src/wal/events.rs",
+      "sourceSha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C",
+      "newCase": false,
+      "requiresImapFeature": false
+    }
+  ],
+  "sourcePaths": [
+    "SRC/neothd/src/wal/writer.rs",
+    "SRC/neothd/src/wal/events.rs",
+    "SRC/neothd/src/wal/mod.rs",
+    "SRC/neothd/src/daemon/email_ingest_cron.rs",
+    "SRC/neothd/src/cli/serve.rs",
+    "SRC/neothd/src/email/imap_fetch.rs",
+    "SRC/neothd/src/wal/paperless_post_receipts.rs",
+    "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs"
+  ],
+  "upstream": {
+    "commit": "7575d6078227ebdb4cf443f263d53ebc7575aa37",
+    "repository": "paperless-ngx/paperless-ngx",
+    "api": 10,
+    "version": "3.2.1"
+  },
+  "localExecutableValidationRan": false
+}

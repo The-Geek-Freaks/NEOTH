@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "published source pending hosted cadence contract; Linux audio admitted at 50404471",
+  "status": "reviewed source published for hosted verification; execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 418053,
-    "sha256": "A4B78E2A0C33E09938EE43E0E0C24412F33BB02D44AFBC8B83B5BDBFC968EA29"
+    "bytes": 419146,
+    "sha256": "241EAD9C9235F00A54A2DB0E1F19BCCAD2EC265EC901DA36D3B1D1AF6E10043C"
   },
-  "sourceInputs": 2280,
+  "sourceInputs": 2286,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2256,25 +2256,25 @@
     {
       "test": "wal::writer::tests::writer_drain_flushes_batchable_only_writes_on_shutdown",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_syncs_batchable_tail_and_writer_remains_usable",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_after_closed_writer_returns_writer_closed",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_after_writer_failure_never_acknowledges_success",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -4368,19 +4368,19 @@
     {
       "test": "wal::writer::tests::counterparty_consent_subtypes_refuse_every_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::counterparty_consent_input_locator_conflict_fails_closed",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::counterparty_consent_input_once_is_durable_readback_and_idempotent",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -6270,31 +6270,31 @@
     {
       "test": "wal::writer::tests::dream_audit_subtype_refuses_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_once_returns_existing_exact_and_conflict_without_second_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_reserved_subtype_rejects_all_real_generic_handle_entrypoints",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_durable_before_ack_loss_recovers_exactly_once_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_rejects_different_home_and_incomplete_authenticated_scan_without_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -6666,31 +6666,31 @@
     {
       "test": "wal::writer::tests::redaction_rewrite_subtype_refuses_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_once_returns_existing_exact_and_conflict_without_second_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_reserved_subtype_rejects_all_real_generic_handle_entrypoints",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_durable_before_ack_loss_recovers_exactly_once_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_rejects_different_home_and_incomplete_authenticated_scan_without_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -8760,13 +8760,13 @@
     {
       "test": "wal::events::tests::extended_event_escape_hatch_registered",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "D65BB55B16D260A8BB36823B35FD0D9BA08A53CB75FEE1CDB20738971B5815B2",
+      "sourceSha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C",
       "junitClass": "neoth"
     },
     {
       "test": "wal::events::tests::extended_frame_roundtrips_type_and_subtype",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "D65BB55B16D260A8BB36823B35FD0D9BA08A53CB75FEE1CDB20738971B5815B2",
+      "sourceSha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C",
       "junitClass": "neoth"
     },
     {
@@ -9540,7 +9540,7 @@
     {
       "test": "cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault",
       "sourcePath": "SRC/neothd/src/cli/serve.rs",
-      "sourceSha256": "C5BFA848CCCD82D6AA65DBA6DAB3897761D1307AC087C18D1DD8B9EDE7D6C6E7",
+      "sourceSha256": "2E120D2CE7DE4F6AC63051C26B79A84A93A7AE14C9D8E40DAABA29073EB89D88",
       "junitClass": "neoth"
     },
     {
@@ -16261,13 +16261,13 @@
     {
       "test": "wal::writer::tests::microphone_realtime_subtypes_refuse_every_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -16381,19 +16381,19 @@
     {
       "test": "wal::writer::tests::append_no_ack_refuses_closed_companion_mutation_receipt",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
       "junitClass": "neoth"
     },
     {
@@ -17391,6 +17391,126 @@
       "test": "wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding",
       "sourceSha256": "B4E0F16707A58D524B4D02C86F5EE9C5C2037FFEBA4D2B6D72AF2386179E7E2A",
       "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs"
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_blocks_retry_after_cancellation_inside_transport",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_completion_requires_intent_and_remains_terminal_after_restart",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_pending_bound_allows_completion_to_release_capacity",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_real_http_cancellation_reconciles_original_without_second_post",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::writer::tests::paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_descriptor_separates_unit_identity_from_request_drift_and_private_text",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_descriptor_rejects_noncanonical_or_unknown_schema",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::paperless_post_receipts::tests::paperless_completion_cannot_release_capacity_for_a_different_open_binding",
+      "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sourceSha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::exact_document_reconciliation_downloads_original_bytes",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_ambiguous_incomplete_or_wrong_filename_rows",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_unsupported_server_before_any_effect",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::document_reconciliation_rejects_wrong_oversize_and_redirected_originals",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::upload_rejects_unbound_parts_before_transport_and_retains_exact_marker",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::paperless_client::tests::empty_original_requires_200_not_no_content_or_partial_response",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sourceSha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -81565,6 +81685,86 @@
       }
     ],
     "note": "Preserve one active full CI per ref; only PR revisions cancel. Independently admitted original Linux W186 artifact11737104029:52 cases,12 source bindings,4 entries. Paperless candidate remains isolated and unaccepted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2557PaperlessRecovery": {
+    "base": "598b8f8cf33176bc2b80ae8543c11c77106cb9d7",
+    "sources": [
+      {
+        "path": ".github/workflows/paperless-product.yml",
+        "bytes": 6696,
+        "sha256": "20BDCF8AA302134559F27073D4D478DE7F7069D2049BBE1C739F4867FFD90BE8",
+        "blob": "1a01045e93ef585a1c5f99840dee9373517afd94"
+      },
+      {
+        "path": "docs/gold-wave2557-email-paperless-recovery.md",
+        "bytes": 4314,
+        "sha256": "185099A75DF936182B28FC90A70D43B72AB187A845B16D82FFC0FABF60D5ACBC",
+        "blob": "d3f9a95e05f502afac3dc02950117304a5422844"
+      },
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 9360,
+        "sha256": "732BF213D4BE782F1DDCA63CDEC25EC72B878942E71AA839AE8257344B89D445",
+        "blob": "d4b47e1eaab2a7dd531b1664430327da50c23f48"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2583143,
+        "sha256": "E75C25B8CF8DBD491EDD761803F2AFBC8DE08041BDDF6E8ECB1D0221AE4DEF69",
+        "blob": "f5f0dcf23866ba8d741d0d1d210c8fcf5d68e0ed"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 186043,
+        "sha256": "2E120D2CE7DE4F6AC63051C26B79A84A93A7AE14C9D8E40DAABA29073EB89D88",
+        "blob": "f1130f7f5a2b3d7e05aed11f567f378595f40042"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 35812,
+        "sha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED",
+        "blob": "d71136b7aa66f16a4178a63920e5001cde5a4d0c"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+        "bytes": 15470,
+        "sha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89",
+        "blob": "da74c86a6ef5cf8bf28a4180bea452fb282c3caa"
+      },
+      {
+        "path": "SRC/neothd/src/email/imap_fetch.rs",
+        "bytes": 14556,
+        "sha256": "B5790B3F07E49D0D52DEDEBF90A1D799AAB179C37526949FEB4E6BFD94FCEEE3",
+        "blob": "91552554a4ffb9b23fc4f6c5d69413047e50a0a0"
+      },
+      {
+        "path": "SRC/neothd/src/wal/events.rs",
+        "bytes": 275804,
+        "sha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C",
+        "blob": "9b1e72b849ef5c5d40c3230b4a55c0cb269b239e"
+      },
+      {
+        "path": "SRC/neothd/src/wal/mod.rs",
+        "bytes": 7019,
+        "sha256": "499534DF8F4354333BCCE2D79482A4ACE5F3A717CFF2AEDAA7A5FC6EE26F99F4",
+        "blob": "b7a6e0be1350ff1db0dc41dfb0adfa68d3771b3e"
+      },
+      {
+        "path": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+        "bytes": 12330,
+        "sha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395",
+        "blob": "246a9d09b9e885fc722c66416a3c20b65180a633"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "bytes": 513737,
+        "sha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8",
+        "blob": "9c0f8df5d76224952abe5d3c1bcd9e527f47471a"
+      }
+    ],
+    "note": "Existing writer: exact pre-send claim and original-byte-bound completion, capped pending units, fair IMAP cursor.22 new Rust cases and3 existing compatibility cases,20 new portable registrations. No local executable validation; pinned Paperless3.2.1/API10 protocol; physical/product acceptance remains open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

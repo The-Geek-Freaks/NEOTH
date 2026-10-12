@@ -2565,6 +2565,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // enable it without a daemon restart. Generation notifications reset the
     // ticker immediately on both interval changes and disabled→enabled edges.
     let email_ingest_cron_handle = {
+        let email_writer = writer.clone();
+        let mut email_cursor = crate::daemon::email_ingest_cron::EmailIngestCursor::default();
         let ctrl = reload_controller.clone();
         let home = neoth_home.clone();
         info!("email ingest cron supervisor spawned (GOLD-ADAPT-JV-PAPERLESS-01)");
@@ -2587,7 +2589,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             continue;
                         }
                         if let Err(e) =
-                            crate::daemon::email_ingest_cron::run_email_ingest_tick(&home).await
+                            crate::daemon::email_ingest_cron::run_email_ingest_tick(&home, &email_writer, &mut email_cursor).await
                         {
                             warn!(error = %e, "email_ingest_cron tick error");
                         }
