@@ -34,8 +34,9 @@ const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-rec
 const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
 const COMPANION_MUTATION_RECEIPT_AUTHORITY_SENTINEL: &str = ".companion-mutation-receipt-authority";
 const PAPERLESS_POST_INTENT_AUTHORITY_SENTINEL: &str = ".paperless-post-intent-authority";
-static PAPERLESS_POST_INTENT_PROCESS_AUTHORITY: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
-    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static PAPERLESS_POST_INTENT_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 const TRANSCRIPT_MINING_AUTHORITY_SENTINEL: &str = ".transcript-mining-authority";
 const COUNTERPARTY_CONSENT_AUTHORITY_SENTINEL: &str = ".counterparty-consent-authority";
 const DREAM_AUDIT_AUTHORITY_SENTINEL: &str = ".dream-audit-authority";
@@ -120,8 +121,7 @@ fn refuse_generic_companion_mutation_receipt(header: &EventHeaderV2) -> Result<(
 
 fn is_paperless_post_intent_header(header: &EventHeaderV2) -> bool {
     header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
-        && header.event_subtype
-            == crate::wal::events::ExtendedSubtype::PaperlessPostReceipt as u8
+        && header.event_subtype == crate::wal::events::ExtendedSubtype::PaperlessPostReceipt as u8
 }
 
 fn refuse_generic_paperless_post_intent(header: &EventHeaderV2) -> Result<(), WalError> {
@@ -2133,9 +2133,13 @@ impl WalWriterHandle {
         let home = home.to_path_buf();
         match tokio::task::spawn_blocking(move || {
             writer.append_paperless_post_receipt_once_blocking(&home, expected)
-        }).await {
+        })
+        .await
+        {
             Ok(outcome) => outcome,
-            Err(_) => Err(crate::wal::paperless_post_receipts::PaperlessPostIntentError::Indeterminate),
+            Err(_) => {
+                Err(crate::wal::paperless_post_receipts::PaperlessPostIntentError::Indeterminate)
+            }
         }
     }
 
@@ -4357,9 +4361,7 @@ async fn acquire_paperless_post_intent_authority(
     )
     .await
     .map_err(|_| {
-        compaction_recovery_error(
-            "Paperless POST intent process authority remained busy for >5s",
-        )
+        compaction_recovery_error("Paperless POST intent process authority remained busy for >5s")
     })?;
     let sentinel = paperless_post_intent_authority_sentinel(home);
     let file_guard =
@@ -11838,32 +11840,69 @@ mod tests {
         join.await.unwrap();
     }
 
-    fn paperless_descriptor(key: &str) -> crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor {
+    fn paperless_descriptor(
+        key: &str,
+    ) -> crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor {
         crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
-            "mail.example", 993, "fixture-user", key, "invoice body", "invoice", "http://paperless.invalid/api/documents/post_document/",
+            "mail.example",
+            993,
+            "fixture-user",
+            key,
+            "invoice body",
+            "invoice",
+            "http://paperless.invalid/api/documents/post_document/",
         )
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift() {
-        use crate::daemon::email_ingest_cron::{PaperlessUploadOutcome as Outcome, upload_paperless_once};
+        use crate::daemon::email_ingest_cron::{
+            PaperlessUploadOutcome as Outcome, upload_paperless_once,
+        };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let descriptor = paperless_descriptor("mail-one");
-        let (writer, join) = spawn_test_writer_at_home(wal.join("paperless-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         let attempts = AtomicUsize::new(0);
         let (left, right) = tokio::join!(
-            upload_paperless_once(home.path(), &writer, descriptor.clone(), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }),
-            upload_paperless_once(home.path(), &writer, descriptor.clone(), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }),
+            upload_paperless_once(home.path(), &writer, descriptor.clone(), || async {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Ok(202)
+            }),
+            upload_paperless_once(home.path(), &writer, descriptor.clone(), || async {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Ok(202)
+            }),
         );
-        assert!(matches!((left, right), (Outcome::ResponseObserved(202), Outcome::ExistingIntent) | (Outcome::ExistingIntent, Outcome::ResponseObserved(202))));
+        assert!(matches!(
+            (left, right),
+            (Outcome::ResponseObserved(202), Outcome::ExistingIntent)
+                | (Outcome::ExistingIntent, Outcome::ResponseObserved(202))
+        ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         for field in 0..3 {
             let mut drift = descriptor.clone();
-            match field { 0 => drift.body_sha256 = "a".repeat(64), 1 => drift.title_sha256 = "b".repeat(64), _ => drift.destination_sha256 = "c".repeat(64) }
-            assert_eq!(upload_paperless_once(home.path(), &writer, drift, || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(200) }).await, Outcome::AdmissionBlocked);
+            match field {
+                0 => drift.body_sha256 = "a".repeat(64),
+                1 => drift.title_sha256 = "b".repeat(64),
+                _ => drift.destination_sha256 = "c".repeat(64),
+            }
+            assert_eq!(
+                upload_paperless_once(home.path(), &writer, drift, || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(200)
+                })
+                .await,
+                Outcome::AdmissionBlocked
+            );
         }
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         drop(writer);
@@ -11872,30 +11911,83 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit() {
-        use crate::daemon::email_ingest_cron::{PaperlessUploadOutcome as Outcome, upload_paperless_once};
+        use crate::daemon::email_ingest_cron::{
+            PaperlessUploadOutcome as Outcome, upload_paperless_once,
+        };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let segment = wal.join("paperless-restart-000001.wal");
         let attempts = AtomicUsize::new(0);
-        let (writer, join) = spawn_test_writer_at_home(segment.clone(), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-one"), || async {
-            attempts.fetch_add(1, Ordering::SeqCst);
-            Err(anyhow::anyhow!("PRIVATE_UNCERTAIN_TRANSPORT"))
-        }).await, Outcome::TransportUncertain);
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Err(anyhow::anyhow!("PRIVATE_UNCERTAIN_TRANSPORT"))
+                }
+            )
+            .await,
+            Outcome::TransportUncertain
+        );
         drop(writer);
         join.await.unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment, home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-one"), || async {
-            attempts.fetch_add(1, Ordering::SeqCst); Ok(200)
-        }).await, Outcome::ExistingIntent);
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-two"), || async {
-            attempts.fetch_add(1, Ordering::SeqCst); Ok(503)
-        }).await, Outcome::ResponseObserved(503));
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-two"), || async {
-            attempts.fetch_add(1, Ordering::SeqCst); Ok(200)
-        }).await, Outcome::ExistingIntent);
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(200)
+                }
+            )
+            .await,
+            Outcome::ExistingIntent
+        );
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-two"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(503)
+                }
+            )
+            .await,
+            Outcome::ResponseObserved(503)
+        );
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-two"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(200)
+                }
+            )
+            .await,
+            Outcome::ExistingIntent
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
         drop(writer);
         join.await.unwrap();
@@ -11903,20 +11995,37 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack() {
-        use crate::daemon::email_ingest_cron::{PaperlessUploadOutcome as Outcome, upload_paperless_once};
+        use crate::daemon::email_ingest_cron::{
+            PaperlessUploadOutcome as Outcome, upload_paperless_once,
+        };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let segment = wal.join("paperless-cancel-000001.wal");
-        let (writer, join) = spawn_test_writer_at_home(segment.clone(), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
         let caller_writer = writer.clone().with_test_ack_gate(gate.clone());
         let caller_home = home.path().to_path_buf();
         let attempts = std::sync::Arc::new(AtomicUsize::new(0));
         let caller_attempts = attempts.clone();
         let caller = tokio::spawn(async move {
-            upload_paperless_once(&caller_home, &caller_writer, paperless_descriptor("mail-one"), || async { caller_attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }).await
+            upload_paperless_once(
+                &caller_home,
+                &caller_writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    caller_attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(202)
+                },
+            )
+            .await
         });
         gate.wait_until_durable().await;
         caller.abort();
@@ -11924,8 +12033,26 @@ mod tests {
         gate.release();
         drop(writer);
         join.await.unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment, home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-one"), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }).await, Outcome::ExistingIntent);
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(202)
+                }
+            )
+            .await,
+            Outcome::ExistingIntent
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 0);
         drop(writer);
         join.await.unwrap();
@@ -11933,12 +12060,20 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_post_intent_blocks_retry_after_cancellation_inside_transport() {
-        use crate::daemon::email_ingest_cron::{PaperlessUploadOutcome as Outcome, upload_paperless_once};
+        use crate::daemon::email_ingest_cron::{
+            PaperlessUploadOutcome as Outcome, upload_paperless_once,
+        };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("paperless-send-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-send-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         let caller_writer = writer.clone();
         let caller_home = home.path().to_path_buf();
         let entered = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -11946,16 +12081,36 @@ mod tests {
         let attempts = std::sync::Arc::new(AtomicUsize::new(0));
         let caller_attempts = attempts.clone();
         let caller = tokio::spawn(async move {
-            upload_paperless_once(&caller_home, &caller_writer, paperless_descriptor("mail-one"), || async {
-                caller_attempts.fetch_add(1, Ordering::SeqCst);
-                caller_entered.notify_one();
-                std::future::pending::<anyhow::Result<u16>>().await
-            }).await
+            upload_paperless_once(
+                &caller_home,
+                &caller_writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    caller_attempts.fetch_add(1, Ordering::SeqCst);
+                    caller_entered.notify_one();
+                    std::future::pending::<anyhow::Result<u16>>().await
+                },
+            )
+            .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(15), entered.notified()).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(15), entered.notified())
+            .await
+            .unwrap();
         caller.abort();
         assert!(caller.await.is_err());
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-one"), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }).await, Outcome::ExistingIntent);
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(202)
+                }
+            )
+            .await,
+            Outcome::ExistingIntent
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         drop(writer);
         join.await.unwrap();
@@ -11963,23 +12118,62 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor() {
-        use crate::daemon::email_ingest_cron::{PaperlessUploadOutcome as Outcome, upload_paperless_once};
+        use crate::daemon::email_ingest_cron::{
+            PaperlessUploadOutcome as Outcome, upload_paperless_once,
+        };
         use std::sync::atomic::{AtomicUsize, Ordering};
         let home = tempdir().unwrap();
         let other = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("paperless-denied-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-denied-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         let descriptor = paperless_descriptor("mail-one");
         let payload = descriptor.payload().unwrap();
-        assert!(writer.append(descriptor.header(&payload), payload).await.is_err());
+        assert!(
+            writer
+                .append(descriptor.header(&payload), payload)
+                .await
+                .is_err()
+        );
         let attempts = AtomicUsize::new(0);
-        assert_eq!(upload_paperless_once(other.path(), &writer, descriptor.clone(), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(200) }).await, Outcome::AdmissionBlocked);
+        assert_eq!(
+            upload_paperless_once(other.path(), &writer, descriptor.clone(), || async {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Ok(200)
+            })
+            .await,
+            Outcome::AdmissionBlocked
+        );
         let mut malformed = descriptor;
         malformed.unit_sha256 = "UPPERCASE_INVALID".into();
-        assert_eq!(upload_paperless_once(home.path(), &writer, malformed, || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(200) }).await, Outcome::AdmissionBlocked);
+        assert_eq!(
+            upload_paperless_once(home.path(), &writer, malformed, || async {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Ok(200)
+            })
+            .await,
+            Outcome::AdmissionBlocked
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 0);
-        assert_eq!(upload_paperless_once(home.path(), &writer, paperless_descriptor("mail-one"), || async { attempts.fetch_add(1, Ordering::SeqCst); Ok(202) }).await, Outcome::ResponseObserved(202));
+        assert_eq!(
+            upload_paperless_once(
+                home.path(),
+                &writer,
+                paperless_descriptor("mail-one"),
+                || async {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(202)
+                }
+            )
+            .await,
+            Outcome::ResponseObserved(202)
+        );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         drop(writer);
         join.await.unwrap();
@@ -11987,44 +12181,129 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_completion_requires_intent_and_remains_terminal_after_restart() {
-        use crate::wal::paperless_post_receipts::{PaperlessPostIntentError as Error, PaperlessPostIntentOutcome as Outcome};
+        use crate::wal::paperless_post_receipts::{
+            PaperlessPostIntentError as Error, PaperlessPostIntentOutcome as Outcome,
+        };
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let segment = wal.join("paperless-complete-000001.wal");
         let descriptor = paperless_descriptor("complete-one");
-        let completed = descriptor.with_verified_document(7, &descriptor.body_sha256).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment.clone(), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), completed.clone()).await, Err(Error::Conflict));
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), descriptor.clone()).await, Ok(Outcome::AppendedExact));
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), completed.clone()).await, Ok(Outcome::AppendedExact));
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), completed.clone()).await, Ok(Outcome::ExistingExact));
-        let conflict = descriptor.with_verified_document(8, &descriptor.body_sha256).unwrap();
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), conflict).await, Err(Error::Conflict));
+        let completed = descriptor
+            .with_verified_document(7, &descriptor.body_sha256)
+            .unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), completed.clone())
+                .await,
+            Err(Error::Conflict)
+        );
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor.clone())
+                .await,
+            Ok(Outcome::AppendedExact)
+        );
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), completed.clone())
+                .await,
+            Ok(Outcome::AppendedExact)
+        );
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), completed.clone())
+                .await,
+            Ok(Outcome::ExistingExact)
+        );
+        let conflict = descriptor
+            .with_verified_document(8, &descriptor.body_sha256)
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), conflict)
+                .await,
+            Err(Error::Conflict)
+        );
         drop(writer);
         join.await.unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment, home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), descriptor).await, Ok(Outcome::CompletedExact(7)));
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor)
+                .await,
+            Ok(Outcome::CompletedExact(7))
+        );
         drop(writer);
         join.await.unwrap();
     }
 
     #[tokio::test]
     async fn paperless_pending_bound_allows_completion_to_release_capacity() {
-        use crate::wal::paperless_post_receipts::{MAX_OPEN_PAPERLESS_INTENTS, PaperlessPostIntentError as Error, PaperlessPostIntentOutcome as Outcome};
+        use crate::wal::paperless_post_receipts::{
+            MAX_OPEN_PAPERLESS_INTENTS, PaperlessPostIntentError as Error,
+            PaperlessPostIntentOutcome as Outcome,
+        };
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("paperless-capacity-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-capacity-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         for index in 0..MAX_OPEN_PAPERLESS_INTENTS {
-            assert_eq!(writer.append_paperless_post_receipt_once(home.path(), paperless_descriptor(&format!("mail-{index}"))).await, Ok(Outcome::AppendedExact));
+            assert_eq!(
+                writer
+                    .append_paperless_post_receipt_once(
+                        home.path(),
+                        paperless_descriptor(&format!("mail-{index}"))
+                    )
+                    .await,
+                Ok(Outcome::AppendedExact)
+            );
         }
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), paperless_descriptor("over-cap")).await, Err(Error::Capacity));
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), paperless_descriptor("over-cap"))
+                .await,
+            Err(Error::Capacity)
+        );
         let first = paperless_descriptor("mail-0");
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), first.clone()).await, Ok(Outcome::ExistingExact));
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), first.clone())
+                .await,
+            Ok(Outcome::ExistingExact)
+        );
         let completed = first.with_verified_document(7, &first.body_sha256).unwrap();
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), completed).await, Ok(Outcome::AppendedExact));
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), paperless_descriptor("over-cap")).await, Ok(Outcome::AppendedExact));
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), completed)
+                .await,
+            Ok(Outcome::AppendedExact)
+        );
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), paperless_descriptor("over-cap"))
+                .await,
+            Ok(Outcome::AppendedExact)
+        );
         drop(writer);
         join.await.unwrap();
     }
@@ -12032,14 +12311,27 @@ mod tests {
     #[tokio::test]
     async fn paperless_real_http_cancellation_reconciles_original_without_second_post() {
         use crate::daemon::email_ingest_cron::reconcile_or_upload_paperless;
-        use crate::wal::paperless_post_receipts::{PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome};
+        use crate::wal::paperless_post_receipts::{
+            PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome,
+        };
         use serde_json::json;
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
         use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         let endpoint = format!("{}/api/documents/post_document/", server.uri());
-        let descriptor = PaperlessPostIntentDescriptor::from_mail("mail.example", 993, "fixture-user", "cancel-real", "invoice body", "invoice", &endpoint);
+        let descriptor = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example",
+            993,
+            "fixture-user",
+            "cancel-real",
+            "invoice body",
+            "invoice",
+            &endpoint,
+        );
         let marker = descriptor.marker_filename();
         let stored = Arc::new(AtomicBool::new(false));
         let started = Arc::new(tokio::sync::Notify::new());
@@ -12055,80 +12347,213 @@ mod tests {
             }).mount(&server).await;
         let upload_stored = stored.clone();
         let upload_started = started.clone();
-        Mock::given(method("POST")).and(path("/api/documents/post_document/"))
+        Mock::given(method("POST"))
+            .and(path("/api/documents/post_document/"))
             .respond_with(move |_: &wiremock::Request| {
                 upload_stored.store(true, Ordering::SeqCst);
                 upload_started.notify_one();
                 ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30))
-            }).expect(1).mount(&server).await;
-        Mock::given(method("GET")).and(path("/api/documents/71/download/"))
+            })
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/documents/71/download/"))
             .and(query_param("original", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(b"invoice body".to_vec()))
-            .mount(&server).await;
+            .mount(&server)
+            .await;
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let segment = wal.join("paperless-http-cancel-000001.wal");
-        let (writer, join) = spawn_test_writer_at_home(segment.clone(), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
         let caller_writer = writer.clone();
         let caller_home = home.path().to_path_buf();
         let caller_descriptor = descriptor.clone();
         let caller_endpoint = endpoint.clone();
         let caller = tokio::spawn(async move {
-            reconcile_or_upload_paperless(&caller_home, &caller_writer, caller_descriptor,
-                &caller_endpoint, "fixture-token", "invoice", "invoice body").await
+            reconcile_or_upload_paperless(
+                &caller_home,
+                &caller_writer,
+                caller_descriptor,
+                &caller_endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body",
+            )
+            .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(10), started.notified()).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), started.notified())
+            .await
+            .unwrap();
         caller.abort();
         assert!(caller.await.is_err());
         drop(writer);
         join.await.unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment, home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert!(reconcile_or_upload_paperless(home.path(), &writer, descriptor.clone(), &endpoint,
-            "fixture-token", "invoice", "invoice body").await.unwrap());
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), descriptor.clone()).await, Ok(Outcome::CompletedExact(71)));
-        assert!(reconcile_or_upload_paperless(home.path(), &writer, descriptor, &endpoint,
-            "fixture-token", "invoice", "invoice body").await.unwrap());
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert!(
+            reconcile_or_upload_paperless(
+                home.path(),
+                &writer,
+                descriptor.clone(),
+                &endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body"
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor.clone())
+                .await,
+            Ok(Outcome::CompletedExact(71))
+        );
+        assert!(
+            reconcile_or_upload_paperless(
+                home.path(),
+                &writer,
+                descriptor,
+                &endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body"
+            )
+            .await
+            .unwrap()
+        );
         let requests = server.received_requests().await.unwrap();
-        assert_eq!(requests.iter().filter(|request| request.method.as_str() == "POST").count(), 1);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method.as_str() == "POST")
+                .count(),
+            1
+        );
         drop(writer);
         join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim() {
+    async fn paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim()
+     {
         use crate::daemon::email_ingest_cron::reconcile_or_upload_paperless;
-        use crate::wal::paperless_post_receipts::{PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome};
+        use crate::wal::paperless_post_receipts::{
+            PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome,
+        };
         use serde_json::json;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         let endpoint = format!("{}/api/documents/post_document/", server.uri());
-        let descriptor = PaperlessPostIntentDescriptor::from_mail("mail.example", 993, "fixture-user", "pending-real", "invoice body", "invoice", &endpoint);
+        let descriptor = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example",
+            993,
+            "fixture-user",
+            "pending-real",
+            "invoice body",
+            "invoice",
+            &endpoint,
+        );
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("paperless-http-pending-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        Mock::given(method("GET")).and(path("/api/documents/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"count":0,"next":null,"previous":null,"results":[]})))
-            .mount(&server).await;
-        assert!(reconcile_or_upload_paperless(home.path(), &writer, descriptor.clone(), &endpoint,
-            "fixture-token", "invoice", "invoice body").await.is_err());
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-http-pending-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        Mock::given(method("GET"))
+            .and(path("/api/documents/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"count":0,"next":null,"previous":null,"results":[]})),
+            )
+            .mount(&server)
+            .await;
+        assert!(
+            reconcile_or_upload_paperless(
+                home.path(),
+                &writer,
+                descriptor.clone(),
+                &endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body"
+            )
+            .await
+            .is_err()
+        );
         // The writer itself proves that the failed API probe created no claim.
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), descriptor).await, Ok(Outcome::AppendedExact));
-        let descriptor = PaperlessPostIntentDescriptor::from_mail("mail.example", 993, "fixture-user", "supported-pending-real", "invoice body", "invoice", &endpoint);
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor)
+                .await,
+            Ok(Outcome::AppendedExact)
+        );
+        let descriptor = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example",
+            993,
+            "fixture-user",
+            "supported-pending-real",
+            "invoice body",
+            "invoice",
+            &endpoint,
+        );
         server.reset().await;
-        Mock::given(method("GET")).and(path("/api/documents/"))
-            .respond_with(ResponseTemplate::new(200).insert_header("X-Version", "3.2.1").insert_header("X-Api-Version", "10")
-                .set_body_json(json!({"count":0,"next":null,"previous":null,"results":[]})))
-            .mount(&server).await;
-        Mock::given(method("POST")).and(path("/api/documents/post_document/"))
-            .respond_with(ResponseTemplate::new(202)).expect(1).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/documents/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Version", "3.2.1")
+                    .insert_header("X-Api-Version", "10")
+                    .set_body_json(json!({"count":0,"next":null,"previous":null,"results":[]})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/documents/post_document/"))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
         for _ in 0..2 {
-            assert!(!reconcile_or_upload_paperless(home.path(), &writer, descriptor.clone(), &endpoint,
-                "fixture-token", "invoice", "invoice body").await.unwrap());
+            assert!(
+                !reconcile_or_upload_paperless(
+                    home.path(),
+                    &writer,
+                    descriptor.clone(),
+                    &endpoint,
+                    "fixture-token",
+                    "invoice",
+                    "invoice body"
+                )
+                .await
+                .unwrap()
+            );
         }
-        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), descriptor).await, Ok(Outcome::ExistingExact));
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor)
+                .await,
+            Ok(Outcome::ExistingExact)
+        );
         drop(writer);
         join.await.unwrap();
     }

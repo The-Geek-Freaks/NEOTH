@@ -62,7 +62,9 @@ fn tls_config() -> Arc<ClientConfig> {
 /// untested shell; failures surface the IMAP/TLS error context only —
 /// never the password / access token.
 pub async fn fetch_unseen(cfg: &ImapConnectionConfig, limit: usize) -> Result<Vec<InboundEmail>> {
-    Ok(fetch_unseen_page(cfg, limit, UnseenPageCursor::default()).await?.emails)
+    Ok(fetch_unseen_page(cfg, limit, UnseenPageCursor::default())
+        .await?
+        .emails)
 }
 
 /// Selection only; resetting this cursor cannot grant a second external effect.
@@ -86,7 +88,10 @@ pub async fn fetch_unseen_page(
 ) -> Result<UnseenPage> {
     let limit = limit.min(MAX_FETCH_LIMIT);
     if limit == 0 {
-        return Ok(UnseenPage { emails: Vec::new(), next: cursor });
+        return Ok(UnseenPage {
+            emails: Vec::new(),
+            next: cursor,
+        });
     }
     if !cfg.use_tls {
         anyhow::bail!("imap_fetch refuses a non-TLS connection (STARTTLS/143 not supported)");
@@ -133,9 +138,12 @@ pub async fn fetch_unseen_page(
         .uid_search("UNSEEN")
         .await
         .context("UID SEARCH UNSEEN failed")?;
-    let uid_validity = mailbox.uid_validity.filter(|value| *value > 0)
+    let uid_validity = mailbox
+        .uid_validity
+        .filter(|value| *value > 0)
         .context("IMAP mailbox lacks a valid UIDVALIDITY")?;
-    let (uid_vec, next) = select_unseen_page(uids.into_iter().collect(), limit, cursor, uid_validity);
+    let (uid_vec, next) =
+        select_unseen_page(uids.into_iter().collect(), limit, cursor, uid_validity);
 
     let mut out = Vec::with_capacity(uid_vec.len());
     for uid in uid_vec {
@@ -174,7 +182,10 @@ fn select_unseen_page(
         }
     }
     uids.truncate(limit.min(MAX_FETCH_LIMIT));
-    let next = UnseenPageCursor { uid_validity: Some(uid_validity), before: uids.last().copied() };
+    let next = UnseenPageCursor {
+        uid_validity: Some(uid_validity),
+        before: uids.last().copied(),
+    };
     (uids, next)
 }
 
@@ -290,7 +301,8 @@ mod tests {
 
     #[test]
     fn unseen_pages_visit_pending_older_units_and_wrap_without_duplicates() {
-        let (first, cursor) = select_unseen_page(vec![1, 2, 3, 4, 5], 2, UnseenPageCursor::default(), 7);
+        let (first, cursor) =
+            select_unseen_page(vec![1, 2, 3, 4, 5], 2, UnseenPageCursor::default(), 7);
         assert_eq!(first, vec![5, 4]);
         let (second, cursor) = select_unseen_page(vec![1, 2, 3, 4, 5, 6], 2, cursor, 7);
         assert_eq!(second, vec![3, 2]);

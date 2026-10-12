@@ -127,12 +127,24 @@ async fn resolve_auth_for_cron(
 /// Prepare the exact deterministic title and endpoint before claiming a unit.
 #[cfg(any(test, feature = "imap_fetch"))]
 fn paperless_request_binding(base: &str, subject: &str) -> Result<(String, String)> {
-    let endpoint = reqwest::Url::parse(&format!("{}/api/documents/post_document/", base.trim_end_matches('/')))?;
-    anyhow::ensure!(matches!(endpoint.scheme(), "http" | "https") && endpoint.host_str().is_some()
-        && endpoint.username().is_empty() && endpoint.password().is_none()
-        && endpoint.query().is_none() && endpoint.fragment().is_none(), "invalid Paperless endpoint");
-    let title = if subject.is_empty() { "email-untitled".to_owned() }
-        else { subject.chars().take(128).collect() };
+    let endpoint = reqwest::Url::parse(&format!(
+        "{}/api/documents/post_document/",
+        base.trim_end_matches('/')
+    ))?;
+    anyhow::ensure!(
+        matches!(endpoint.scheme(), "http" | "https")
+            && endpoint.host_str().is_some()
+            && endpoint.username().is_empty()
+            && endpoint.password().is_none()
+            && endpoint.query().is_none()
+            && endpoint.fragment().is_none(),
+        "invalid Paperless endpoint"
+    );
+    let title = if subject.is_empty() {
+        "email-untitled".to_owned()
+    } else {
+        subject.chars().take(128).collect()
+    };
     Ok((endpoint.to_string(), title))
 }
 
@@ -161,14 +173,21 @@ where
     Fut: std::future::Future<Output = Result<u16>>,
 {
     use crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome;
-    if descriptor.is_completion() { return PaperlessUploadOutcome::AdmissionBlocked; }
-    match writer.append_paperless_post_receipt_once(home, descriptor).await {
+    if descriptor.is_completion() {
+        return PaperlessUploadOutcome::AdmissionBlocked;
+    }
+    match writer
+        .append_paperless_post_receipt_once(home, descriptor)
+        .await
+    {
         Ok(PaperlessPostIntentOutcome::AppendedExact) => match send().await {
             Ok(status) => PaperlessUploadOutcome::ResponseObserved(status),
             Err(_) => PaperlessUploadOutcome::TransportUncertain,
         },
         Ok(PaperlessPostIntentOutcome::ExistingExact) => PaperlessUploadOutcome::ExistingIntent,
-        Ok(PaperlessPostIntentOutcome::CompletedExact(document_id)) => PaperlessUploadOutcome::DocumentConfirmed(document_id),
+        Ok(PaperlessPostIntentOutcome::CompletedExact(document_id)) => {
+            PaperlessUploadOutcome::DocumentConfirmed(document_id)
+        }
         Err(_) => PaperlessUploadOutcome::AdmissionBlocked,
     }
 }
@@ -191,34 +210,52 @@ pub(crate) async fn reconcile_or_upload_paperless(
 ) -> Result<bool> {
     use crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome as Receipt;
     use paperless_client::{MAX_ORIGINAL_BYTES, PaperlessClient};
-    anyhow::ensure!(body.len() <= MAX_ORIGINAL_BYTES && !descriptor.is_completion(),
-        "Paperless body exceeds supported bound or descriptor is not an intent");
+    anyhow::ensure!(
+        body.len() <= MAX_ORIGINAL_BYTES && !descriptor.is_completion(),
+        "Paperless body exceeds supported bound or descriptor is not an intent"
+    );
     let client = PaperlessClient::new(endpoint, token)?;
     client.validate_request_parts(&descriptor, title, body)?;
     let observed_before = client.reconcile(&descriptor).await?;
     let observed = if observed_before.is_some() {
-        match writer.append_paperless_post_receipt_once(home, descriptor.clone()).await {
+        match writer
+            .append_paperless_post_receipt_once(home, descriptor.clone())
+            .await
+        {
             Ok(Receipt::CompletedExact(_)) => return Ok(true),
             Ok(Receipt::AppendedExact | Receipt::ExistingExact) => observed_before,
             Err(_) => return Ok(false),
         }
     } else {
-        match upload_paperless_once(home, writer, descriptor.clone(),
-            || client.upload(&descriptor, title, body)).await {
+        match upload_paperless_once(home, writer, descriptor.clone(), || {
+            client.upload(&descriptor, title, body)
+        })
+        .await
+        {
             PaperlessUploadOutcome::DocumentConfirmed(document_id) => return Ok(document_id > 0),
             PaperlessUploadOutcome::AdmissionBlocked => return Ok(false),
             PaperlessUploadOutcome::ResponseObserved(status) => {
-                tracing::debug!(status, "Paperless response observed; checking exact original document");
+                tracing::debug!(
+                    status,
+                    "Paperless response observed; checking exact original document"
+                );
                 client.reconcile(&descriptor).await?
             }
-            PaperlessUploadOutcome::TransportUncertain
-            | PaperlessUploadOutcome::ExistingIntent => client.reconcile(&descriptor).await?,
+            PaperlessUploadOutcome::TransportUncertain | PaperlessUploadOutcome::ExistingIntent => {
+                client.reconcile(&descriptor).await?
+            }
         }
     };
-    let Some(document) = observed else { return Ok(false); };
+    let Some(document) = observed else {
+        return Ok(false);
+    };
     let completed = descriptor.with_verified_document(document.id, &document.original_sha256)?;
-    Ok(matches!(writer.append_paperless_post_receipt_once(home, completed).await,
-        Ok(Receipt::AppendedExact | Receipt::ExistingExact)))
+    Ok(matches!(
+        writer
+            .append_paperless_post_receipt_once(home, completed)
+            .await,
+        Ok(Receipt::AppendedExact | Receipt::ExistingExact)
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +278,15 @@ pub struct EmailIngestCursor {
 }
 
 #[cfg(any(test, feature = "imap_fetch"))]
-fn paperless_mail_key(email: &crate::email::inbound::InboundEmail, uid_validity: u32) -> Result<String> {
-    if let Some(message_id) = email.message_id.as_deref().filter(|value| !value.is_empty()) {
+fn paperless_mail_key(
+    email: &crate::email::inbound::InboundEmail,
+    uid_validity: u32,
+) -> Result<String> {
+    if let Some(message_id) = email
+        .message_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         return Ok(format!("message-id:{message_id}"));
     }
     anyhow::ensure!(uid_validity > 0, "IMAP UID fallback requires UIDVALIDITY");
@@ -250,7 +294,11 @@ fn paperless_mail_key(email: &crate::email::inbound::InboundEmail, uid_validity:
 }
 
 #[cfg(feature = "imap_fetch")]
-pub async fn run_email_ingest_tick(neoth_home: &Path, writer: &crate::wal::writer::WalWriterHandle, cursor: &mut EmailIngestCursor) -> Result<()> {
+pub async fn run_email_ingest_tick(
+    neoth_home: &Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    cursor: &mut EmailIngestCursor,
+) -> Result<()> {
     let runtime =
         crate::config::load_runtime_config_pair_from_path(&neoth_home.join("freedom.yaml"))
             .with_context(|| {
@@ -290,14 +338,18 @@ pub async fn run_email_ingest_tick(neoth_home: &Path, writer: &crate::wal::write
 
     // 2. Fetch unseen emails (non-destructive BODY.PEEK[]).
     let account = serde_json::to_string(&(
-        imap_cfg.host.trim_end_matches('.').to_ascii_lowercase(), imap_cfg.port, &username, "INBOX",
+        imap_cfg.host.trim_end_matches('.').to_ascii_lowercase(),
+        imap_cfg.port,
+        &username,
+        "INBOX",
     ))?;
     if cursor.account != account {
         cursor.account = account;
         cursor.page = crate::email::imap_fetch::UnseenPageCursor::default();
     }
     let page = crate::email::imap_fetch::fetch_unseen_page(&imap_cfg, cfg.fetch_limit, cursor.page)
-        .await.context("email_ingest_cron: IMAP fetch")?;
+        .await
+        .context("email_ingest_cron: IMAP fetch")?;
     let uid_validity = page.next.uid_validity.unwrap_or(0);
     cursor.page = page.next;
     let fetched = page.emails;
@@ -510,23 +562,44 @@ pub async fn run_email_ingest_tick(neoth_home: &Path, writer: &crate::wal::write
                 let (endpoint, title) = match paperless_request_binding(url, subject) {
                     Ok(binding) => binding,
                     Err(_) => {
-                        warn!(email_key_len, "email_ingest_cron: invalid Paperless endpoint; no POST attempted");
+                        warn!(
+                            email_key_len,
+                            "email_ingest_cron: invalid Paperless endpoint; no POST attempted"
+                        );
                         continue;
                     }
                 };
                 let mail_key = paperless_mail_key(email, uid_validity)?;
-                let descriptor = crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
-                    &imap_cfg.host, imap_cfg.port, &username, &mail_key, clean_body, &title, &endpoint,
-                );
-                let result = tokio::time::timeout(std::time::Duration::from_secs(30),
-                    reconcile_or_upload_paperless(neoth_home, writer, descriptor, &endpoint, token, &title, clean_body)).await;
+                let descriptor =
+                    crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
+                        &imap_cfg.host,
+                        imap_cfg.port,
+                        &username,
+                        &mail_key,
+                        clean_body,
+                        &title,
+                        &endpoint,
+                    );
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    reconcile_or_upload_paperless(
+                        neoth_home, writer, descriptor, &endpoint, token, &title, clean_body,
+                    ),
+                )
+                .await;
                 if matches!(result, Ok(Ok(true))) {
                     all_configured_sinks_succeeded = true;
                     paperless_completed += 1;
-                    info!(email_key_len, "email_ingest_cron: authenticated Paperless document completion observed");
+                    info!(
+                        email_key_len,
+                        "email_ingest_cron: authenticated Paperless document completion observed"
+                    );
                 } else {
                     paperless_pending += 1;
-                    warn!(email_key_len, "email_ingest_cron: Paperless unit pending; no retry of an existing upload intent");
+                    warn!(
+                        email_key_len,
+                        "email_ingest_cron: Paperless unit pending; no retry of an existing upload intent"
+                    );
                 }
             }
         }
@@ -542,7 +615,11 @@ pub async fn run_email_ingest_tick(neoth_home: &Path, writer: &crate::wal::write
 
     info!(
         quarantined,
-        review_queued, paperless_completed, paperless_pending, vault_written, "email_ingest_cron: tick complete"
+        review_queued,
+        paperless_completed,
+        paperless_pending,
+        vault_written,
+        "email_ingest_cron: tick complete"
     );
 
     Ok(())
@@ -550,7 +627,11 @@ pub async fn run_email_ingest_tick(neoth_home: &Path, writer: &crate::wal::write
 
 /// No-op stub when the `imap_fetch` feature is not compiled in.
 #[cfg(not(feature = "imap_fetch"))]
-pub async fn run_email_ingest_tick(_neoth_home: &Path, _writer: &crate::wal::writer::WalWriterHandle, _cursor: &mut EmailIngestCursor) -> Result<()> {
+pub async fn run_email_ingest_tick(
+    _neoth_home: &Path,
+    _writer: &crate::wal::writer::WalWriterHandle,
+    _cursor: &mut EmailIngestCursor,
+) -> Result<()> {
     tracing::debug!("email_ingest_cron: imap_fetch feature not compiled — tick is a no-op");
     Ok(())
 }
@@ -629,23 +710,52 @@ mod tests {
     #[test]
     fn paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback() {
         let mut email = crate::email::inbound::InboundEmail {
-            uid: "7".into(), from: "sender@example.com".into(), from_domain: "example.com".into(),
-            subject: "invoice".into(), body: "invoice body".into(), attachment_filenames: vec![],
-            message_id: None, auth_results: None,
+            uid: "7".into(),
+            from: "sender@example.com".into(),
+            from_domain: "example.com".into(),
+            subject: "invoice".into(),
+            body: "invoice body".into(),
+            attachment_filenames: vec![],
+            message_id: None,
+            auth_results: None,
         };
-        assert_ne!(paperless_mail_key(&email, 11).unwrap(), paperless_mail_key(&email, 12).unwrap());
+        assert_ne!(
+            paperless_mail_key(&email, 11).unwrap(),
+            paperless_mail_key(&email, 12).unwrap()
+        );
         assert!(paperless_mail_key(&email, 0).is_err());
         email.message_id = Some("<stable-message@example.com>".into());
-        assert_eq!(paperless_mail_key(&email, 11).unwrap(), paperless_mail_key(&email, 12).unwrap());
+        assert_eq!(
+            paperless_mail_key(&email, 11).unwrap(),
+            paperless_mail_key(&email, 12).unwrap()
+        );
     }
     #[test]
     fn paperless_request_title_and_endpoint_are_deterministic_before_claim() {
-        let (endpoint, title) = paperless_request_binding("http://paperless.invalid/base/", "").unwrap();
-        assert_eq!(endpoint, "http://paperless.invalid/base/api/documents/post_document/");
+        let (endpoint, title) =
+            paperless_request_binding("http://paperless.invalid/base/", "").unwrap();
+        assert_eq!(
+            endpoint,
+            "http://paperless.invalid/base/api/documents/post_document/"
+        );
         assert_eq!(title, "email-untitled");
-        assert_eq!(paperless_request_binding("http://paperless.invalid/base", "").unwrap(), (endpoint, title));
-        assert_eq!(paperless_request_binding("http://paperless.invalid", &"x".repeat(200)).unwrap().1.len(), 128);
-        for bad in ["file:///private", "http://user:secret@paperless.invalid", "http://paperless.invalid/?query", "http://paperless.invalid/#fragment"] {
+        assert_eq!(
+            paperless_request_binding("http://paperless.invalid/base", "").unwrap(),
+            (endpoint, title)
+        );
+        assert_eq!(
+            paperless_request_binding("http://paperless.invalid", &"x".repeat(200))
+                .unwrap()
+                .1
+                .len(),
+            128
+        );
+        for bad in [
+            "file:///private",
+            "http://user:secret@paperless.invalid",
+            "http://paperless.invalid/?query",
+            "http://paperless.invalid/#fragment",
+        ] {
             assert!(paperless_request_binding(bad, "title").is_err());
         }
     }

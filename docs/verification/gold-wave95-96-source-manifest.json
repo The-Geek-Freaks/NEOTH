@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T10:02:19.4719127Z",
-  "validationStatus": "reviewed source published for hosted verification; execution pending",
+  "capturedUtc": "2026-10-12T10:07:29.6636616Z",
+  "validationStatus": "A04 reviewed implementation; hosted rustfmt receipt applied; compile and runtime proof pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4309,7 +4309,7 @@
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
       "bytes": 9360,
-      "sha256": "732BF213D4BE782F1DDCA63CDEC25EC72B878942E71AA839AE8257344B89D445"
+      "sha256": "2569AD049AC57DA9CDA347E279CDE77479C539C273CD3CD1A34F3FF3452BCBFC"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -7493,13 +7493,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 35812,
-      "sha256": "41971DB99367C297E0F86317FCC7AE7CBBD1EA064A34A0CE17D705C2AAFEAEED"
+      "bytes": 37165,
+      "sha256": "CC2CC30E92E3F2BCE0DD8DA9C69926F94271A71C1B217018E99B56F4769BDF80"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
-      "bytes": 15470,
-      "sha256": "7CD5785BCF77D0D428E671083DBD1E7FB6CABA99F8C806BAF12BACE813CC4D89"
+      "bytes": 18057,
+      "sha256": "C3E15661FD6720E9CCF6208FC544A4328EFA8CA42F0B0811F17F885576013E6B"
     },
     {
       "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
@@ -7693,8 +7693,8 @@
     },
     {
       "path": "SRC/neothd/src/email/imap_fetch.rs",
-      "bytes": 14556,
-      "sha256": "B5790B3F07E49D0D52DEDEBF90A1D799AAB179C37526949FEB4E6BFD94FCEEE3"
+      "bytes": 14666,
+      "sha256": "4971833500C2B47887AC227ED844FC015E3E0E733724812DD3ABA17953D5408E"
     },
     {
       "path": "SRC/neothd/src/email/inbound.rs",
@@ -9174,12 +9174,12 @@
     {
       "path": "SRC/neothd/src/wal/mod.rs",
       "bytes": 7019,
-      "sha256": "499534DF8F4354333BCCE2D79482A4ACE5F3A717CFF2AEDAA7A5FC6EE26F99F4"
+      "sha256": "D6CF87D2E1A2DF35773BA42438C8CB68AC309AF5F63510ABC50153DBE00E6BD8"
     },
     {
       "path": "SRC/neothd/src/wal/paperless_post_receipts.rs",
-      "bytes": 12330,
-      "sha256": "933F35E7147B9343C44DA8C98ED5FBC373C2246354907831F8763782995B9395"
+      "bytes": 13934,
+      "sha256": "F703B9735AD532B94462F85A2E0D8FA3EEA1C46D88E5521AC3219628C8C71D84"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -9233,8 +9233,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 513737,
-      "sha256": "88BE92867D3D968C2A758304CF4522943FAE2011C10F003E77F2AEFB5CC65BF8"
+      "bytes": 519630,
+      "sha256": "87F9300D6A8900835D7B7838724BCD1C56D31683C07F63DED2C0108F9E323CDA"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",
