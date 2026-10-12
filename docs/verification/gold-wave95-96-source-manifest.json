@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T06:16:52.0430942Z",
-  "validationStatus": "audio-workspace-hosted-accepted-media-candidate-pending",
+  "capturedUtc": "2026-10-12T06:22:04.7208837Z",
+  "validationStatus": "audio-workspace-and-media-candidate-hosted-accepted-windows-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -288,8 +288,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "bytes": 149659,
-      "sha256": "8E403AF6D597F8002F45E7D90DC39D3D75208ACD49F9C863E78C717B1F3B6284"
+      "bytes": 149726,
+      "sha256": "AA3266ABC1A5B18394739D74C5CD404C25495FF6D70607D0F2D2169CC31AC2D5"
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
@@ -585,6 +585,21 @@
       "path": "bridges/whatsapp-baileys/fixtures/hosted-product-helper.mjs",
       "bytes": 7668,
       "sha256": "95C478E31AE1E825D657EDA7938EF8EF10D52CB0E15DE30F72295E48A734CC1C"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/package.json",
+      "bytes": 513,
+      "sha256": "2F17780F804B31C0CC821EB66535F1C3E92038D23C21193E4D5FD9E8C9B7B0B9"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/pnpm-lock.yaml",
+      "bytes": 26826,
+      "sha256": "F11E1D5519D06CE4C366C8577CB830233DFE624E8CB5AF839BFB8FF2C2EB7B3B"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/pnpm-workspace.yaml",
+      "bytes": 49,
+      "sha256": "E9F23E73FD7E370D123BA8F14F763E1EE3697F6DEA09713A2EBCBAD595EDED18"
     },
     {
       "path": "bridges/whatsapp-baileys/README.md",
@@ -4242,6 +4257,11 @@
       "sha256": "625E69F76E375ACCB95FD1BA03A4FC361948439EDA36CB9ABCE27E28905759BF"
     },
     {
+      "path": "docs/verification/gold-wave2548-media-dependency-import.json",
+      "bytes": 3727,
+      "sha256": "26A205A30638A0D7EAAB02C95EA9E2C9AB8E5349F31276A18A82736B40C00203"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5398,8 +5418,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2551721,
-      "sha256": "790CB91EF4EE11A0DCF5050365EF53C8E1306E409DA8E765360523EAADCD4A47"
+      "bytes": 2553150,
+      "sha256": "7BC6364B26B98607257B211087D6C63764B3BCCA8EA75DE17740DF76E4F532DA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

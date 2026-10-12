@@ -18920,3 +18920,11 @@ Der ursprüngliche Producer, alle Bridge-Quellen, Baseline- und Kandidatendateie
 Lauf 38043771669 auf Producer 70f6a40f0361a28332b2c1ab0d970ca991f0030e ist erfolgreich. Root hat beide Originalarchive gegen die API-Digests, 28 Eintraege, 18 ausgewaehlte Quellbindungen und die zusaetzliche CLI-Dokumentationsbindung geprueft. Alle zehn exakt entdeckten Audio-/Berechtigungsfaelle bestanden einzeln; Workspace-Clippy mit dem Linux-Quality-Befehl, Core-Test-Typecheck und CLI-Build sind erfolgreich. Die erzeugte CLI-Referenz stimmt bytegenau mit dem Producer ueberein.
 
 Dies nimmt W2542/W2544 gezielt ab. Windows-Reparaturkollektion, vollstaendige neue plattformuebergreifende CI, reale Geraete und Release-Gold bleiben offen. Lokal wurden nur begrenzte Text-/JSON-/Hash-/Archiv-/Git-/GitHub-Schritte seriell mit Idle-Prioritaet und Ein-Kern-Affinitaet ausgefuehrt. Bericht: docs/verification/gold-wave2547-core-audio-acceptance.json.
+
+### W2548 — Gepruefte WhatsApp-Medienkorrekturen uebernommen
+
+Lauf 38212163445 auf Producer 086f04e09fb12f42dab6d462cc5f35d83eb3fb31 hat den originalgebundenen Kandidaten erfolgreich erzeugt und eingefroren installiert: alle 37 Bridge-Faelle bestanden ohne Skip/Fehler/Abbruch, direkte und Baileys-gebundene Sharp-Instanz melden 0.35.5, librsvg 2.63.2 verarbeitet SVG, PNG wird erzeugt und gelesen, und Baileys verwendet music-metadata 11.16.0 fuer echtes WAV-Lesen. Das Produktionsaudit meldet keine Schwachstellen.
+
+Root hat Original-ZIP, alle 17 Dateien, Quellbindungen und den gesamten Lockfile-Diff geprueft. Uebernommen werden ausschliesslich Sharp samt Plattform-/libvips-Paketen sowie music-metadata mit seinem erforderlichen content-type2.1.0; Baileys bleibt7.0.0-rc13. Manifest, Lockfile und neue gezielte Override-Datei sind bytegleich mit dem getesteten Kandidaten. Das Release-Quellarchiv nimmt pnpm-workspace.yaml neben Manifest/Lock auf, damit die eingefrorene Installation denselben Override behaelt.
+
+Die fuenf GitHub-Hinweise werden nicht manuell geschlossen; ihr Zustand ist nach Veroeffentlichung erneut zu pruefen. Dies ist eine Hosted-Abnahme der Medienabhaengigkeiten, keine echte WhatsApp-Konto-/Geraete-, Windows-/macOS-Medien- oder Release-Gold-Abnahme. Windows-Reparaturkollektion und der naechste Gesamt-CI-Lauf bleiben offen. Bericht: docs/verification/gold-wave2548-media-dependency-import.json.

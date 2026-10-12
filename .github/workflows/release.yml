@@ -2410,6 +2410,7 @@ jobs:
           cp -R bridges/whatsapp-baileys/test "$ROOT/"
           cp bridges/whatsapp-baileys/package.json "$ROOT/"
           cp bridges/whatsapp-baileys/pnpm-lock.yaml "$ROOT/"
+          cp bridges/whatsapp-baileys/pnpm-workspace.yaml "$ROOT/"
           cp bridges/whatsapp-baileys/README.md "$ROOT/"
           cp bridges/whatsapp-baileys/neoth-whatsapp-baileys.service "$ROOT/"
           cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES "$ROOT/"

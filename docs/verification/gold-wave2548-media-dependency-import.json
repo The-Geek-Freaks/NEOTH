@@ -1,0 +1,115 @@
+{
+  "schema": "neoth.gold.wave2548.media-dependency-import.v1",
+  "base": "086f04e09fb12f42dab6d462cc5f35d83eb3fb31",
+  "hostedRun": "38212163445",
+  "artifact": 11729666937,
+  "archiveSha256": "3F8F2E5F255270793A9F4305A447462EEA27A6FB48805677E7B7B64BDDACD877",
+  "proofSha256": "70A0ABB2C94263096DF67DDFE0D4A4674F8401BD6297A41D4BCC70A17854EA7B",
+  "rootDependencyReview": {
+    "schema": "neoth.gold.wave2548.dependency-diff-review.v1",
+    "producer": "086f04e09fb12f42dab6d462cc5f35d83eb3fb31",
+    "run": "38212163445",
+    "artifact": 11729666937,
+    "archiveSha256": "3F8F2E5F255270793A9F4305A447462EEA27A6FB48805677E7B7B64BDDACD877",
+    "diffSha256": "6EBBF4565041F34D1C03602A0D7AFB313723ABE6D29908A55D9F89E1D47DE386",
+    "reviewedEntireDiff": true,
+    "changes": [
+      "sharp 0.35.4 -> 0.35.5 and its exact optional platform packages",
+      "@img/sharp-libvips platform family 1.3.3 -> 1.3.4",
+      "music-metadata 11.13.0 -> 11.16.0 via baileys-only override",
+      "content-type 2.0.0 -> 2.1.0 required by music-metadata11.16.0 ^2.1.0",
+      "Baileys peer-resolution identity follows Sharp; Baileys remains7.0.0-rc13"
+    ],
+    "unrelatedDependencyChanges": [],
+    "productionAudit": "zero-reported-vulnerabilities",
+    "frozenInstall": "success",
+    "bridgeTests": {
+      "tests": 37,
+      "pass": 37,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "media": {
+      "producer": "086f04e09fb12f42dab6d462cc5f35d83eb3fb31",
+      "run": "38212163445",
+      "sharp": {
+        "aom": "3.15.1",
+        "archive": "3.8.9",
+        "cairo": "1.18.6",
+        "cgif": "0.5.4",
+        "exif": "0.6.26",
+        "expat": "2.8.5",
+        "ffi": "3.8.0",
+        "fontconfig": "2.18.3",
+        "freetype": "2.14.3",
+        "fribidi": "1.0.17",
+        "glib": "2.90.0",
+        "harfbuzz": "14.5.0",
+        "heif": "1.23.5",
+        "highway": "1.4.0",
+        "imagequant": "2.4.1",
+        "lcms": "2.19.1",
+        "mozjpeg": "0826579",
+        "pango": "1.58.2",
+        "pixman": "0.46.4",
+        "png": "1.6.58",
+        "proxy-libintl": "0.5",
+        "rsvg": "2.63.2",
+        "tiff": "4.7.2",
+        "uhdr": "2.0.2",
+        "vips": "8.18.7",
+        "webp": "1.6.0",
+        "xml2": "2.15.4",
+        "zlib-ng": "2.3.3",
+        "sharp": "0.35.5"
+      },
+      "baileysPeerSharp": "0.35.5",
+      "svgDecoded": true,
+      "musicMetadata": "11.16.0",
+      "png": {
+        "format": "png",
+        "width": 2,
+        "height": 2
+      },
+      "wav": {
+        "sampleRate": 8000,
+        "channels": 1,
+        "bitsPerSample": 16
+      }
+    },
+    "localExecutableValidationRan": false,
+    "deviceReleaseGoldAccepted": false
+  },
+  "importedFiles": [
+    {
+      "path": "bridges/whatsapp-baileys/package.json",
+      "sha256": "2F17780F804B31C0CC821EB66535F1C3E92038D23C21193E4D5FD9E8C9B7B0B9",
+      "sourceArtifact": 11729666937
+    },
+    {
+      "path": "bridges/whatsapp-baileys/pnpm-lock.yaml",
+      "sha256": "F11E1D5519D06CE4C366C8577CB830233DFE624E8CB5AF839BFB8FF2C2EB7B3B",
+      "sourceArtifact": 11729666937
+    },
+    {
+      "path": "bridges/whatsapp-baileys/pnpm-workspace.yaml",
+      "sha256": "E9F23E73FD7E370D123BA8F14F763E1EE3697F6DEA09713A2EBCBAD595EDED18",
+      "sourceArtifact": 11729666937
+    }
+  ],
+  "releasePackaging": "Include pnpm-workspace.yaml beside manifest and lock so frozen installation retains the reviewed override.",
+  "githubAlerts": [
+    44,
+    45,
+    46,
+    47,
+    48
+  ],
+  "githubAlertStateAfterPublication": "pending",
+  "localExecutableValidationRan": false,
+  "fullWindowsValidation": "pending",
+  "fullCrossPlatformValidation": "pending",
+  "realAccountDeviceReleaseGoldAccepted": false
+}
