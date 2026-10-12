@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T10:12:45.2580821Z",
-  "validationStatus": "Three W186 platform receipts canonically admitted; A04 fast gates green; full CI and A04 runtime remain open",
+  "capturedUtc": "2026-10-12T10:17:43.9484950Z",
+  "validationStatus": "A04 source fast gates passed; serialized canary policy reviewed; new cadence contract hosted check pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -253,8 +253,8 @@
     },
     {
       "path": ".github/workflows/paperless-product.yml",
-      "bytes": 6696,
-      "sha256": "20BDCF8AA302134559F27073D4D478DE7F7069D2049BBE1C739F4867FFD90BE8"
+      "bytes": 6836,
+      "sha256": "88057405582D7E5B1D24600F9C2660117CA686960FE39B2481E9F5FA63692AB0"
     },
     {
       "path": ".github/workflows/paperless-provenance.yml",
@@ -4322,6 +4322,11 @@
       "sha256": "0D17CEAB20D1C594C10C9A3F9EE5F8B3D8023D7A1E05200B99657420883D3EE6"
     },
     {
+      "path": "docs/verification/gold-wave2559-paperless-ci-serialization.json",
+      "bytes": 1511,
+      "sha256": "367027DB054A873E7EF9DC9C76A07145378DA9173C9567E2B471375F12692F81"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5288,8 +5293,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 63932,
-      "sha256": "D3D2299A5826341330F26F52F565176E003FA12410AD29ED4481DBFD94537E26"
+      "bytes": 64736,
+      "sha256": "E6ADA6612B8B04E5F1ACA50751A05DA856F77CA14AFA8EE251A4192AE8AAF8A9"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5488,8 +5493,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2584761,
-      "sha256": "6E5CF5EE55CFAC479AF0A75C934488119A409D87D1FEF5708AC3F981AF483A9C"
+      "bytes": 2586094,
+      "sha256": "2FE5DED1FB3318EFC616D0D1FA2F5C1834C1C0D795BFA31603737A7980F1139D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

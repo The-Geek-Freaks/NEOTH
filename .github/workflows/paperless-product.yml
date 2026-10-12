@@ -7,7 +7,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: w1146-product-paperless-${{ github.ref }}
+  # Share the full-CI owner: a manually dispatched product canary waits behind
+  # its active run. There is at most one pending successor across both workflows.
+  group: ci-${{ github.ref }}
   cancel-in-progress: false
 
 env:

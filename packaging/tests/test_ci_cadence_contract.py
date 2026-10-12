@@ -312,6 +312,23 @@ class CiCadenceContractTests(unittest.TestCase):
         )
         self.assertNotIn("cancel-in-progress: true", concurrency)
 
+    def test_paperless_canary_waits_in_the_single_full_ci_group(self) -> None:
+        paperless = (WORKFLOWS / "paperless-product.yml").read_text(encoding="utf-8")
+        concurrency = mapping_block(paperless, "concurrency", 0)
+        self.assertEqual(
+            direct_mapping_keys(concurrency, 2),
+            ["group", "cancel-in-progress"],
+        )
+        shared_group = "group: ci-${{ github.ref }}"
+        self.assertIn(shared_group, mapping_block(CI_TEXT, "concurrency", 0))
+        self.assertIn(shared_group, concurrency)
+        self.assertIn("cancel-in-progress: false", concurrency)
+        self.assertNotIn("w1146-product-paperless-", concurrency)
+        self.assertEqual(
+            direct_mapping_keys(trigger_block(paperless), 2),
+            ["workflow_dispatch"],
+        )
+
     def test_preflight_is_the_only_main_push_workflow_in_this_contract(self) -> None:
         preflight = trigger_block(PREFLIGHT_TEXT)
         self.assertRegex(preflight, r"(?m)^  pull_request:\s*$")

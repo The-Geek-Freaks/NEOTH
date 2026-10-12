@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Three W186 platform receipts canonically admitted; A04 fast gates green; full CI and A04 runtime remain open",
+  "status": "A04 source fast gates passed; serialized canary policy reviewed; new cadence contract hosted check pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 419378,
-    "sha256": "1D999C53D8228FA6170233FC4FB934D8C2ADF99A9C433C45A96A100281556F6C"
+    "bytes": 419574,
+    "sha256": "3744F8FF7DD578A0CB20CF24DE8881AE00C9F7AD630F37C9B73AD7C4C03C0F97"
   },
-  "sourceInputs": 2287,
+  "sourceInputs": 2288,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81835,6 +81835,38 @@
       }
     ],
     "note": "Original GitHub archives on immutable50404471 producer:52 exact cases on Linux Windows macOS;12 raw source bindings per platform. Paperlessa856b682 fast gates succeeded. No device/release acceptance or local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2559SerializedPaperlessCi": {
+    "base": "cfe0371d1d4d2a533c7c42be019d834534dd7c14",
+    "sources": [
+      {
+        "path": ".github/workflows/paperless-product.yml",
+        "bytes": 6836,
+        "sha256": "88057405582D7E5B1D24600F9C2660117CA686960FE39B2481E9F5FA63692AB0",
+        "blob": "50bdee5151cbc17832a2ca95c864f4b02bbc08ad"
+      },
+      {
+        "path": "docs/verification/gold-wave2559-paperless-ci-serialization.json",
+        "bytes": 1511,
+        "sha256": "367027DB054A873E7EF9DC9C76A07145378DA9173C9567E2B471375F12692F81",
+        "blob": "a8b5d56b6161988f8378fba77919961828e15cba"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 64736,
+        "sha256": "E6ADA6612B8B04E5F1ACA50751A05DA856F77CA14AFA8EE251A4192AE8AAF8A9",
+        "blob": "8f008f71a677fbdde9d5e2c85254dc7340482ff7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2586094,
+        "sha256": "2FE5DED1FB3318EFC616D0D1FA2F5C1834C1C0D795BFA31603737A7980F1139D",
+        "blob": "5e1080728f192a9341918f29a6d686ba9eca447e"
+      }
+    ],
+    "note": "Existing manual Paperless product workflow shares ci-${{ github.ref }} with cancel-in-progress:false; one active and at most one pending. Root checks existing pending work before one dispatch. No Rust change or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

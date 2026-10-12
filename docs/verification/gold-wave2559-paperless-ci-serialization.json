@@ -1,0 +1,26 @@
+{
+  "schema": "neoth.gold-wave2559.v1",
+  "date": "2026-10-12",
+  "base": "cfe0371d1d4d2a533c7c42be019d834534dd7c14",
+  "scope": "Serialize existing manually dispatched Paperless canary behind existing full CI without cancellation or another dispatch loop",
+  "workflow": ".github/workflows/paperless-product.yml",
+  "sharedGroup": "ci-${{ github.ref }}",
+  "cancelInProgress": false,
+  "maximumActiveGroupRuns": 1,
+  "maximumPendingSuccessors": 1,
+  "trigger": "workflow_dispatch only",
+  "contract": "test_paperless_canary_waits_in_the_single_full_ci_group",
+  "contractStatus": "authored; hosted Preflight pending",
+  "review": "Independent remote review of GitHub concurrency semantics; active predecessor historical policy does not cause incoming false run to cancel it",
+  "reference": "https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency",
+  "dispatchBoundary": [
+    "Root inspects all in_progress queued waiting pending requested runs immediately before one dispatch",
+    "Do not replace any already pending heavy successor",
+    "Verify returned run/head and pending state while original active owner remains unchanged",
+    "Later scheduler/manual entrants can replace a pending run; inspect before any retry, no FIFO or eventual-completion claim"
+  ],
+  "paperlessRustProducer": "a856b682f376b524e69d62f0992fa0e768488813",
+  "rustCodeChanged": false,
+  "dispatchPerformedAtPublication": false,
+  "localExecutableValidationRan": false
+}
