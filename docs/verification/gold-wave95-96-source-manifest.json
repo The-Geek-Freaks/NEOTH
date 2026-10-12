@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T16:32:58.3723644Z",
-  "validationStatus": "W2564 grant inventory and W2565 audio compile repair; hosted validation pending",
+  "capturedUtc": "2026-10-12T16:37:07.6518636Z",
+  "validationStatus": "W2564 hosted formatting applied; W2565 audio repair; fresh hosted gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4353,8 +4353,8 @@
     },
     {
       "path": "docs/verification/gold-wave2564-companion-inventory.json",
-      "bytes": 3992,
-      "sha256": "EA5C0F173B94FD44446714DB5A65041186752E8384F2958766FCCB5781C3DF9B"
+      "bytes": 4535,
+      "sha256": "83CF7D34DA6821768EDFE09EAC32C5F1C668D95A2361FDB5DAA4503347C4DB0F"
     },
     {
       "path": "docs/verification/gold-wave2565-audio-permit-compile.json",
@@ -5518,8 +5518,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 57352,
-      "sha256": "D4F4AEA52E0502F56230584E0BE4592C17762B0004C2974553F0C8152DFFB36D"
+      "bytes": 58079,
+      "sha256": "E1111873221FA69C81C7C04A62BB54C0586D3C201967EA250EDBD05E744DA1F0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5528,8 +5528,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2593616,
-      "sha256": "CEA177BB657F080F86EC26371ED55999AEDBF673B5004E55A01CCBAD8CE75686"
+      "bytes": 2594343,
+      "sha256": "828F128F698A45C292FB6AF23F274E0454B2C852E806A3A195D046AA98996105"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7448,13 +7448,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_authority.rs",
-      "bytes": 84261,
-      "sha256": "0926274B1EE06BBAB25C8A1A0EFA02C802CDB086B6749B56CA8DD1EB76C4DF3E"
+      "bytes": 87035,
+      "sha256": "04143DDFCC75D0B611F187151616D853EBCA2A5B76E277672F99DF013430975D"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 77502,
-      "sha256": "13F161057DC82812693C51361D781F4F546D3F2A37B24F381D93FA36C80631C2"
+      "bytes": 78717,
+      "sha256": "4ED93DA1BA8854187009B8F0C5DC6357EF349BA012D133DD6C3AF888DACCBF70"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
@@ -7463,8 +7463,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 128617,
-      "sha256": "845EE67EE6313442C855E8FCADA7D22F8EA8F17DC216EF6212F611EB2BA853E4"
+      "bytes": 129064,
+      "sha256": "79942A48C22B10512C1BDD1B07E472E5B440242BE1E0F8973ECF92D946402266"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_stream.rs",

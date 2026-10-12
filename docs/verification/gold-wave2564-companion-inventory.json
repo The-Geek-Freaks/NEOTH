@@ -95,10 +95,23 @@
   "newFlutterCases": 7,
   "interopCoreCases": 103,
   "interopBridgeCases": 24,
-  "review": "Prompt review of supplied authority, compatibility, revoke, cancellation and successor-isolation code",
+  "review": "Independent remote inspection of published c420b5a protocol, authority/runtime, native bridge, Dart, exports and interop; no new actionable finding. Not executable acceptance.",
   "hosted": "pending",
   "localExecutableValidationRan": false,
   "physicalDeviceAcceptance": "open",
   "completeJarvisAdopt01": "open",
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": 38278528305,
+    "producer": "c420b5a820bfed799cfaf4ae6eb3ad5bc9d0e1f3",
+    "artifact": 11759454270,
+    "archiveSha256": "327e15fe14b9deba8a25413615cb1efcec1735c96c5d4c077c12d6640584e548",
+    "verifiedMembers": 3,
+    "paths": [
+      "SRC/neothd/src/daemon/companion_authority.rs",
+      "SRC/neothd/src/daemon/companion_protocol.rs",
+      "SRC/neothd/src/daemon/companion_runtime.rs"
+    ],
+    "localFormatterExecuted": false
+  }
 }
