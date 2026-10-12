@@ -944,6 +944,11 @@ pub struct MediaConfig {
     /// Configure in `freedom.yaml` under `media.dictation_enabled`.
     #[serde(default)]
     pub dictation_enabled: bool,
+    /// Optional silence window after a complete spoken conversation response.
+    /// None preserves continuous listening. Explicit values are seconds in
+    /// 1..=300; only qualified new speech invalidates an armed window.
+    #[serde(default)]
+    pub conversation_follow_up_secs: Option<u64>,
 
     /// B20 STT-DISPATCHER-HOTPATH — per-call STT configuration.
     ///
@@ -956,6 +961,16 @@ pub struct MediaConfig {
     /// and request-limit contract. Defaults to offline `system_native`.
     #[serde(default)]
     pub tts: crate::media::tts_dispatch::TtsDispatcherConfig,
+}
+
+impl MediaConfig {
+    pub fn conversation_follow_up_duration(&self) -> anyhow::Result<Option<std::time::Duration>> {
+        match self.conversation_follow_up_secs {
+            None => Ok(None),
+            Some(seconds @ 1..=300) => Ok(Some(std::time::Duration::from_secs(seconds))),
+            Some(_) => anyhow::bail!("media.conversation_follow_up_secs must be between 1 and 300 seconds"),
+        }
+    }
 }
 
 fn default_whisper_idle_unload_secs() -> Option<u64> {
@@ -979,6 +994,7 @@ impl Default for MediaConfig {
             vad: VadTuning::default(),
             // GOLD-ADOPT-25 — dictation: off by default; mic capture is opt-in.
             dictation_enabled: false,
+            conversation_follow_up_secs: None,
             // B20 — default to local candle Whisper; no cloud egress.
             stt: crate::media::stt_dispatch::MediaSttConfig::default(),
             // TTS Gold — default is guaranteed offline; cloud choices remain
@@ -1284,5 +1300,29 @@ mod vad_tuning_tests {
         };
         let error = t.validate().unwrap_err();
         assert!(format!("{error:#}").contains("hangover_ms"));
+    }
+}
+
+#[cfg(test)]
+mod conversation_follow_up_tests {
+    use super::MediaConfig;
+    use std::time::Duration;
+
+    #[test]
+    fn follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds() {
+        let absent: MediaConfig = serde_yaml::from_str("{}").unwrap();
+        assert_eq!(absent.conversation_follow_up_duration().unwrap(), None);
+        assert_eq!(MediaConfig::default().conversation_follow_up_duration().unwrap(), None);
+        for seconds in [1, 7, 300] {
+            let config: MediaConfig = serde_yaml::from_str(&format!("conversation_follow_up_secs: {seconds}")).unwrap();
+            assert_eq!(config.conversation_follow_up_duration().unwrap(), Some(Duration::from_secs(seconds)));
+        }
+        for seconds in [0, 301, u64::MAX] {
+            let config = MediaConfig { conversation_follow_up_secs: Some(seconds), ..MediaConfig::default() };
+            assert!(config.conversation_follow_up_duration().is_err());
+        }
+        for invalid in ["-1", "1.5", "true", "\"7\""] {
+            assert!(serde_yaml::from_str::<MediaConfig>(&format!("conversation_follow_up_secs: {invalid}")).is_err());
+        }
     }
 }

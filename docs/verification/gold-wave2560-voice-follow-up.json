@@ -1,0 +1,50 @@
+{
+  "schema": "neoth.gold-wave2560.v1",
+  "date": "2026-10-12",
+  "base": "e5d27cc8aa5de70c9f680ae12d4ab319a7299d78",
+  "scope": "Opt-in conversation follow-up using existing A2 owner, stage registry, audio permit and wire states",
+  "configuration": "media.conversation_follow_up_secs: None or null disabled; explicit1..300seconds",
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/config/features.rs",
+      "baseBlob": "4e57bc267534f5940f6be1ea257f920bfed334b8",
+      "baseSha256": "ADAFBCEA6C60917C6CF37E964B42DCF8CBEA3ABFF05E901D80F62B61E763BF4E",
+      "candidateSha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79",
+      "candidateBytes": 57976
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "baseBlob": "40b79860ae8bb1fc3bc9de9eb20930181b731979",
+      "baseSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "candidateSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
+      "candidateBytes": 202838
+    },
+    {
+      "path": "SRC/neothd/src/media/conversation_loop.rs",
+      "baseBlob": "4c43341c2cf479d68a77037c0bcaa13fc1a8e562",
+      "baseSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3",
+      "candidateSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A",
+      "candidateBytes": 77234
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "baseBlob": "49fc83d65ef3a1780b2f40b1246c256e1aa2a395",
+      "baseSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6",
+      "candidateSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C",
+      "candidateBytes": 58032
+    }
+  ],
+  "newCases": 16,
+  "newPortableCases": 1,
+  "newFeatureCases": 15,
+  "liveAudioCatalogCases": 68,
+  "deadlineBoundary": "Already queued relay observations at/before deadline are eligible. Snapshot drains bounded late noise. Terminal witness survives blocked send, sealed after relay join; physical callback timestamp not claimed.",
+  "review": "Remote static review approved critical ordering, queue, generation, cancellation and after-join projection boundaries",
+  "proofPath": "work/gold-20260906/wave2560-follow-up-window/ROOT_STATIC_REVIEW.json",
+  "proofSha256": "F03404A5CDEFF7E42C29477BC00CBB15CA8F86388AC94CE3A983A37A0774EAE9",
+  "hosted": "pending",
+  "localExecutableValidationRan": false,
+  "fullA2IntegrationHarness": "not available; not claimed",
+  "physicalDeviceAcceptance": "open",
+  "goldCheckboxesClosed": 0
+}

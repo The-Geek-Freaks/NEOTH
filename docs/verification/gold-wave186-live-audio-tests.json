@@ -1,7 +1,7 @@
 {
   "schema": "neoth-live-audio-tests/v1",
   "feature": "live-audio",
-  "status": "52 registered exact cases; W2553 rebinds the two dictation cases after reviewed W2542/W2543 test-only Clippy and hosted formatting changes; fresh live-audio hosted execution pending",
+  "status": "68 registered exact cases; W2560 adds 16 optional voice follow-up regressions; fresh hosted execution pending",
   "requiredTests": [
     {
       "test": "media::live_capture::tests::terminal_published_during_pcm_wait_survives_every_wait_result",
@@ -101,47 +101,47 @@
     {
       "test": "media::conversation_loop::tests::cancelled_opening_fake_stage_is_detected_before_native_effect",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::response_scope_barge_in_is_independent_from_capture_scope",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::qualified_turn_is_once_and_zero_length_fragment_is_cancelled",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::one_vad_block_never_invalidates_an_active_response",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::pending_turn_cannot_start_before_the_old_generation_has_settled",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::stale_audio_completion_cannot_release_a_different_generation_owner",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::four_ordered_vad_blocks_qualify_once_without_a_later_reset",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::configured_250ms_does_not_qualify_at_128ms_and_noise_never_qualifies",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::conversation_loop::tests::transcript_preflight_gets_a_fresh_correlation_id_but_keeps_bound_route",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "test": "media::lm_output_processor::tests::batches_three_sentences_and_flushes_final_fragment_once",
@@ -206,52 +206,52 @@
     {
       "test": "daemon::conversation_owner::tests::aborted_fake_stage_is_joined_before_stop_ack_and_leaves_no_active_slot",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::foreign_request_or_generation_never_matches_active_control_binding",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::task_error_still_drains_the_event_pump",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::timed_out_abort_waiter_leaves_retained_settlement_busy_until_inner_cleanup_joins",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::old_waiter_cannot_join_a_later_retained_worker",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::cancelled_join_waiter_leaves_pending_handle_owned_for_the_next_waiter",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::captured_reap_token_cannot_clear_later_or_failed_retained_join",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::completed_active_is_removed_before_the_next_preflight",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::settled_opening_failure_projects_a_terminal_before_slot_reuse",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "daemon::conversation_owner::tests::replacement_store_must_be_opened_before_consuming_start_capability",
       "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "sourceSha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "sourceSha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "test": "media::turn_tracker::tests::speculative_pause_reopens_once_but_committed_turn_never_replays",
@@ -262,6 +262,86 @@
       "test": "media::turn_tracker::tests::short_fragment_never_reaches_a_turn_commit",
       "sourcePath": "SRC/neothd/src/media/turn_tracker.rs",
       "sourceSha256": "E7AF710F5AA76216840614DDF4969E91B3F4D0295DA9F07E32035E68DDE2035D"
+    },
+    {
+      "test": "config::features::conversation_follow_up_tests::follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds",
+      "sourcePath": "SRC/neothd/src/config/features.rs",
+      "sourceSha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_stop_projection_preserves_cleanup_and_delivery_failures",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_stop_waits_for_terminal_queue_capacity",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_capture_tie_drains_admitted_frames_before_expiry",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_post_deadline_noise_cannot_extend_window",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_capture_terminal_and_disabled_window_preserve_events",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_queued_terminals_survive_late_noise_at_expiry",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_cancelled_wait_retains_later_capture_input",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_terminal_witness_survives_full_capture_queue_and_join",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_terminal_observed_after_timer_before_join_overrides_expiry",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_waits_for_complete_turn_and_final_audio_in_both_orders",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_never_arms_after_failed_turn_without_audio_or_when_disabled",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_stale_or_foreign_callbacks_cannot_close_a_later_generation",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_short_noise_and_repeated_idle_facts_do_not_extend_deadline",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_qualified_speech_invalidates_window_but_not_capture_scope",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+    },
+    {
+      "test": "media::conversation_loop::tests::follow_up_later_audio_cannot_expire_an_earlier_idle_window",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     }
   ],
   "metadata": {

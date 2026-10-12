@@ -14,7 +14,20 @@
   "testCatalogCases": 25,
   "testCatalogBindingsRefreshed": 2,
   "newTests": 0,
-  "hostedRepairValidation": "pending",
+  "hostedRepairValidation": "success: run38269632334@e5d27cc8; public CLI build,25 exact recovery cases and actual hosted lifecycle canary",
   "localExecutableValidationRan": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "acceptance": {
+    "run": 38269632334,
+    "producer": "e5d27cc8aa5de70c9f680ae12d4ab319a7299d78",
+    "recoveryProof": "work/gold-20260906/wave2561-paperless-fixture-repair/admission-38269632334/ROOT_RECOVERY_ADMISSION.json",
+    "recoveryProofSha256": "F2C7227A7E5B630E46A0635C83E14FD853361CBAB8D61AFD233EAFABEB56A2B4",
+    "productProof": "work/gold-20260906/wave2561-paperless-fixture-repair/admission-38269632334/ROOT_PRODUCT_ADMISSION.json",
+    "productProofSha256": "5B1A22B452A1AC4E3FA50309B4A94F73AFCAD966C72D2F85FA1B54B8DC41A555",
+    "cases": 25,
+    "recoverySourceBindings": 12,
+    "productSourceBindings": 29,
+    "cleanupProven": true,
+    "boundary": "Compiled CLI and isolated hosted Docker/Paperless lifecycle; separate 25 hermetic A04 cases; no actual user mailbox ingestion or user deployment"
+  }
 }

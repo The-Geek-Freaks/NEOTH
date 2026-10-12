@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.gold-wave2562.v1",
+  "date": "2026-10-12",
+  "run": 38228541674,
+  "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+  "fullConclusion": "failure",
+  "windows": {
+    "passed": 19276,
+    "artifact": 11742492362,
+    "skipped": 34,
+    "job": 114742117898,
+    "rootProofSha256": "8C0318D755793B68362954C54FBDF6B0C862078C0F2E77757E151184336E8259",
+    "rootProof": "work/gold-20260906/wave2558-scheduled-integration/ROOT_CURRENT_WINDOWS_SUITE_ADMISSION.json",
+    "zipSha256": "4c764e3b81f62e80d636e1a7a7f875600161f582c41744cb7fd6e43b8c48e4e9"
+  },
+  "macos": {
+    "passed": 19398,
+    "artifact": 11746535591,
+    "skipped": 35,
+    "job": 114742117807,
+    "rootProofSha256": "8BD915F513BDD546B039ACE5086BD389D1D5C496D5CB0B8E45CDF59E7814F3C3",
+    "rootProof": "work/gold-20260906/wave2558-scheduled-integration/ROOT_CURRENT_MACOS_SUITE_ADMISSION.json",
+    "zipSha256": "6ab05e96aacd2d102934186fd879a366242f331872fb653dc5bbf474bfe36f64"
+  },
+  "linux": {
+    "failedStep": "Prepare Linux GUI callback runtime prerequisites",
+    "job": 114742117838,
+    "nextest": "skipped",
+    "commandLogAvailability": "404 BlobNotFound after completion",
+    "annotation": "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.",
+    "cause": "Hosted runner connection lost; exact process/root cause unproven",
+    "annotationProofSha256": "FB298A41FCD2C45201FB994320764A0EE32F01EC9074BBEF4588BA345ED80086",
+    "sourceFix": "None inferred"
+  },
+  "audio": "52 exact fixtures per platform already independently admitted in W2558",
+  "validation": "Original archives bound to API digests/run/head; entry hashes and exact nextest summaries checked; no XML parser",
+  "acceptanceBoundary": "Historical exact producer only; not W2557/W2560 current source, physical device or release acceptance",
+  "localExecutableValidationRan": false,
+  "goldCheckboxesClosed": 0
+}

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Paperless fixture type corrected; hosted rerun pending",
+  "status": "Opt-in voice follow-up implemented;68 W186 cases registered; hosted voice validation pending; Paperless25 and lifecycle admitted on e5d27cc8",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 419717,
-    "sha256": "18FF0C1F3248502CFEDB38F9470CAE2913235AAE09F4750EE1F31971223912CE"
+    "bytes": 420519,
+    "sha256": "3DE0DD93696DB4BFA50822C72CB34219EB71310C19EA27A6BB720D70F69F0B7B"
   },
-  "sourceInputs": 2289,
+  "sourceInputs": 2293,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -306,7 +306,7 @@
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -876,25 +876,25 @@
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -2874,13 +2874,13 @@
     {
       "test": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -6198,7 +6198,7 @@
     {
       "test": "config::managed_browser_config_tests::managed_browser_defaults_disabled_and_roundtrips",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -7009,19 +7009,19 @@
       "test": "config::budget_raft_config_tests::budget_raft_is_default_disabled_and_has_no_implicit_authority",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796"
     },
     {
       "test": "config::budget_raft_config_tests::enabled_budget_raft_requires_exact_peeroxide_three_voter_policy",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796"
     },
     {
       "test": "config::budget_raft_config_tests::enabled_budget_raft_refuses_iroh_until_authenticated_budget_carrier_exists",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796"
     },
     {
       "test": "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
@@ -7782,37 +7782,37 @@
     {
       "test": "config::slack_account_tests::slack_legacy_complete_pair_is_default_singleton_and_partial_is_disabled",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::slack_account_tests::slack_map_requires_exact_public_effective_and_raw_key_custody",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::slack_account_tests::slack_map_rejects_scalar_mix_invalid_operator_and_empty_tokens",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::slack_account_tests::two_slack_accounts_keep_distinct_refs_bindings_and_tokens",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::slack_account_tests::slack_named_credentials_are_persisted_and_never_enter_public_policy",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
       "test": "config::slack_account_tests::slack_account_maps_reject_duplicate_yaml_entries",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -9876,7 +9876,7 @@
     {
       "test": "config::slack_account_tests::slack_ifc_labels_require_an_existing_account_and_reach_its_binding",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -15240,7 +15240,7 @@
     {
       "test": "config::provider_instance_credential_tests::named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -15336,7 +15336,7 @@
     {
       "test": "config::profile_provider_selector_load_tests::public_config_load_rejects_unknown_or_conflicting_profile_instance_selector",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -15618,7 +15618,7 @@
     {
       "test": "config::public_prepared_update_tests::prepared_public_update_keeps_legacy_ssh_and_credentials_bytes_on_error_cas_and_success",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth"
     },
     {
@@ -15862,28 +15862,28 @@
     {
       "test": "config::provider_instance_credential_tests::inline_fallback_key_is_absent_from_public_yaml_and_survives_public_render",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "config::provider_instance_credential_tests::reordered_inline_fallback_slots_keep_their_typed_keys",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7",
+      "sourceSha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
       "junitClass": "neoth",
       "platform": "all"
     },
@@ -17510,6 +17510,12 @@
       "test": "daemon::email_ingest_cron::paperless_client::tests::empty_original_requires_200_not_no_content_or_partial_response",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
       "sourceSha256": "C3E15661FD6720E9CCF6208FC544A4328EFA8CA42F0B0811F17F885576013E6B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::features::conversation_follow_up_tests::follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds",
+      "sourcePath": "SRC/neothd/src/config/features.rs",
+      "sourceSha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79",
       "junitClass": "neoth"
     }
   ],
@@ -81899,6 +81905,80 @@
       }
     ],
     "note": "Only missing Some in new test fixture; 25 test identities unchanged; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2560VoiceFollowUp": {
+    "base": "e5d27cc8aa5de70c9f680ae12d4ab319a7299d78",
+    "sources": [
+      {
+        "path": "docs/gold-wave2560-voice-follow-up.md",
+        "bytes": 2921,
+        "sha256": "17DBD14A132EEBC9EC9AC9E4D9B1C14ACF908EAA55FDFBC02833D55DFB8BF92D",
+        "blob": "d2e8a9b185feb9f1c955e3e52c14f2bc1af69114"
+      },
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 19024,
+        "sha256": "3FE08BB5AFB760E0C122AA25A7C3A2D98F7B4BF36BBCB82FA32778E50A0A4987",
+        "blob": "6202c12bb4933bce9d4a603064ea46d3e4693e03"
+      },
+      {
+        "path": "docs/verification/gold-wave2560-voice-follow-up.json",
+        "bytes": 2552,
+        "sha256": "8E6D94B3F84E5D93AE3455147AC973973431831EDC0E92DE0E3525829FD89F22",
+        "blob": "53c3a78fd7ece5c57ad2a9a76c44602dd455a01d"
+      },
+      {
+        "path": "docs/verification/gold-wave2561-paperless-fixture-repair.json",
+        "bytes": 1752,
+        "sha256": "9EB99AC0E399AA25EAC2A774D6FABFB04CACF1A23861505A5B2E8B0F3DDF71A1",
+        "blob": "6a44ff9dc2c5b9768667c05473dbc80ace797eb9"
+      },
+      {
+        "path": "docs/verification/gold-wave2562-full-ci-outcome.json",
+        "bytes": 2022,
+        "sha256": "CDBA04D27DE896CA1376DCA06E449E1F93A4F1D1CE6CA4A85906018B963F1372",
+        "blob": "0aefb72ad244a62bf51aa22f2b1c34ef58a23e11"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 55535,
+        "sha256": "768F2BD2F904DB744F651818B087A420301F3501B5608234BA1580B744CB979E",
+        "blob": "2b5a42829df515d1d42b3674f394f64ecc8a9b5b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2591253,
+        "sha256": "05F3B9F20090432AFFA89DFCC010F8D64CA7A229E35857B56842604831453CF8",
+        "blob": "34c479dc5e401b9824473f9f2485d60af0a17563"
+      },
+      {
+        "path": "SRC/neothd/src/config/features.rs",
+        "bytes": 57976,
+        "sha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79",
+        "blob": "0e93ef6dbe27d4250ba1c708949372c9462186b0"
+      },
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "bytes": 202838,
+        "sha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796",
+        "blob": "561e0be5657bd3cb51cdc980cb348b038e0334a5"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+        "bytes": 58032,
+        "sha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C",
+        "blob": "7de8c34eb80da6c92a81661459525c07f4d11ee8"
+      },
+      {
+        "path": "SRC/neothd/src/media/conversation_loop.rs",
+        "bytes": 77234,
+        "sha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A",
+        "blob": "7c773e2faddf1235e83142e8527c6a561428cd67"
+      }
+    ],
+    "note": "Reviewed generation/deadline/queue/settlement boundaries.1newportable+15liveaudio tests.No local runtime.No physicaldevice or fullGold claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

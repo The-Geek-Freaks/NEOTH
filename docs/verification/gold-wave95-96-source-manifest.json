@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T15:16:25.3880134Z",
-  "validationStatus": "Paperless fixture type corrected; hosted rerun pending",
+  "capturedUtc": "2026-10-12T15:44:43.4646125Z",
+  "validationStatus": "Opt-in voice follow-up implemented;68 W186 cases registered; hosted voice validation pending; Paperless25 and lifecycle admitted on e5d27cc8",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -935,6 +935,11 @@
       "path": "docs/gold-wave2557-email-paperless-recovery.md",
       "bytes": 4314,
       "sha256": "185099A75DF936182B28FC90A70D43B72AB187A845B16D82FFC0FABF60D5ACBC"
+    },
+    {
+      "path": "docs/gold-wave2560-voice-follow-up.md",
+      "bytes": 2921,
+      "sha256": "17DBD14A132EEBC9EC9AC9E4D9B1C14ACF908EAA55FDFBC02833D55DFB8BF92D"
     },
     {
       "path": "docs/gold-wave273-cancellation-durability.md",
@@ -3308,8 +3313,8 @@
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
-      "bytes": 14625,
-      "sha256": "6A66D3B73AFFF63E4F2E1D11E1B9AB78F6F7D0F312231876F3431BFB74C9DC59"
+      "bytes": 19024,
+      "sha256": "3FE08BB5AFB760E0C122AA25A7C3A2D98F7B4BF36BBCB82FA32778E50A0A4987"
     },
     {
       "path": "docs/verification/gold-wave186-silero-specialization.json",
@@ -4327,9 +4332,19 @@
       "sha256": "367027DB054A873E7EF9DC9C76A07145378DA9173C9567E2B471375F12692F81"
     },
     {
+      "path": "docs/verification/gold-wave2560-voice-follow-up.json",
+      "bytes": 2552,
+      "sha256": "8E6D94B3F84E5D93AE3455147AC973973431831EDC0E92DE0E3525829FD89F22"
+    },
+    {
       "path": "docs/verification/gold-wave2561-paperless-fixture-repair.json",
-      "bytes": 826,
-      "sha256": "2FAC4C161167CC376D75B00305F6FFC7EC8B67E708B4E2C598B28D4BA1503BE0"
+      "bytes": 1752,
+      "sha256": "9EB99AC0E399AA25EAC2A774D6FABFB04CACF1A23861505A5B2E8B0F3DDF71A1"
+    },
+    {
+      "path": "docs/verification/gold-wave2562-full-ci-outcome.json",
+      "bytes": 2022,
+      "sha256": "CDBA04D27DE896CA1376DCA06E449E1F93A4F1D1CE6CA4A85906018B963F1372"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5488,8 +5503,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 54816,
-      "sha256": "CF00A1915CDECFE16C85E5D7E081F5782A38BF4347A4A319A236882399CE5129"
+      "bytes": 55535,
+      "sha256": "768F2BD2F904DB744F651818B087A420301F3501B5608234BA1580B744CB979E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5498,8 +5513,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2587222,
-      "sha256": "30F3DC8DECC2C48D35AE8C4554C965AFD245F6158DA5045924B0B59C0D2D8FB3"
+      "bytes": 2591253,
+      "sha256": "05F3B9F20090432AFFA89DFCC010F8D64CA7A229E35857B56842604831453CF8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7197,6 +7212,11 @@
       "sha256": "FF8816A992D2E3C76ADF8FD7103F0826E05C8249F1C537A910485F9E2CE08212"
     },
     {
+      "path": "SRC/neothd/src/config/features.rs",
+      "bytes": 57976,
+      "sha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79"
+    },
+    {
       "path": "SRC/neothd/src/config/inference.rs",
       "bytes": 119707,
       "sha256": "497780301FB14E1FB38690A1EEC5C56D3EAC0776518CADC66D7786D42E82FB68"
@@ -7223,8 +7243,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 202681,
-      "sha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
+      "bytes": 202838,
+      "sha256": "301DB23D621FA030ADC9C9D23E60FC6C0E30ABAF6A33E2F42D18632FDAC9F796"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -7458,8 +7478,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/conversation_owner.rs",
-      "bytes": 57873,
-      "sha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+      "bytes": 58032,
+      "sha256": "C803DE468DF6D6640EEBF45E55BA32CB8C331593DB3911A870D3791C693B3F7C"
     },
     {
       "path": "SRC/neothd/src/daemon/conversation_protocol.rs",
@@ -8158,8 +8178,8 @@
     },
     {
       "path": "SRC/neothd/src/media/conversation_loop.rs",
-      "bytes": 53288,
-      "sha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+      "bytes": 77234,
+      "sha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
     },
     {
       "path": "SRC/neothd/src/media/conversation_scope.rs",

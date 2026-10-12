@@ -3889,6 +3889,10 @@ impl FreedomConfig {
             .vad
             .validate()
             .context("invalid media.vad config")?;
+        let _ = self
+            .media
+            .conversation_follow_up_duration()
+            .context("invalid media conversation follow-up config")?;
         self.dreaming
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid dream config: {error}"))?;
