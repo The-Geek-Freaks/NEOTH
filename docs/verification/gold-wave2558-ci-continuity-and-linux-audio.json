@@ -1,0 +1,33 @@
+{
+  "schema": "neoth.gold-wave2558.v1",
+  "date": "2026-10-12",
+  "scope": "Per-ref CI continuity and independently admitted hosted Linux audio",
+  "baseProducer": "e96a1c212236b98422b126424e3cff12e2637d4a",
+  "change": {
+    "test": "test_ci_concurrency_cancels_only_superseded_pr_runs",
+    "group": "ci-${{ github.ref }}",
+    "testStatus": "authored; hosted validation pending",
+    "meaning": "Superseded PR runs cancel; main full runs keep one active and at most one pending successor",
+    "cancelInProgress": "${{ github.event_name == 'pull_request' }}",
+    "reference": "https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency"
+  },
+  "linuxAudio": {
+    "archiveSha256": "598400833fccecbdb3ec522889ae5cfafef2c96e5f3dc312fcd36b8d23eb3f23",
+    "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+    "artifactId": 11737104029,
+    "admissionSha256": "1E6ED41635AE6BC98289A0C8CD5FA2D9C5648F8F02E52DEF097D42310DAE72AF",
+    "admission": "work/gold-20260906/wave2558-scheduled-integration/ROOT_LINUX_AUDIO_ADMISSION.json",
+    "bindings": 12,
+    "jobId": 114742147185,
+    "entries": 4,
+    "limits": [
+      "Linux hosted fixture scope only",
+      "Full CI still active",
+      "No physical device or release acceptance"
+    ],
+    "runId": 38228541674,
+    "cases": 52
+  },
+  "paperless": "Candidate not imported; completion/liveness review remains open",
+  "localExecution": "Bounded single-core idle-priority text/JSON/hash/Git/GitHub only; no compiler or runtime"
+}

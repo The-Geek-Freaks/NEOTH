@@ -299,6 +299,19 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn("LIVE_AUDIO: ${{ needs['live-audio'].result }}", gold)
         self.assertIn("live-audio=$LIVE_AUDIO", gold)
 
+    def test_ci_concurrency_cancels_only_superseded_pr_runs(self) -> None:
+        concurrency = mapping_block(CI_TEXT, "concurrency", 0)
+        self.assertEqual(
+            direct_mapping_keys(concurrency, 2),
+            ["group", "cancel-in-progress"],
+        )
+        self.assertIn("group: ci-${{ github.ref }}", concurrency)
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            concurrency,
+        )
+        self.assertNotIn("cancel-in-progress: true", concurrency)
+
     def test_preflight_is_the_only_main_push_workflow_in_this_contract(self) -> None:
         preflight = trigger_block(PREFLIGHT_TEXT)
         self.assertRegex(preflight, r"(?m)^  pull_request:\s*$")

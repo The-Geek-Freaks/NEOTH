@@ -31,10 +31,12 @@ on:
 
 concurrency:
   # Rapid Gold pushes use preflight.yml and do not enqueue this full matrix.
-  # A newer PR, scheduled, or milestone run supersedes an older run for the
-  # same ref. release.yml still requires a fresh green exact-HEAD verdict.
+  # New PR revisions supersede their previous matrix. Scheduled and manual
+  # full integrations share one ref group and wait for its active run.
+  # GitHub retains at most one pending successor, not an unbounded FIFO.
+  # release.yml still requires a fresh green exact-HEAD verdict.
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

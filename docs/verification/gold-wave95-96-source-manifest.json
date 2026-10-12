@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T09:12:33.8395195Z",
-  "validationStatus": "W2556 ten open Jarvis proposals reflected in derived release-gate counts; source owner mapping added; hosted recheck pending.",
+  "capturedUtc": "2026-10-12T09:37:23.0056342Z",
+  "validationStatus": "published source pending hosted cadence contract; Linux audio admitted at 50404471",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 49857,
-      "sha256": "194C0820394BF0D9B1E4F0971D2C7196A204846B4B223A7F048CB05E66EEA387"
+      "bytes": 50028,
+      "sha256": "A46D9753DD7B9CF54F143E399E509472E1D3EE4EB200A1FE6DCFE4E3A37D072A"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -4302,6 +4302,11 @@
       "sha256": "4B09F321BAC2DF37F86FDF4F05D13B81841C376B3DE923FBBCD248B6A8E14E7E"
     },
     {
+      "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
+      "bytes": 1542,
+      "sha256": "E173034AF30A7A5BC1C4A11286FC3F2A7DD48A27163736721B677375CED24F78"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5268,8 +5273,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 63395,
-      "sha256": "900DC6B27242C45B93296D95DF72C02043A00FEE451C6AF4F4E4A810931A8A54"
+      "bytes": 63932,
+      "sha256": "D3D2299A5826341330F26F52F565176E003FA12410AD29ED4481DBFD94537E26"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5468,8 +5473,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2579642,
-      "sha256": "37CBAE7981D85F066A32C803776116AC8EA99EA8B5E52F2D497202A863B9A17A"
+      "bytes": 2581379,
+      "sha256": "7C3D4F0B813C8109E6BC5C9FFB2B16C29DC515B094A5463EA66D6A65DCD8927C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
