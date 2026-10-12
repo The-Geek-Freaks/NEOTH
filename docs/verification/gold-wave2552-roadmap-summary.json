@@ -1,0 +1,25 @@
+{
+  "schema": "neoth.gold.wave2552.roadmap-summary.v1",
+  "base": "76a4b77fa01477b5a0442df448466a0d9a756160",
+  "failedPreflight": 38216698558,
+  "reason": "New checkbox tasks changed exact parser totals while published summary remained stale",
+  "historicalCheckboxes": 1324,
+  "historicalCheckboxesUnchanged": true,
+  "historicalTextRestoredByOneMarkerReplacement": true,
+  "newMandatoryAdoptionTasks": 8,
+  "conditionalResearchCheckboxRemovedOnlyFromOwnNewAppend": true,
+  "summary": {
+    "partial": 2,
+    "open": 249,
+    "total": 1332,
+    "raw_blockers": 251,
+    "complete": 1081,
+    "release_tag_blockers": 250,
+    "release_generated_items": 1
+  },
+  "gateImplementationChanged": false,
+  "testsChanged": false,
+  "localRuntimeExecuted": false,
+  "hostedVerification": "pending",
+  "goldComplete": false
+}

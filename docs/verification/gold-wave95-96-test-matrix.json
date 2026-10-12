@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "research-plan-published-windows-repair-hosted-accepted-full-integration-pending",
+  "status": "roadmap-metadata-corrected-hosted-preflight-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 416546,
-    "sha256": "E9F1A3C8E68B1F4FAB709723F58138EACCB9A9F189289AC0AC54BA19E3E1FFD3"
+    "bytes": 416704,
+    "sha256": "58EE84C398CA78A5F6495574B4C8141AF513F8A6D48B4A907FEFEE16F4852668"
   },
-  "sourceInputs": 2272,
+  "sourceInputs": 2273,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81393,6 +81393,26 @@
       }
     ],
     "note": "51 requested source inputs; 50 pinned repositories sampled, exact Jay article unresolved; eight bounded adoption slices and conditional training R01, no upstream code imported. Windows run38212546488 admits9library+2integration+12collector contracts; product/device/release Gold remains open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2552RoadmapCounterCorrection": {
+    "base": "76a4b77fa01477b5a0442df448466a0d9a756160",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2552-roadmap-summary.json",
+        "bytes": 818,
+        "sha256": "B71EE7DA9F3D53DB6E228DE44D9A11A179D675580ED929C91DC2C60F7CD1EDA4",
+        "blob": "b679b30e7233c7df73be51d6d5355fc480eabdca"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2565147,
+        "sha256": "274E9552A533E42D032C076F41A5ABFC09FE577744EBD8D4341242463B12721B",
+        "blob": "108f867f26642edd133449a299a04d00f528c5a9"
+      }
+    ],
+    "note": "Eight new mandatory adoption tasks plus conditional training research; historical1324checkboxes unchanged, only derived dashboard counts refreshed to1332/1081/249/2. Gate code and tests unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

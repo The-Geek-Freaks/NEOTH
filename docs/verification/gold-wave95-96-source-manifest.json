@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T07:12:04.3209157Z",
-  "validationStatus": "research-plan-published-windows-repair-hosted-accepted-full-integration-pending",
+  "capturedUtc": "2026-10-12T07:17:26.6348169Z",
+  "validationStatus": "roadmap-metadata-corrected-hosted-preflight-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4277,6 +4277,11 @@
       "sha256": "B9F94199AA0AEF03732BA3ECBC3D9C50FC09F2B09450DCAD781F00188BF6B427"
     },
     {
+      "path": "docs/verification/gold-wave2552-roadmap-summary.json",
+      "bytes": 818,
+      "sha256": "B71EE7DA9F3D53DB6E228DE44D9A11A179D675580ED929C91DC2C60F7CD1EDA4"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5433,8 +5438,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2563831,
-      "sha256": "3BA380B9DFFDEFA9EA48D4EC2A07EE1DADA9F4952A741F82ADD002C49AC163A5"
+      "bytes": 2565147,
+      "sha256": "274E9552A533E42D032C076F41A5ABFC09FE577744EBD8D4341242463B12721B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
