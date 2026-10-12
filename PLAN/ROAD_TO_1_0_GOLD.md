@@ -18908,3 +18908,15 @@ Preflight 38043118851 auf 7cf990ccc8b3ed3dd3f4dba24925870624e68913 verlangt Form
 ### W2545 — Expliziter Preflight-Vertrag für die Testauswertung
 
 Preflight 38043500892 auf d90e3bdeb9eaaae307b37c3ae172a7ed4d5fe3eb bestätigt das Rust-Format sowie alle zwölf neuen Tests der Windows-Testauswertung. Anschließend lehnt der bestehende Vertrag für erlaubte Preflight-Befehle den noch nicht eingetragenen Testaufruf ab. W2545 ergänzt ausschließlich diesen bereits beabsichtigten Offline-Aufruf in der exakten Befehlsliste; Vergleichsstrenge, übrige Befehle und Build-Sperre bleiben erhalten. Erneuter Hosted-Preflight sowie gezielte Audio-/Windows-Abnahmen bleiben erforderlich. Bericht: docs/verification/gold-wave2545-preflight-collector-contract.json.
+
+### W2546 — Verbleibende WhatsApp-Medienabhängigkeiten gezielt auflösen
+
+Der frische GitHub-Abgleich findet fünf offene Hinweise, sämtlich in der WhatsApp-Baileys-Bridge: Sharp 0.35.4 in Manifest und Lockfile sowie music-metadata 11.13.0 im Lockfile. Die veröffentlichten Korrekturen liegen bei Sharp 0.35.5 und music-metadata 11.16.0; Baileys selbst bleibt 7.0.0-rc13. Ein eigener manueller Hosted-Lauf erzeugt ausschließlich einen Kandidaten für diese beiden Anforderungen, installiert dessen Lockfile eingefroren ohne Lifecycle-Skripte und prüft die komplette Node-Bridge-Suite, tatsächlich verwendete direkte und Baileys-gebundene Sharp-Instanzen, die korrigierte SVG-Bibliothek sowie reale PNG-/SVG-/WAV-Verarbeitung.
+
+Der ursprüngliche Producer, alle Bridge-Quellen, Baseline- und Kandidatendateien, Tests, Produktionsaudit und Prüfsummen werden als Originalartefakt bewahrt. Root prüft danach den vollständigen Dependency-Diff und übernimmt keine fremden Paketänderungen. W2546 allein ändert weder die Produktabhängigkeiten noch den offenen Hinweisstatus und ersetzt keine echte Konto-/Geräte-/Release-Abnahme. Kein lokaler Node-, pnpm-, Compiler- oder Testlauf; die CI bleibt seriell. Bericht: docs/verification/gold-wave2546-media-dependency-frontier.json.
+
+### W2547 — Audio-Autoritaet und vollstaendiges Workspace-Clippy abgenommen
+
+Lauf 38043771669 auf Producer 70f6a40f0361a28332b2c1ab0d970ca991f0030e ist erfolgreich. Root hat beide Originalarchive gegen die API-Digests, 28 Eintraege, 18 ausgewaehlte Quellbindungen und die zusaetzliche CLI-Dokumentationsbindung geprueft. Alle zehn exakt entdeckten Audio-/Berechtigungsfaelle bestanden einzeln; Workspace-Clippy mit dem Linux-Quality-Befehl, Core-Test-Typecheck und CLI-Build sind erfolgreich. Die erzeugte CLI-Referenz stimmt bytegenau mit dem Producer ueberein.
+
+Dies nimmt W2542/W2544 gezielt ab. Windows-Reparaturkollektion, vollstaendige neue plattformuebergreifende CI, reale Geraete und Release-Gold bleiben offen. Lokal wurden nur begrenzte Text-/JSON-/Hash-/Archiv-/Git-/GitHub-Schritte seriell mit Idle-Prioritaet und Ein-Kern-Affinitaet ausgefuehrt. Bericht: docs/verification/gold-wave2547-core-audio-acceptance.json.

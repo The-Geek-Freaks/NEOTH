@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "exact-preflight-command-allowlist-repaired-hosted-pending",
+  "status": "audio-workspace-hosted-accepted-media-candidate-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 414650,
-    "sha256": "80274C8659F708976A75C632DF17A40A560F9F6EF5CFA744796B029D7C18F04D"
+    "bytes": 415231,
+    "sha256": "51B33412BBCFB66AE1F3C395E2CA4E6BCF3F402716BF7B7CBD20543A2E00B680"
   },
-  "sourceInputs": 2262,
+  "sourceInputs": 2265,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81285,6 +81285,38 @@
       }
     ],
     "note": "Add the intended offline Rust-case verifier tests to the exact Preflight command contract. Twelve collector tests passed in failed prior run; no local tests, compiler or parser; hosted Preflight still required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2546MediaCandidateAnd2547AudioAcceptance": {
+    "base": "70f6a40f0361a28332b2c1ab0d970ca991f0030e",
+    "sources": [
+      {
+        "path": ".github/workflows/baileys-media-dependency-candidate.yml",
+        "bytes": 13364,
+        "sha256": "0F85919C7C273F4B889E4FFE22197FA8A355244773F0518EADE95D8BF287F2BC",
+        "blob": "a898b38a99cddf8008712888affdd216046dae9b"
+      },
+      {
+        "path": "docs/verification/gold-wave2546-media-dependency-frontier.json",
+        "bytes": 1997,
+        "sha256": "755297A6C01C842AFFABA55F1B7F1EF02CE2E8844F383E3E134544865698993E",
+        "blob": "659cb8b2bc86b027ff9bda7d919bd472ba347b77"
+      },
+      {
+        "path": "docs/verification/gold-wave2547-core-audio-acceptance.json",
+        "bytes": 10753,
+        "sha256": "625E69F76E375ACCB95FD1BA03A4FC361948439EDA36CB9ABCE27E28905759BF",
+        "blob": "793f78bc9d21d2af48a95127a29dd6036e72b22c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2551721,
+        "sha256": "790CB91EF4EE11A0DCF5050365EF53C8E1306E409DA8E765360523EAADCD4A47",
+        "blob": "adb59813dda2533c90abd14c76ba6812da90000a"
+      }
+    ],
+    "note": "Run38043771669 independently admitted ten exact audio cases, workspace Clippy and byte-equal CLI reference. New manual media dependency candidate workflow is not yet executed; product dependencies unchanged. Full Windows, cross-platform, device and release Gold remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

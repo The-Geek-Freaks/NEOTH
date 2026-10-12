@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-10T10:01:59.0965102Z",
-  "validationStatus": "exact-preflight-command-allowlist-repaired-hosted-pending",
+  "capturedUtc": "2026-10-12T06:16:52.0430942Z",
+  "validationStatus": "audio-workspace-hosted-accepted-media-candidate-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -105,6 +105,11 @@
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
       "bytes": 27745,
       "sha256": "1EF2EA51AB61BD1865A63899F6183F0DB6D0A716497BFB46B6D814BC0053A0EA"
+    },
+    {
+      "path": ".github/workflows/baileys-media-dependency-candidate.yml",
+      "bytes": 13364,
+      "sha256": "0F85919C7C273F4B889E4FFE22197FA8A355244773F0518EADE95D8BF287F2BC"
     },
     {
       "path": ".github/workflows/bge-m3.yml",
@@ -4227,6 +4232,16 @@
       "sha256": "649FC9E924132CE5EEE0D0B9A6AF7808FAE0026D9AD608563680D55281DC8EAC"
     },
     {
+      "path": "docs/verification/gold-wave2546-media-dependency-frontier.json",
+      "bytes": 1997,
+      "sha256": "755297A6C01C842AFFABA55F1B7F1EF02CE2E8844F383E3E134544865698993E"
+    },
+    {
+      "path": "docs/verification/gold-wave2547-core-audio-acceptance.json",
+      "bytes": 10753,
+      "sha256": "625E69F76E375ACCB95FD1BA03A4FC361948439EDA36CB9ABCE27E28905759BF"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5383,8 +5398,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2549502,
-      "sha256": "58DA860366FC1941BE3D45783D98F34A808F95A429EB1802412109E344884FA9"
+      "bytes": 2551721,
+      "sha256": "790CB91EF4EE11A0DCF5050365EF53C8E1306E409DA8E765360523EAADCD4A47"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

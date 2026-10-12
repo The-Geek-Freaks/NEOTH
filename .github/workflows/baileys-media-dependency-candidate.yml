@@ -1,0 +1,249 @@
+name: Baileys media dependency candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main producer for the bounded Sharp and music-metadata repair
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: baileys-media-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Bind producer and unmodified bridge inputs
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "baileys-media-candidate"
+          (proof / "base").mkdir(parents=True)
+          paths = subprocess.check_output(["git", "ls-files", "-z", "--",
+              ".github/workflows/baileys-media-dependency-candidate.yml",
+              "bridges/whatsapp-baileys"]).decode().split("\0")
+          sources = []
+          for name in sorted(p for p in paths if p):
+              path = pathlib.Path(name)
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit("nonregular producer source")
+              data = path.read_bytes()
+              blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + name], text=True).strip()
+              if subprocess.check_output(["git", "hash-object", "--no-filters", "--", name], text=True).strip() != blob:
+                  raise SystemExit("checkout differs from raw producer: " + name)
+              sources.append({"path": name, "blob": blob, "sha256": hashlib.sha256(data).hexdigest().upper()})
+          for name in ["package.json", "pnpm-lock.yaml"]:
+              (proof / "base" / name).write_bytes((pathlib.Path("bridges/whatsapp-baileys") / name).read_bytes())
+          receipt = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                     "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "sources": sources}
+          (proof / "source-custody.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+      - name: Enable exact package manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          test "$(node --version)" = v22.16.0
+          test "$(pnpm --version)" = 10.32.1
+
+      - name: Prepare only the two targeted package requests
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path("package.json")
+          value = json.loads(path.read_text())
+          if value["dependencies"] != {"baileys": "7.0.0-rc13", "qrcode-terminal": "0.12.0", "sharp": "0.35.4"}:
+              raise SystemExit("unexpected base dependencies; review before generating another candidate")
+          if value["packageManager"] != "pnpm@10.32.1" or "pnpm" in value or pathlib.Path("pnpm-workspace.yaml").exists():
+              raise SystemExit("unexpected package-manager policy")
+          value["dependencies"]["sharp"] = "0.35.5"
+          path.write_text(json.dumps(value, indent=2) + "\n")
+          pathlib.Path("pnpm-workspace.yaml").write_text('overrides:\n  "baileys>music-metadata": "11.16.0"\n')
+          PY
+
+      - name: Resolve candidate and prove frozen installation
+        id: resolve
+        timeout-minutes: 8
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/baileys-media-candidate"
+          pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile 2>&1 | tee "$proof/resolve.log"
+          python3 - <<'PY'
+          import pathlib
+          lock = pathlib.Path("pnpm-lock.yaml").read_text()
+          expected = {
+              "sharp@0.35.5": "sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==",
+              "music-metadata@11.16.0": "sha512-D5zZHjQUbfR+JhHjnwdbgeB4qj7zVJtisCB1I0GAI5sjSPGqPLoY14WMIzMeR8iA+4nSFswVLpO4crksZUybBg==",
+          }
+          for package, integrity in expected.items():
+              if "  " + package + ":\n    resolution: {integrity: " + integrity + "}" not in lock:
+                  raise SystemExit("pinned registry integrity differs: " + package)
+          for old in ["sharp@0.35.4", "music-metadata@11.13.0", "music-metadata: 11.13.0"]:
+              if old in lock:
+                  raise SystemExit("old media dependency still resolved")
+          PY
+          sha256sum package.json pnpm-lock.yaml pnpm-workspace.yaml > "$proof/before-install.sha256"
+          pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tee "$proof/frozen-install.log"
+          sha256sum --check "$proof/before-install.sha256"
+          pnpm list --depth Infinity --json > "$proof/resolved-tree.json"
+
+      - name: Run every bridge contract
+        id: contracts
+        timeout-minutes: 3
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/baileys-media-candidate"
+          node --test --test-reporter=tap test/*.test.mjs 2>&1 | tee "$proof/bridge.tap"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "baileys-media-candidate"
+          tap = (proof / "bridge.tap").read_text()
+          counts = {}
+          for key in ["tests", "pass", "fail", "cancelled", "skipped", "todo"]:
+              hits = re.findall(r"^# " + key + r" ([0-9]+)$", tap, re.M)
+              if len(hits) != 1:
+                  raise SystemExit("ambiguous TAP summary: " + key)
+              counts[key] = int(hits[0])
+          if counts["tests"] < 1 or counts["tests"] != counts["pass"] or any(counts[k] for k in ["fail", "cancelled", "skipped", "todo"]):
+              raise SystemExit("bridge suite has unsuccessful or unexecuted cases")
+          (proof / "node-cases.json").write_text(json.dumps(counts, indent=2) + "\n")
+          PY
+
+      - name: Prove actual patched media implementations
+        id: media
+        timeout-minutes: 2
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { createRequire } from 'node:module';
+          import { pathToFileURL } from 'node:url';
+          import sharp from 'sharp';
+          const fromBaileys = createRequire(import.meta.resolve('baileys'));
+          const peerSharp = fromBaileys('sharp');
+          assert.equal(sharp.versions.sharp, '0.35.5');
+          assert.equal(peerSharp.versions.sharp, '0.35.5');
+          assert.match(sharp.versions.rsvg, /^\d+\.\d+\.\d+$/);
+          const [rsvgMajor, rsvgMinor, rsvgPatch] = sharp.versions.rsvg.split('.').map(Number);
+          assert.ok(rsvgMajor > 2 || (rsvgMajor === 2 && (rsvgMinor > 63 || (rsvgMinor === 63 && rsvgPatch >= 2))));
+          const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="#123456"/></svg>');
+          const svgPng = await sharp(svg).png().toBuffer();
+          const svgMetadata = await sharp(svgPng).metadata();
+          assert.equal(svgMetadata.width, 2);
+          assert.equal(svgMetadata.height, 2);
+          const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#123456' } }).png().toBuffer();
+          const metadata = await sharp(png).metadata();
+          assert.equal(metadata.format, 'png');
+          assert.equal(metadata.width, 2);
+          assert.equal(metadata.height, 2);
+          const metadataEntry = pathToFileURL(fromBaileys.resolve('music-metadata'));
+          const metadataPackage = JSON.parse(await readFile(new URL('../package.json', metadataEntry), 'utf8'));
+          assert.equal(metadataPackage.name, 'music-metadata');
+          assert.equal(metadataPackage.version, '11.16.0');
+          const { parseBuffer } = await import(metadataEntry.href);
+          const wav = Buffer.alloc(48);
+          wav.write('RIFF', 0); wav.writeUInt32LE(40, 4); wav.write('WAVE', 8);
+          wav.write('fmt ', 12); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
+          wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28);
+          wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36);
+          wav.writeUInt32LE(4, 40); wav.writeInt16LE(4096, 44); wav.writeInt16LE(-4096, 46);
+          const audio = await parseBuffer(wav, { mimeType: 'audio/wav', size: wav.length });
+          assert.equal(audio.format.sampleRate, 8000);
+          assert.equal(audio.format.numberOfChannels, 1);
+          assert.equal(audio.format.bitsPerSample, 16);
+          const receipt = { producer: process.env.GITHUB_SHA, run: process.env.GITHUB_RUN_ID,
+            sharp: sharp.versions, baileysPeerSharp: peerSharp.versions.sharp, svgDecoded: true,
+            musicMetadata: metadataPackage.version,
+            png: { format: metadata.format, width: metadata.width, height: metadata.height },
+            wav: { sampleRate: audio.format.sampleRate, channels: audio.format.numberOfChannels, bitsPerSample: audio.format.bitsPerSample } };
+          await writeFile(process.env.RUNNER_TEMP + '/baileys-media-candidate/media.json', JSON.stringify(receipt, null, 2) + '\n');
+          JS
+
+      - name: Audit production candidate without dismissals
+        id: audit
+        timeout-minutes: 2
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: pnpm audit --prod --json > "$RUNNER_TEMP/baileys-media-candidate/audit.json"
+
+      - name: Retain candidate bytes and all execution outcomes
+        if: always()
+        env:
+          RESOLVE: ${{ steps.resolve.outcome }}
+          CONTRACTS: ${{ steps.contracts.outcome }}
+          MEDIA: ${{ steps.media.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "baileys-media-candidate"
+          candidate = proof / "candidate"
+          candidate.mkdir(parents=True, exist_ok=True)
+          for name in ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]:
+              source = pathlib.Path("bridges/whatsapp-baileys") / name
+              if source.is_file() and not source.is_symlink():
+                  (candidate / name).write_bytes(source.read_bytes())
+          (proof / "candidate.patch").write_bytes(subprocess.check_output(["git", "diff", "--binary", "--full-index", "--", "bridges/whatsapp-baileys"]))
+          changed = subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines()
+          if set(changed) - {"bridges/whatsapp-baileys/package.json", "bridges/whatsapp-baileys/pnpm-lock.yaml"}:
+              raise SystemExit("unrelated tracked file changed")
+          custody = proof / "source-custody.json"
+          if custody.is_file():
+              for source in json.loads(custody.read_text())["sources"]:
+                  if source["path"] not in changed and hashlib.sha256(pathlib.Path(source["path"]).read_bytes()).hexdigest().upper() != source["sha256"]:
+                      raise SystemExit("unrelated bound source changed")
+          receipt = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                     "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                     "outcomes": {key: os.environ[key] for key in ["RESOLVE", "CONTRACTS", "MEDIA", "AUDIT"]},
+                     "candidateOnly": True, "requiresRootDependencyDiffReview": True,
+                     "realAccountOrDeviceAccepted": False, "releaseGoldAccepted": False}
+          (proof / "execution.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          files = sorted(path for path in proof.rglob("*") if path.is_file() and path.name != "SHA256SUMS")
+          (proof / "SHA256SUMS").write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.relative_to(proof).as_posix() + "\n" for path in files))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: baileys-media-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/baileys-media-candidate/
+          if-no-files-found: error
+          retention-days: 14

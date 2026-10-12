@@ -1,0 +1,280 @@
+{
+  "schema": "neoth.gold.wave2547.core-audio-acceptance.v1",
+  "producer": "70f6a40f0361a28332b2c1ab0d970ca991f0030e",
+  "run": "38043771669",
+  "job": 114189069127,
+  "status": "TEN-CORE-AUDIO-CASES-AND-WORKSPACE-CLIPPY-PASS",
+  "selection": [
+    "daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible",
+    "daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof",
+    "daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal",
+    "daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt",
+    "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
+    "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
+    "permissions::microphone::tests::once_is_config_bound_and_consumed",
+    "permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open",
+    "wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding",
+    "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block"
+  ],
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "blob": "90f55c6ae0e43cf36d0299b5c49a610ffecefa3b",
+      "sha256": "9E02AAF1DE1D65E3C764D4BAF63CD9E3776FB431DE90AE68D5259B7431AB5FD4"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a6779849c0124e34971ed32469d94e223ef62c9e",
+      "sha256": "6CB6188C26019CDEDE860A2BA599EA066F70C299B12B1ADE16F60926087C43B0"
+    },
+    {
+      "path": "SRC/Cargo.toml",
+      "blob": "07e4c6c05e514702090e309e345d5dbd4920921e",
+      "sha256": "6124446DACAEA94EAAA1202686E3A9A2AF30A23EA991BBCB9A9C47DCECC8B0B6"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "blob": "747573eddb0621048f391963549a508df1e7ca88",
+      "sha256": "7576BB05C5084DD214BE59294D2C87A2096F29AB2BC7150DA8117B2E9E3CA63A"
+    },
+    {
+      "path": "SRC/neothd/src/lib.rs",
+      "blob": "5bca1e0c49cc3e0fdc89ede5a02c3aed5afe7556",
+      "sha256": "A883FDEE23A93E19FB7A97CDC74D6851AD6CDDEC1528C5B3F39812CC2A19C11E"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "blob": "108dccec50d167d1a8c38a701a9c8654afa8b7a6",
+      "sha256": "32EE39772DF88EB1D825D4B8DD37BFAC5911A38375CC56F622F7A297C946E935"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "blob": "6c5608d2e19231fc8e9d94bf7f5d229d460a46d6",
+      "sha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "blob": "fae427edc41568af04333b6e991cb33b8c7bb30b",
+      "sha256": "FDCDFEC08A80F3BEEB062BFE436C5D4E8926D7BC6E6F65668C263355F9644085"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_session.rs",
+      "blob": "9dbf648ab7c7b4c2756c9702a6616cc35895195e",
+      "sha256": "55A6EFB3449C23F63E89177FCD0BABD1B9EE0BB37AE6277D42F3640EC800B68F"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "blob": "d8039b755c9f3800071f0a1e01055b272482522c",
+      "sha256": "05ADBCF3CA61075AC7576C41D1354CA46E2F06F607666B98629A3F0D1F9C7573"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "blob": "dde90d582be1d7a2e9331e46770414cac3565543",
+      "sha256": "55C34B1124BD332C2A85567D2DEA08F08269C34E65A1EBA5CA5FA6E71B8FFA0C"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/microphone.rs",
+      "blob": "c812d062f6ed006868313af02c20586753b7e2be",
+      "sha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA"
+    },
+    {
+      "path": "SRC/neothd/src/wal/microphone_receipts.rs",
+      "blob": "ba5436304315efff8e394c9ad6742ae9da7e7f51",
+      "sha256": "B4E0F16707A58D524B4D02C86F5EE9C5C2037FFEBA4D2B6D72AF2386179E7E2A"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "blob": "688150f98477c2837d0a95ff21f74b642307fdd8",
+      "sha256": "B632D76702FBB5223BAAA4504C68842263C4AF8854772749EA7219AF3A623D0A"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "blob": "a1cab83506057bb0647028cf52939d4ecb1e4f65",
+      "sha256": "D65BB55B16D260A8BB36823B35FD0D9BA08A53CB75FEE1CDB20738971B5815B2"
+    },
+    {
+      "path": "SRC/neothd/src/wal/header.rs",
+      "blob": "657f6f266cbdeedb147497e3ee7f44ca3bbd0bdf",
+      "sha256": "E468361C7A1A3B8B18609E6093C25403BBDBC382D2ED77FDAA216F2DC7486001"
+    },
+    {
+      "path": "SRC/neothd/src/wal/scan.rs",
+      "blob": "7caf7f72f53ed9847330550cc7f52901e26b1bef",
+      "sha256": "36515C1B65C36FB1B056E0DE62429F0E1B4BFA587AD71218DD954A0FBF05684E"
+    },
+    {
+      "path": "SRC/neothd/src/media/dictation.rs",
+      "blob": "1b6b16e01659635ab73fd0be2421c34041e9015e",
+      "sha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "blob": "51dfa1663df30606a41f91b402dbee9426d18c41",
+      "sha256": "8E679EE7FF84A1DEDA4D50AB015A3F03205A5F889980E51E423A95B0094E8AFD"
+    }
+  ],
+  "archives": [
+    {
+      "id": 11668165347,
+      "name": "core-audio-regressions-70f6a40f0361a28332b2c1ab0d970ca991f0030e",
+      "sha256": "7794FBB7569D5D0CF600EE42D9907E24365B169D1D014921AEE83889FCCA7DA2",
+      "entries": [
+        {
+          "path": "1.discovery.log",
+          "bytes": 16187,
+          "sha256": "EBC7658518DF329B8DB9A71647008290475248B7F6B6A59CFCB45EABBB6EA3E8"
+        },
+        {
+          "path": "1.log",
+          "bytes": 2046,
+          "sha256": "DA370E27D473EF24B4D9B16B0C35951587369B31ACD8E8B0EAE753C5B2E29755"
+        },
+        {
+          "path": "10.discovery.log",
+          "bytes": 1936,
+          "sha256": "89540DD80F32C7A9746A3C746351153642EF436714BC5A677C1D5E3162A1B789"
+        },
+        {
+          "path": "10.log",
+          "bytes": 2036,
+          "sha256": "A29A8F63501BD40BF09393F82495EB3A4ECA292D9496148955D3D1F77C13AE3F"
+        },
+        {
+          "path": "2.discovery.log",
+          "bytes": 1929,
+          "sha256": "E5B1CF9536E0CB6BD78958E5514F5B0CF3CD42E96BA62229CD315AFCBDAC031F"
+        },
+        {
+          "path": "2.log",
+          "bytes": 2029,
+          "sha256": "9081890F27797DFD8858B6B1749942A1697E3253B3F983DA2DE5F8BDC5C2E043"
+        },
+        {
+          "path": "3.discovery.log",
+          "bytes": 1949,
+          "sha256": "020D25B880E394D8E3BC28529CBF918E1A65B49445F996307982CB8C93C98D0D"
+        },
+        {
+          "path": "3.log",
+          "bytes": 2049,
+          "sha256": "3C927E4B9AAF816D7C3210B54399EEDEF8A24EF5EC3FED95FA9858732AC46128"
+        },
+        {
+          "path": "4.discovery.log",
+          "bytes": 1951,
+          "sha256": "BC62844AB35B7E2EA71C6297C44454AF621573B760790ECEAEF8E6274A825EB6"
+        },
+        {
+          "path": "4.log",
+          "bytes": 2051,
+          "sha256": "4807F80F869E5FA88B3A74D6E5BE19C9528927220563C3B5295B390D342FB796"
+        },
+        {
+          "path": "5.discovery.log",
+          "bytes": 1933,
+          "sha256": "20DFEB2FC95723D5F4B0E875C442DBF9890E8F39B990CEC59680A14EBCA0D37E"
+        },
+        {
+          "path": "5.log",
+          "bytes": 2033,
+          "sha256": "26904DE03799813A8304D1D41176451BA6B348A5AF8316D15DAFDF3DF2BE60D7"
+        },
+        {
+          "path": "6.discovery.log",
+          "bytes": 1949,
+          "sha256": "E7F7E6AD6F2027FA9C195AFB62B29525ADAF95AB5D67AA6C8B3D28910EB53C22"
+        },
+        {
+          "path": "6.log",
+          "bytes": 2049,
+          "sha256": "6BD881E7FAB19417FC6BA03B530CEBFFB73731E373E95643354B3EF744DA8E69"
+        },
+        {
+          "path": "7.discovery.log",
+          "bytes": 1902,
+          "sha256": "F2769A1D44A02B259A2DE3BC52FC8466A0FD16D1C9839CF260C50A50A6A793C7"
+        },
+        {
+          "path": "7.log",
+          "bytes": 2002,
+          "sha256": "768F6D2551200E9529218A78377F9D5A6231BC9E29E21D417E851F9A85F896A0"
+        },
+        {
+          "path": "8.discovery.log",
+          "bytes": 1947,
+          "sha256": "18A762DEA8ACFA228934E141C74DD3F347DB3F69BB0339EA818920C1F1B4605C"
+        },
+        {
+          "path": "8.log",
+          "bytes": 2047,
+          "sha256": "7A40F86D7C41BF2E1B6872109D9092DDA2ACB9B59C322A605ED21F2AD6A41494"
+        },
+        {
+          "path": "9.discovery.log",
+          "bytes": 1947,
+          "sha256": "391622B5EDB8AFF3F73672A110F322D9182E7B26E7BA098D160C42ECF4853B6E"
+        },
+        {
+          "path": "9.log",
+          "bytes": 2047,
+          "sha256": "E22F8AC508E3824BAD459DDD0805E5179369EA3FE2B3D65313C25D0E36EC58AA"
+        },
+        {
+          "path": "SHA256SUMS.txt",
+          "bytes": 1783,
+          "sha256": "98C584D4CDE226085F72FEA8A2BEB23AD8FD18314F0113863F77D9C11374E2D3"
+        },
+        {
+          "path": "selection.txt",
+          "bytes": 1029,
+          "sha256": "B18B01F183BD00021A719612C663493436B3443B9ACB8785CD12A564C8F75AF8"
+        },
+        {
+          "path": "final-counts.txt",
+          "bytes": 22,
+          "sha256": "6792B68A75C53EC39B28D1B19F0BD554E431289159D059B96B88B226FC06915E"
+        },
+        {
+          "path": "source-head.txt",
+          "bytes": 41,
+          "sha256": "F0358812797558EF96D631A979C5DB66589083683F44C7F016DE4E8BDC4312F3"
+        },
+        {
+          "path": "source-paths.txt",
+          "bytes": 595,
+          "sha256": "A322F6FACFAE4124463F1E2B0E78DCF5A9D4AD8FB12748C7B7D31CBFBE560B12"
+        }
+      ]
+    },
+    {
+      "id": 11666814765,
+      "name": "generated-cli-reference",
+      "sha256": "634666512C6467D7AAD19E16199C83CABE29A9DBEE5872697DB47186B1C51328",
+      "entries": [
+        {
+          "path": "SHA256SUMS",
+          "bytes": 82,
+          "sha256": "CBCE09375C592AC996B58011DE71A38438E96F3622F76855FB8A110552D6D76E"
+        },
+        {
+          "path": "cli-commands.md",
+          "bytes": 268834,
+          "sha256": "8E679EE7FF84A1DEDA4D50AB015A3F03205A5F889980E51E423A95B0094E8AFD"
+        },
+        {
+          "path": "source-head.txt",
+          "bytes": 41,
+          "sha256": "F0358812797558EF96D631A979C5DB66589083683F44C7F016DE4E8BDC4312F3"
+        }
+      ]
+    }
+  ],
+  "generatedDocsByteEqual": true,
+  "workspaceClippy": "success",
+  "proofPath": "work/gold-20260906/wave2542-core-audio-clippy/admission-38043771669/ROOT_ADMISSION.json",
+  "proofSha256": "EF2D5C36E4F60C13914F29B65A2E97ECC4325B3508499BD24460E08A89BC97C7",
+  "localExecutableValidationRan": false,
+  "fullWindowsValidation": "pending",
+  "fullCrossPlatformValidation": "pending",
+  "nativeDeviceReleaseGoldAccepted": false
+}

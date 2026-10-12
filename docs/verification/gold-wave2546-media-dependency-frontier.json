@@ -1,0 +1,55 @@
+{
+  "schema": "neoth.gold.wave2546.media-dependency-frontier.v1",
+  "base": "70f6a40f0361a28332b2c1ab0d970ca991f0030e",
+  "alerts": [
+    44,
+    45,
+    46,
+    47,
+    48
+  ],
+  "sharp": {
+    "before": "0.35.4",
+    "target": "0.35.5",
+    "advisory": "GHSA-wq5f-xc86-pv6w",
+    "requiredRuntimeLibrsvg": ">=2.63.2"
+  },
+  "musicMetadata": {
+    "before": "11.13.0",
+    "target": "11.16.0",
+    "override": "baileys>music-metadata",
+    "advisories": [
+      "GHSA-8j4c-6x6g-rq3j",
+      "GHSA-5gfj-9q3v-qfp3",
+      "GHSA-f94x-6692-553q"
+    ]
+  },
+  "baileysUnchanged": "7.0.0-rc13",
+  "references": [
+    "https://pnpm.io/10.x/settings#overrides",
+    "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
+    "https://github.com/advisories/GHSA-f94x-6692-553q",
+    "https://registry.npmjs.org/sharp/0.35.5",
+    "https://registry.npmjs.org/music-metadata/11.16.0"
+  ],
+  "change": "Add a manual read-only-permission hosted candidate workflow; product package and lock files are not updated by this batch.",
+  "workflow": ".github/workflows/baileys-media-dependency-candidate.yml",
+  "workflowSha256": "0F85919C7C273F4B889E4FFE22197FA8A355244773F0518EADE95D8BF287F2BC",
+  "requiredValidation": [
+    "Original producer/source custody",
+    "Pinned Node22.16.0 and pnpm10.32.1",
+    "Frozen installation with unchanged generated candidate files",
+    "All bridge tests; no skips/fail/cancel/todo",
+    "Actual Sharp direct and Baileys peer0.35.5",
+    "Actual librsvg>=2.63.2 SVG decode and PNG roundtrip",
+    "Actual Baileys music-metadata11.16.0 WAV parse",
+    "Production pnpm audit success",
+    "Root review of original archive and complete dependency delta before product import"
+  ],
+  "candidateOnly": true,
+  "dependencyDiffAcceptance": "Root must inspect the original hosted candidate and reject unrelated package changes before import.",
+  "localExecutableValidationRan": false,
+  "hostedValidation": "pending",
+  "alertsResolved": false,
+  "deviceReleaseGoldAccepted": false
+}
