@@ -24,6 +24,11 @@ class CompanionController extends ChangeNotifier {
   Future<void>? _bridgePreparation;
   EnrollmentAccepted? _enrollment;
   CompanionStatus? status;
+  CompanionCapabilityInventory? capabilityInventory;
+  bool capabilityInventoryPending = false;
+  bool capabilityInventoryCancelRequested = false;
+  int _inventoryEpoch = 0;
+  String? capabilityInventoryMessage;
   CompanionChatTerminal? chatTerminal;
   CompanionChatActivitySnapshot? chatActivity;
   CompanionChatStreamSnapshot? chatPreview;
@@ -86,7 +91,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> pair(String rawInvite, String label) async {
-    if (_disposed || _forgetting || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
     // A retained active enrollment must be deliberately cleared by the person
     // holding the device; a pasted invite cannot silently replace it.
     if (_enrollment != null) {
@@ -116,7 +121,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    if (_disposed || _forgetting || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
     final enrollment = _enrollment;
     if (enrollment == null) {
       _set(CompanionViewState.unpaired);
@@ -142,6 +147,58 @@ class CompanionController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshCapabilityInventory() async {
+    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    final enrollment = _enrollment;
+    if (enrollment == null) { _set(CompanionViewState.unpaired); return; }
+    final epoch = _authorityEpoch;
+    capabilityInventory = null;
+    capabilityInventoryMessage = null;
+    final bridge = _bridge;
+    if (bridge is! NativeBridgeWithCapabilityInventory || !bridge.capabilityInventorySupported) {
+      capabilityInventoryMessage = 'Device access checks are unavailable in this app version.';
+      _notify();
+      return;
+    }
+    ++_inventoryEpoch;
+    capabilityInventoryCancelRequested = false;
+    capabilityInventoryPending = true;
+    _notify();
+    try {
+      final result = await bridge.capabilityInventory(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId,
+        jsonEncode({'inventory_schema_version': 1, 'revision': enrollment.revision, 'expected_scope': enrollment.grantedScope}));
+      if (!_ownsAuthority(epoch)) return;
+      if (result.kind == NativeOperationResult.ok && result.publicJson != null) {
+        final inventory = CompanionCapabilityInventory.fromBridgeJson(result.publicJson!);
+        if (inventory.deviceId != enrollment.deviceId || inventory.revision != enrollment.revision
+            || inventory.effectiveScope != enrollment.grantedScope
+            || _enrollment?.deviceId != enrollment.deviceId || _enrollment?.revision != enrollment.revision) {
+          throw const FormatException('inventory enrollment mismatch');
+        }
+        capabilityInventory = inventory;
+      } else {
+        capabilityInventoryMessage = result.kind == NativeOperationResult.cancelled
+            ? 'Device access check cancelled.' : result.publicJson?['code'] == 'capability_inventory_unavailable'
+            ? 'This NEOTH daemon does not support device access checks.' : 'Device access could not be confirmed.';
+        if (result.kind == NativeOperationResult.denied) _setForResult(result);
+      }
+    } on FormatException {
+      if (_ownsAuthority(epoch)) capabilityInventoryMessage = 'Device access response could not be verified.';
+    } on StateError {
+      if (_ownsAuthority(epoch)) capabilityInventoryMessage = 'Device access is unavailable while another operation is active.';
+    } finally {
+      if (_ownsAuthority(epoch)) { capabilityInventoryPending = false; capabilityInventoryCancelRequested = false; _notify(); }
+    }
+  }
+  Future<void> cancelCapabilityInventory() async {
+    if (_disposed || !capabilityInventoryPending || capabilityInventoryCancelRequested) return;
+    final epoch = _inventoryEpoch;
+    capabilityInventoryCancelRequested = true;
+    _notify();
+    await Future<void>.delayed(Duration.zero);
+    if (_disposed || epoch != _inventoryEpoch || !capabilityInventoryPending || !capabilityInventoryCancelRequested) return;
+    await _bridge?.cancelActiveChat();
+  }
   bool get canSendChat => _enrollment?.grantedScope == companionChatSendScope;
   bool get canRefreshStatus => _enrollment?.grantedScope == companionStatusReadScope;
   bool get canStopWaiting => chatPending && !chatCancelRequested;
@@ -151,7 +208,7 @@ class CompanionController extends ChangeNotifier {
   /// before the bridge worker starts; every remote terminal is rendered from
   /// its typed public outcome and is never retried here.
   Future<void> sendChat(String message) async {
-    if (_disposed || _forgetting || chatPending) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || state == CompanionViewState.pairing || chatPending) return;
     final enrollment = _enrollment;
     if (enrollment == null || !canSendChat) {
       chatLocalMessage = 'This phone does not have chat permission. Pair again with a chat invite.';
@@ -231,7 +288,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> selectConversation(String? conversationId) async {
-    if (_disposed || _forgetting || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || state == CompanionViewState.pairing || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
     final enrollment = _enrollment!;
     final current = _conversation ?? ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision);
     final next = ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision,
@@ -251,7 +308,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   void setConversationIncognito(bool value) {
-    if (_disposed || _forgetting || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || state == CompanionViewState.pairing || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
     conversationIncognito = value; conversationHistory = null; chatTerminal = null;
     conversationPendingMessage = null; chatLocalMessage = null; _notify();
   }
@@ -322,7 +379,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> recoverConversation() async {
-    if (_disposed || _forgetting || chatPending || !conversationsAvailable) return;
+    if (_disposed || _forgetting || capabilityInventoryPending || state == CompanionViewState.pairing || chatPending || !conversationsAvailable) return;
     if (conversationIncognito && !conversationNeedsRecovery) return;
     final enrollment = _enrollment!;
     final current = _conversation;
@@ -401,6 +458,8 @@ class CompanionController extends ChangeNotifier {
     ++_authorityEpoch;
     _enrollment = null;
     status = null;
+    ++_inventoryEpoch;
+    capabilityInventory = null; capabilityInventoryPending = false; capabilityInventoryCancelRequested = false; capabilityInventoryMessage = null;
     // Invalidate before the awaited store mutation: a prior operation is still
     // owned and drained by native, but may not mutate this cleared session.
     ++_chatEpoch;
@@ -458,6 +517,7 @@ class CompanionController extends ChangeNotifier {
 
   void _set(CompanionViewState next) {
     if (_disposed) return;
+    if (next == CompanionViewState.denied || next == CompanionViewState.revoked || next == CompanionViewState.unpaired) capabilityInventory = null;
     state = next;
     notifyListeners();
   }

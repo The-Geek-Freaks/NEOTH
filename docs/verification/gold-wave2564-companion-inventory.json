@@ -1,0 +1,104 @@
+{
+  "schema": "neoth.gold-wave2564.v1",
+  "date": "2026-10-12",
+  "base": "53eff2f6e98366e5310d11fc4100ac065508fc36",
+  "scope": "Explicit grant inventory over existing paired companion authority and native operation owner",
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/daemon/companion_protocol.rs",
+      "candidateSha256": "13F161057DC82812693C51361D781F4F546D3F2A37B24F381D93FA36C80631C2",
+      "diffBytes": 14009
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_authority.rs",
+      "candidateSha256": "0926274B1EE06BBAB25C8A1A0EFA02C802CDB086B6749B56CA8DD1EB76C4DF3E",
+      "diffBytes": 12194
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "candidateSha256": "845EE67EE6313442C855E8FCADA7D22F8EA8F17DC216EF6212F611EB2BA853E4",
+      "diffBytes": 6828
+    },
+    {
+      "path": "bridges/companion-native/src/lib.rs",
+      "candidateSha256": "BB599F7D1C1AC649CDED1D0BE951D0A3E73D4B5E988060E976E4D29D5A44C254",
+      "diffBytes": 18355
+    },
+    {
+      "path": "bridges/companion-native/include/neoth_companion_bridge.h",
+      "candidateSha256": "0490A1C113BAA7F3D114A7AFB63500377D130E52D6212FC26ED471188227E6F0",
+      "diffBytes": 1903
+    },
+    {
+      "path": "apps/neoth_companion/lib/native_bridge.dart",
+      "candidateSha256": "669814966047BC61535D90956F1D235DB2C604254CAF1F6172A2DDC0F675E13B",
+      "diffBytes": 4844
+    },
+    {
+      "path": "apps/neoth_companion/lib/companion_controller.dart",
+      "candidateSha256": "960D7C14E6F3DF7BA908A2C059075902D78EBB37E4D1C6EF5F01D5112A91F16F",
+      "diffBytes": 8786
+    },
+    {
+      "path": "apps/neoth_companion/lib/main.dart",
+      "candidateSha256": "0921FB9A39E057202F6EF32665CCA71DC182B564072C6DDF610D3FC038D5B1C9",
+      "diffBytes": 7355
+    },
+    {
+      "path": "apps/neoth_companion/lib/models.dart",
+      "candidateSha256": "7C719429B095C0F303B7766D9325CE1F7B37AFD06A0B050EF347DC0F16E37B92",
+      "diffBytes": 2873
+    },
+    {
+      "path": "apps/neoth_companion/test/companion_controller_test.dart",
+      "candidateSha256": "B007C214DDFC08B790929D0698E3AA666B21D859BB302A0FAF6067BCAAF626AD",
+      "diffBytes": 9767
+    },
+    {
+      "path": "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
+      "candidateSha256": "361383967797A72A9B542B08F5457269DCA72225ABE4783AD952B393C69BD1B3",
+      "diffBytes": 2237
+    },
+    {
+      "path": ".github/scripts/mobile/build-host-interop-bridge.sh",
+      "candidateSha256": "44C0BC5AE789C9F98F05AF7C3807229A9E8B1B761D034B571050F00C195E86B6",
+      "diffBytes": 3893
+    },
+    {
+      "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
+      "candidateSha256": "B51BB42D592B447F8D1C054F1D747A11FD6A60742F04843CE72B29B9DE78981E",
+      "diffBytes": 1156
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "candidateSha256": "B2C462AEDE6BFB3CCA0457BA94CE1FEB59A2D3EDDDF9D03D829BE8D2D277253C",
+      "diffBytes": 7881
+    },
+    {
+      "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "candidateSha256": "CEF92C8D6E0A62524A20F53AADF48FC5ADD5A956F09A7898B7214F1C81A1263D",
+      "diffBytes": 3557
+    },
+    {
+      "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+      "candidateSha256": "33C7D0C65C6379760FB729669CDFD5D860D468DC3C813163A8D163930952A15C",
+      "diffBytes": 1254
+    },
+    {
+      "path": "bridges/companion-native/ABI_CONTRACT.md",
+      "candidateSha256": "DF04BB43383B86B1EC5509BA6FFA6A2E052BEE7B7A8D287BEEF534B0419246AC",
+      "diffBytes": 2413
+    }
+  ],
+  "newRustCases": 9,
+  "newPortableCases": 6,
+  "newFlutterCases": 7,
+  "interopCoreCases": 103,
+  "interopBridgeCases": 24,
+  "review": "Prompt review of supplied authority, compatibility, revoke, cancellation and successor-isolation code",
+  "hosted": "pending",
+  "localExecutableValidationRan": false,
+  "physicalDeviceAcceptance": "open",
+  "completeJarvisAdopt01": "open",
+  "goldCheckboxesClosed": 0
+}

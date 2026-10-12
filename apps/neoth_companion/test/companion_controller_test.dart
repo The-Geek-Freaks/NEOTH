@@ -10,6 +10,7 @@ import 'package:neoth_companion/secure_store.dart';
 import 'package:neoth_companion/conversation_models.dart';
 
 void main() {
+  capabilityInventoryRegressionCases();
   activityModelRegressionCases();
   streamRegressionCases();
   conversationRegressionCases();
@@ -788,5 +789,124 @@ void conversationRegressionCases() {
     expect(() => ConversationHistory.fromJson({...value, 'turns': [{'role': 'agent', 'text': null, 'truncated': false}]}), throwsFormatException);
     expect(() => ConversationHistory.fromJson({...value, 'turns': [{'role': 'operator', 'text': List.filled(16384, '\u0001').join(), 'truncated': false}]}), throwsFormatException);
     expect(() => ConversationHistory.fromJson({...value, 'state': 'unavailable'}), throwsFormatException);
+  });
+}
+
+class _InventoryBridge extends _FakeBridge implements NativeBridgeWithCapabilityInventory {
+  _InventoryBridge({this.inventoryResult, this.inventoryFuture, this.supported = true, Future<NativeBridgeResult>? heldChat}) : super(chatFuture: heldChat);
+  final NativeBridgeResult? inventoryResult;
+  Future<NativeBridgeResult>? inventoryFuture;
+  final bool supported;
+  int inventoryCalls = 0;
+  Map<String, Object?>? command;
+  @override
+  bool get capabilityInventorySupported => supported;
+  @override
+  Future<NativeBridgeResult> capabilityInventory(String descriptorJson, String deviceId, String commandJson) async {
+    inventoryCalls++;
+    command = (jsonDecode(commandJson) as Map).cast<String, Object?>();
+    return inventoryFuture ?? Future.value(inventoryResult ?? const NativeBridgeResult(NativeOperationResult.failed));
+  }
+}
+
+Map<String, Object?> _inventoryJson(EnrollmentAccepted enrollment) => {
+  'state': 'capability_inventory', 'inventory_schema_version': 1,
+  'request_id': '7fb8ae0f-9e36-4a64-83e2-972dff9af881', 'device_id': enrollment.deviceId,
+  'revision': enrollment.revision, 'effective_scope': enrollment.grantedScope,
+  'listener_generation': 2, 'daemon_boot_id': 'boot', 'observed_at_unix': 1700000000,
+};
+
+void capabilityInventoryRegressionCases() {
+  test('stop device access check signals once and retains owner until terminal', () async {
+    final held = Completer<NativeBridgeResult>(); final bridge = _InventoryBridge(inventoryFuture: held.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: _accepted()), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore(); final checking = controller.refreshCapabilityInventory();
+    await controller.cancelCapabilityInventory(); await controller.cancelCapabilityInventory();
+    expect(bridge.cancelActiveChatCalls, 1); expect(controller.capabilityInventoryPending, isTrue);
+    held.complete(const NativeBridgeResult(NativeOperationResult.cancelled)); await checking;
+    expect(controller.capabilityInventoryPending, isFalse); expect(controller.capabilityInventory, isNull);
+    expect(controller.capabilityInventoryMessage, 'Device access check cancelled.'); controller.dispose();
+  });
+  test('delayed stop from a completed check cannot cancel its replacement', () async {
+    final first = Completer<NativeBridgeResult>(); final second = Completer<NativeBridgeResult>();
+    final enrollment = _accepted(); final bridge = _InventoryBridge(inventoryFuture: first.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: enrollment), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    final checking = controller.refreshCapabilityInventory();
+    final stopping = controller.cancelCapabilityInventory();
+    first.complete(NativeBridgeResult(NativeOperationResult.ok, _inventoryJson(enrollment)));
+    await checking;
+    bridge.inventoryFuture = second.future;
+    final replacement = controller.refreshCapabilityInventory();
+    await stopping;
+    expect(bridge.inventoryCalls, 2); expect(bridge.cancelActiveChatCalls, 0);
+    expect(controller.capabilityInventoryPending, isTrue);
+    expect(controller.capabilityInventoryCancelRequested, isFalse);
+    second.complete(NativeBridgeResult(NativeOperationResult.ok, _inventoryJson(enrollment)));
+    await replacement; expect(controller.capabilityInventory?.deviceId, enrollment.deviceId);
+    controller.dispose();
+  });
+  test('device access checks both disjoint grants without claiming status readiness', () async {
+    for (final enrollment in [_accepted(), _chatAccepted()]) {
+      final bridge = _InventoryBridge(inventoryResult: NativeBridgeResult(NativeOperationResult.ok, _inventoryJson(enrollment)));
+      final controller = CompanionController(store: _MemoryStore(enrollment: enrollment), bridgeFactory: (_) => bridge);
+      await controller.prepareBridge(); await controller.restore(); await controller.refreshCapabilityInventory();
+      expect(controller.capabilityInventory?.effectiveScope, enrollment.grantedScope);
+      expect(bridge.command, {'inventory_schema_version': 1, 'revision': enrollment.revision, 'expected_scope': enrollment.grantedScope});
+      expect(bridge.inventoryCalls, 1); expect(bridge.chatCalls, 0); expect(bridge.reconnectCalls, 0);
+      expect(controller.state, CompanionViewState.offline); expect(controller.status, isNull);
+      controller.dispose();
+    }
+  });
+  test('device access rejects foreign device revision scope and malformed time', () async {
+    for (final change in <Map<String, Object?>>[
+      {'device_id': '7fb8ae0f-9e36-4a64-83e2-972dff9af882'}, {'revision': 99},
+      {'effective_scope': 'companion.chat.send'}, {'observed_at_unix': -1},
+      {'observed_at_unix': 9223372036854775807}, {'extra': true},
+      {'request_id': '00000000-0000-0000-0000-000000000000'},
+    ]) {
+      final enrollment = _accepted();
+      final bridge = _InventoryBridge(inventoryResult: NativeBridgeResult(NativeOperationResult.ok, {..._inventoryJson(enrollment), ...change}));
+      final controller = CompanionController(store: _MemoryStore(enrollment: enrollment), bridgeFactory: (_) => bridge);
+      await controller.prepareBridge(); await controller.restore(); await controller.refreshCapabilityInventory();
+      expect(controller.capabilityInventory, isNull); expect(controller.capabilityInventoryMessage, isNotNull);
+      controller.dispose();
+    }
+  });
+  test('forget discards late inventory and releases the pending UI state', () async {
+    final held = Completer<NativeBridgeResult>();
+    final enrollment = _accepted(); final bridge = _InventoryBridge(inventoryFuture: held.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: enrollment), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    final checking = controller.refreshCapabilityInventory();
+    expect(controller.capabilityInventoryPending, isTrue);
+    await controller.forgetLocalEnrollment();
+    held.complete(NativeBridgeResult(NativeOperationResult.ok, _inventoryJson(enrollment))); await checking;
+    expect(controller.capabilityInventory, isNull); expect(controller.capabilityInventoryPending, isFalse);
+    expect(controller.state, CompanionViewState.unpaired); expect(bridge.cancelActiveChatCalls, 1);
+    controller.dispose();
+  });
+  test('inventory serializes chat and repeated checks through the existing bridge owner', () async {
+    final held = Completer<NativeBridgeResult>(); final enrollment = _chatAccepted();
+    final bridge = _InventoryBridge(inventoryFuture: held.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: enrollment), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    final checking = controller.refreshCapabilityInventory();
+    await controller.refreshCapabilityInventory(); await controller.sendChat('not during inventory'); await controller.refresh();
+    expect(bridge.inventoryCalls, 1); expect(bridge.chatCalls, 0); expect(bridge.reconnectCalls, 0);
+    held.complete(NativeBridgeResult(NativeOperationResult.ok, _inventoryJson(enrollment))); await checking;
+    controller.dispose();
+  });
+  test('inventory cannot start during an existing chat and missing ABI never falls back', () async {
+    final held = Completer<NativeBridgeResult>(); final bridge = _InventoryBridge(heldChat: held.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: _chatAccepted()), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore(); final chatting = controller.sendChat('hello');
+    await controller.refreshCapabilityInventory(); expect(bridge.inventoryCalls, 0);
+    held.complete(const NativeBridgeResult(NativeOperationResult.cancelled)); await chatting; controller.dispose();
+    final oldBridge = _FakeBridge();
+    final oldController = CompanionController(store: _MemoryStore(enrollment: _accepted()), bridgeFactory: (_) => oldBridge);
+    await oldController.prepareBridge(); await oldController.restore(); await oldController.refreshCapabilityInventory();
+    expect(oldController.capabilityInventory, isNull); expect(oldController.capabilityInventoryMessage, isNotNull);
+    expect(oldBridge.chatCalls, 0); expect(oldBridge.reconnectCalls, 0); oldController.dispose();
   });
 }

@@ -42,6 +42,10 @@ abstract interface class NativeBridgeWithConversation implements NativeBridgeWit
       void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream);
 }
 
+abstract interface class NativeBridgeWithCapabilityInventory implements NativeBridge {
+  bool get capabilityInventorySupported;
+  Future<NativeBridgeResult> capabilityInventory(String descriptorJson, String deviceId, String commandJson);
+}
 final class _Bridge extends Opaque {}
 final class _Operation extends Opaque {}
 
@@ -67,7 +71,7 @@ typedef _OperationVoidDart = void Function(Pointer<_Operation>);
 /// Owns one Rust bridge allocation and exactly one in-flight operation.  The
 /// opaque native bridge derives the signing and Noise identities from the
 /// protected seed; neither private material nor invite data crosses back.
-class FfiNativeBridge implements NativeBridgeWithConversation {
+class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithCapabilityInventory {
   FfiNativeBridge._(DynamicLibrary library, Uint8List seed)
       : _bridgeFree = library.lookupFunction<_BridgeFreeNative, _BridgeFreeDart>('neoth_companion_bridge_free'),
         _pairStart = library.lookupFunction<_PairStartNative, _PairStartDart>('neoth_companion_pair_start'),
@@ -76,6 +80,7 @@ class FfiNativeBridge implements NativeBridgeWithConversation {
         _chatStartV2 = _lookupChatStartV2(library),
         _chatStartV3 = _lookupChatStartV3(library),
         _conversationStart = _lookupConversationStart(library),
+        _inventoryStart = _lookupInventoryStart(library),
         _conversationPoll = _lookupConversationPoll(library),
         _poll = library.lookupFunction<_PollNative, _PollDart>('neoth_companion_operation_poll'),
         _pollV2 = _lookupPollV2(library),
@@ -99,6 +104,7 @@ class FfiNativeBridge implements NativeBridgeWithConversation {
   final _ChatStartV2Dart? _chatStartV2;
   final _ChatStartV2Dart? _chatStartV3;
   final _ChatStartDart? _conversationStart;
+  final _ChatStartDart? _inventoryStart;
   final _PollDart? _conversationPoll;
   final _PollDart _poll;
   final _PollV2Dart? _pollV2;
@@ -193,6 +199,20 @@ class FfiNativeBridge implements NativeBridgeWithConversation {
         maxResultBytes: 184 * 1024);
   }
 
+  @override
+  bool get capabilityInventorySupported => _inventoryStart != null;
+
+  @override
+  Future<NativeBridgeResult> capabilityInventory(String descriptorJson, String deviceId, String commandJson) {
+    final start = _inventoryStart;
+    if (start == null || !isBoundedReconnectInput(descriptorJson, deviceId)
+        || commandJson.isEmpty || utf8.encode(commandJson).length > 512) {
+      return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
+    }
+    return _startThree((descriptor, descriptorLength, id, idLength, command, commandLength) =>
+        start(_bridge, descriptor, descriptorLength, id, idLength, command, commandLength),
+        descriptorJson, deviceId, commandJson);
+  }
   Future<NativeBridgeResult> _start(
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int) invoke, String first, String second) async {
     _requireLive();
@@ -398,3 +418,8 @@ _ChatStartV2Dart? _lookupChatStartV3(DynamicLibrary library) { try { return libr
 _ChatStartDart? _lookupConversationStart(DynamicLibrary library) { try { return library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_conversation_start_v1'); } on ArgumentError { return null; } }
 _PollDart? _lookupConversationPoll(DynamicLibrary library) { try { return library.lookupFunction<_PollNative, _PollDart>('neoth_companion_conversation_poll_v1'); } on ArgumentError { return null; } }
 _PollV2Dart? _lookupPollV3(DynamicLibrary library) { try { return library.lookupFunction<_PollV2Native, _PollV2Dart>('neoth_companion_operation_poll_v3'); } on ArgumentError { return null; } }
+
+_ChatStartDart? _lookupInventoryStart(DynamicLibrary library) {
+  try { return library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_capability_inventory_start_v1'); }
+  on ArgumentError { return null; }
+}

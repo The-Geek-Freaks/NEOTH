@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'companion_controller.dart';
+import 'bridge_input.dart';
 import 'companion_activity_presentation.dart';
 import 'companion_terminal_presentation.dart';
 import 'companion_theme.dart';
@@ -142,10 +143,37 @@ class _CompanionHomeState extends State<CompanionHome> {
                         : 'This phone has the paired read-only status permission.',
                   ),
                   const SizedBox(height: 12),
+                  Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Device access', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      if (widget.controller.capabilityInventory case final inventory?) ...[
+                        Text(inventory.effectiveScope == companionChatSendScope ? 'Last confirmed: chat access' : 'Last confirmed: read-only status access'),
+                        Text('Device ${inventory.deviceId}'),
+                        Text('Revision ${inventory.revision} · ${DateTime.fromMillisecondsSinceEpoch(inventory.observedAtUnix * 1000, isUtc: true).toIso8601String()}'),
+                      ] else const Text('Check the permission currently granted by NEOTH.'),
+                      const Text('This check does not access the microphone, camera or speakers.'),
+                      if (widget.controller.capabilityInventoryMessage case final message?) Text(message),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: widget.controller.capabilityInventoryPending || widget.controller.chatPending || state == CompanionViewState.pairing
+                            ? null : () => unawaited(widget.controller.refreshCapabilityInventory()),
+                        icon: const Icon(Icons.verified_user_outlined),
+                        label: Text(widget.controller.capabilityInventoryPending ? 'Checking device access…' : 'Check device access'),
+                      ),
+                      if (widget.controller.capabilityInventoryPending)
+                        TextButton(
+                          onPressed: widget.controller.capabilityInventoryCancelRequested ? null
+                              : () => unawaited(widget.controller.cancelCapabilityInventory()),
+                          child: Text(widget.controller.capabilityInventoryCancelRequested ? 'Stopping check…' : 'Stop check'),
+                        ),
+                    ],
+                  ))),
                   if (widget.controller.canRefreshStatus) ...[
                     if (widget.controller.status case final snapshot?) _StatusCard(snapshot: snapshot),
                     FilledButton.icon(
-                      onPressed: state == CompanionViewState.pairing ? null : () => unawaited(widget.controller.refresh()),
+                      onPressed: state == CompanionViewState.pairing || widget.controller.capabilityInventoryPending ? null : () => unawaited(widget.controller.refresh()),
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh status'),
                     ),
@@ -164,7 +192,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                           for (var index = 0; index < widget.controller.conversationIds.length; index++)
                             DropdownMenuItem(value: widget.controller.conversationIds[index], child: Text('Conversation ${index + 1}')),
                         ],
-                        onChanged: widget.controller.chatPending || widget.controller.conversationNeedsRecovery || widget.controller.conversationIncognito
+                        onChanged: widget.controller.chatPending || widget.controller.capabilityInventoryPending || widget.controller.conversationNeedsRecovery || widget.controller.conversationIncognito
                             ? null : (value) => unawaited(widget.controller.selectConversation(value == 'new' ? null : value)),
                       ),
                       SwitchListTile.adaptive(
@@ -172,11 +200,11 @@ class _CompanionHomeState extends State<CompanionHome> {
                         title: const Text('Incognito'),
                         subtitle: const Text('Use no saved conversation context and save no conversation history.'),
                         value: widget.controller.conversationIncognito,
-                        onChanged: widget.controller.chatPending || widget.controller.conversationNeedsRecovery
+                        onChanged: widget.controller.chatPending || widget.controller.capabilityInventoryPending || widget.controller.conversationNeedsRecovery
                             ? null : widget.controller.setConversationIncognito,
                       ),
                       OutlinedButton.icon(
-                        onPressed: widget.controller.chatPending
+                        onPressed: widget.controller.chatPending || widget.controller.capabilityInventoryPending
                             || (!widget.controller.conversationNeedsRecovery && (widget.controller.selectedConversationId == null || widget.controller.conversationIncognito))
                             ? null : () => unawaited(widget.controller.recoverConversation()),
                         icon: const Icon(Icons.history),
@@ -220,7 +248,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                       ),
                     TextField(
                       controller: _chat,
-                      enabled: !widget.controller.chatPending && !widget.controller.conversationNeedsRecovery,
+                      enabled: !widget.controller.chatPending && !widget.controller.capabilityInventoryPending && !widget.controller.conversationNeedsRecovery,
                       minLines: 2,
                       maxLines: 5,
                       maxLength: 640,
@@ -230,7 +258,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                       ),
                     ),
                     FilledButton.icon(
-                      onPressed: widget.controller.chatPending || widget.controller.conversationNeedsRecovery
+                      onPressed: widget.controller.chatPending || widget.controller.capabilityInventoryPending || widget.controller.conversationNeedsRecovery
                           ? null
                           : () async {
                               await widget.controller.sendChat(_chat.text);

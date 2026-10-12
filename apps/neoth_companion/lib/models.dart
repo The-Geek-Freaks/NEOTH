@@ -263,3 +263,39 @@ class CompanionChatActivitySnapshot {
     return CompanionChatActivitySnapshot(requestId: _uuid(value['request_id']), maxEventSeq: maximum, incomplete: incomplete, events: List.unmodifiable(events));
   }
 }
+
+/// A request-bound server observation of the grant, not hardware availability.
+class CompanionCapabilityInventory {
+  const CompanionCapabilityInventory({required this.requestId, required this.deviceId,
+    required this.revision, required this.effectiveScope, required this.listenerGeneration,
+    required this.daemonBootId, required this.observedAtUnix});
+  final String requestId;
+  final String deviceId;
+  final int revision;
+  final String effectiveScope;
+  final int listenerGeneration;
+  final String daemonBootId;
+  final int observedAtUnix;
+
+  factory CompanionCapabilityInventory.fromBridgeJson(Map<String, Object?> json) {
+    const keys = {'state', 'inventory_schema_version', 'request_id', 'device_id', 'revision',
+      'effective_scope', 'listener_generation', 'daemon_boot_id', 'observed_at_unix'};
+    final scope = json['effective_scope'];
+    final observed = json['observed_at_unix'];
+    final boot = json['daemon_boot_id'];
+    if (json.length != keys.length || !keys.containsAll(json.keys)
+        || json['state'] != 'capability_inventory' || json['inventory_schema_version'] != 1
+        || (scope != companionStatusReadScope && scope != companionChatSendScope)
+        || observed is! int || observed < 0 || observed > 253402300799 || boot is! String || boot.isEmpty
+        || utf8.encode(boot).length > 128) {
+      throw const FormatException('invalid capability inventory');
+    }
+    final requestId = _uuid(json['request_id']);
+    final deviceId = _uuid(json['device_id']);
+    const nilId = '00000000-0000-0000-0000-000000000000';
+    if (requestId == nilId || deviceId == nilId) throw const FormatException('invalid inventory identity');
+    return CompanionCapabilityInventory(requestId: requestId, deviceId: deviceId,
+      revision: _positiveInt(json['revision']), effectiveScope: scope as String,
+      listenerGeneration: _positiveInt(json['listener_generation']), daemonBootId: boot, observedAtUnix: observed);
+  }
+}

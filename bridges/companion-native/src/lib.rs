@@ -25,6 +25,8 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use companion_protocol::{
+    decode_chat_challenge_with_capability_inventory_advertisement, decode_status_challenge_with_capability_inventory_advertisement,
+    CompanionCapabilityInventory, CompanionCapabilityInventoryRequest,
     decode_chat_challenge_with_conversation_advertisement, decode_server_frame, encode_frame,
     CompanionConversationAdmission, CompanionConversationHistory, CompanionConversationReadRequest,
     CompanionConversationReadSelection, CompanionConversationSelection, CompanionHistoryState,
@@ -121,6 +123,10 @@ enum PublicResult {
         readiness: String,
         observed_at_unix: i64,
         active_turns: Option<Vec<PublicTurn>>,
+    },
+    CapabilityInventory {
+        inventory_schema_version: u8, request_id: String, device_id: String, revision: u64,
+        effective_scope: &'static str, listener_generation: u64, daemon_boot_id: String, observed_at_unix: i64,
     },
     Denied { code: &'static str },
     Failed { code: &'static str },
@@ -273,7 +279,7 @@ enum PollV2Delivery {
 
 fn result_code(result: &PublicResult) -> i32 {
     match result {
-        PublicResult::Paired { .. } | PublicResult::Status { .. } => 1,
+        PublicResult::Paired { .. } | PublicResult::Status { .. } | PublicResult::CapabilityInventory { .. } => 1,
         PublicResult::Chat(value) => match value.outcome { "accepted" => 1, "denied" => 2, _ => 3 },
         PublicResult::Conversation(_) => 1,
         PublicResult::Denied { .. } => 2,
@@ -306,6 +312,38 @@ struct PairInvite {
     requested_scope: CompanionScope,
 }
 
+const MAX_CAPABILITY_INVENTORY_COMMAND_BYTES: usize = 512;
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilityInventoryCommand {
+    inventory_schema_version: u8,
+    revision: u64,
+    #[serde(deserialize_with = "inventory_scope_from_json")]
+    expected_scope: CompanionScope,
+}
+
+fn inventory_scope_from_json<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<CompanionScope, D::Error> {
+    match String::deserialize(deserializer)?.as_str() {
+        "companion.status.read" => Ok(CompanionScope::StatusRead),
+        "companion.chat.send" => Ok(CompanionScope::ChatSend),
+        _ => Err(serde::de::Error::custom("invalid inventory scope")),
+    }
+}
+
+impl CapabilityInventoryCommand {
+    fn validate(&self) -> Result<(), ()> {
+        if self.inventory_schema_version != 1 || self.revision == 0 { return Err(()); }
+        Ok(())
+    }
+}
+
+fn capability_inventory_command_from(bytes: &[u8]) -> Result<CapabilityInventoryCommand, ()> {
+    if bytes.is_empty() || bytes.len() > MAX_CAPABILITY_INVENTORY_COMMAND_BYTES { return Err(()); }
+    let command: CapabilityInventoryCommand = serde_json::from_slice(bytes).map_err(|_| ())?;
+    command.validate()?;
+    Ok(command)
+}
 impl Bridge {
     fn new(device_secret: [u8; SECRET_BYTES]) -> Result<Self, ()> {
         let runtime = Runtime::new().map_err(|_| ())?;
@@ -331,6 +369,13 @@ impl Bridge {
         })
     }
 
+    fn start_capability_inventory(&self, descriptor: ReconnectDescriptor, device_id: Uuid, command: CapabilityInventoryCommand) -> Operation {
+        let (cancel, cancel_rx) = watch::channel(false);
+        let device_secret = self.device_secret.copy();
+        Operation::spawn(Arc::clone(&self.runtime), cancel, move |_| async move {
+            capability_inventory(device_secret, descriptor, device_id, command, cancel_rx).await
+        })
+    }
     fn start_chat(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String) -> Operation {
         self.start_chat_with_activity(descriptor, device_id, message, false)
     }
@@ -656,6 +701,137 @@ async fn reconnect(
     result
 }
 
+async fn capability_inventory(
+    device_secret: SecretBytes,
+    descriptor: ReconnectDescriptor,
+    expected_device_id: Uuid,
+    command: CapabilityInventoryCommand,
+    mut cancel: watch::Receiver<bool>,
+) -> PublicResult {
+    if descriptor.validate().is_err() || command.validate().is_err() {
+        return PublicResult::Failed { code: "invalid_reconnect_descriptor" };
+    }
+    let noise_key = match derive_peeroxide_key(&device_secret.0) {
+        Ok(key) => key,
+        Err(()) => return PublicResult::Failed { code: "key_derivation_failed" },
+    };
+    let signing_key = match derive_signing_key(&device_secret.0) {
+        Ok(key) => key,
+        Err(()) => return PublicResult::Failed { code: "key_derivation_failed" },
+    };
+    let mut config = SwarmConfig::with_public_bootstrap();
+    config.key_pair = Some(noise_key);
+    config.max_peers = 1;
+    config.max_parallel = 1;
+    config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
+    let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(MAX_TTL_SECS)).await {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let result = capability_inventory_on_swarm(
+        &swarm,
+        &mut connections,
+        &descriptor,
+        expected_device_id,
+        command,
+        &signing_key,
+        &mut cancel,
+    )
+    .await;
+    let _ = swarm.destroy().await;
+    let _ = swarm_task.await;
+    result
+}
+
+/// The production exchange uses this pre-write gate, including the legacy-server path.
+fn prepare_inventory_request(frame: &[u8], device_id: Uuid, command: &CapabilityInventoryCommand, signing_key: &SigningKey) -> Result<CompanionCapabilityInventoryRequest, PublicResult> {
+    let invalid = || PublicResult::Failed { code: "invalid_inventory_challenge" };
+    if command.validate().is_err() { return Err(invalid()); }
+    if let Ok(ServerFrame::Denied(value)) = decode_server_frame(frame) { return Err(public_denied(value.code)); }
+    match command.expected_scope {
+        CompanionScope::StatusRead => {
+            let (challenge, offered) = decode_status_challenge_with_capability_inventory_advertisement(frame).map_err(|_| invalid())?;
+            if !offered { return Err(PublicResult::Failed { code: "capability_inventory_unavailable" }); }
+            if challenge.device_id.0 != device_id || challenge.revision != command.revision { return Err(invalid()); }
+            CompanionCapabilityInventoryRequest::signed_from_status(&challenge, Uuid::now_v7(), signing_key).map_err(|_| invalid())
+        }
+        CompanionScope::ChatSend => {
+            let (challenge, offered) = decode_chat_challenge_with_capability_inventory_advertisement(frame).map_err(|_| invalid())?;
+            if !offered { return Err(PublicResult::Failed { code: "capability_inventory_unavailable" }); }
+            if challenge.device_id.0 != device_id || challenge.revision != command.revision { return Err(invalid()); }
+            CompanionCapabilityInventoryRequest::signed_from_chat(&challenge, Uuid::now_v7(), signing_key).map_err(|_| invalid())
+        }
+    }
+}
+
+async fn capability_inventory_on_swarm(
+    swarm: &peeroxide::SwarmHandle,
+    connections: &mut tokio::sync::mpsc::Receiver<peeroxide::SwarmConnection>,
+    descriptor: &ReconnectDescriptor,
+    expected_device_id: Uuid,
+    command: CapabilityInventoryCommand,
+    signing_key: &SigningKey,
+    cancel: &mut watch::Receiver<bool>,
+) -> PublicResult {
+    if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() {
+        return PublicResult::Failed { code: "rendezvous_join_failed" };
+    }
+    let timeout = Duration::from_secs(MAX_TTL_SECS);
+    let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await {
+        Wait::Value(Some(conn)) => conn,
+        Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" },
+        Wait::Expired => return PublicResult::Failed { code: "capability_inventory_timeout" },
+        Wait::Cancelled => return PublicResult::Cancelled,
+    };
+    if conn.remote_public_key() != &descriptor.daemon_noise_public_key {
+        return PublicResult::Denied { code: "daemon_key_mismatch" };
+    }
+    let request = match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match prepare_inventory_request(&frame, expected_device_id, &command, signing_key) {
+            Ok(request) => request,
+            Err(result) => return result,
+        },
+        Wait::Value(Ok(None)) => return PublicResult::Failed { code: "transport_closed" },
+        Wait::Value(Err(_)) => return PublicResult::Failed { code: "transport_read_failed" },
+        Wait::Expired => return PublicResult::Failed { code: "capability_inventory_timeout" },
+        Wait::Cancelled => return PublicResult::Cancelled,
+    };
+    let bytes = match encode_frame(&request) {
+        Ok(bytes) => bytes,
+        Err(_) => return PublicResult::Failed { code: "capability_inventory_request_failed" },
+    };
+    match write_cancelable(&mut conn, &bytes, timeout, cancel).await {
+        Write::Sent => {}
+        Write::Cancelled => return PublicResult::Cancelled,
+        Write::Expired => return PublicResult::Failed { code: "capability_inventory_timeout" },
+        Write::Failed => return PublicResult::Failed { code: "transport_write_failed" },
+    }
+    match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
+            Ok(ServerFrame::CapabilityInventory(value)) => public_capability_inventory(value, &request, command.expected_scope),
+            Ok(ServerFrame::Denied(value)) => public_denied(value.code),
+            Ok(_) | Err(_) => PublicResult::Failed { code: "invalid_server_frame" },
+        },
+        Wait::Value(Ok(None)) => PublicResult::Failed { code: "transport_closed" },
+        Wait::Value(Err(_)) => PublicResult::Failed { code: "transport_read_failed" },
+        Wait::Expired => PublicResult::Failed { code: "capability_inventory_timeout" },
+        Wait::Cancelled => PublicResult::Cancelled,
+    }
+}
+
+fn public_capability_inventory(value: CompanionCapabilityInventory, request: &CompanionCapabilityInventoryRequest, expected_scope: CompanionScope) -> PublicResult {
+    if value.validate().is_err() || value.request_id != request.request_id || value.device_id != request.device_id
+        || value.revision != request.revision || value.effective_scope != expected_scope
+        || value.listener_generation != request.listener_generation || value.daemon_boot_id != request.daemon_boot_id
+    {
+        return PublicResult::Failed { code: "invalid_capability_inventory" };
+    }
+    PublicResult::CapabilityInventory {
+        inventory_schema_version: value.inventory_schema_version, request_id: value.request_id.to_string(),
+        device_id: value.device_id.to_string(), revision: value.revision, effective_scope: value.effective_scope.as_str(),
+        listener_generation: value.listener_generation, daemon_boot_id: value.daemon_boot_id, observed_at_unix: value.observed_at_unix,
+    }
+}
 async fn reconnect_on_swarm(
     swarm: &peeroxide::SwarmHandle,
     connections: &mut tokio::sync::mpsc::Receiver<peeroxide::SwarmConnection>,
@@ -1163,6 +1339,24 @@ fn conversation_command_from(bytes: &[u8]) -> Result<ConversationCommand, ()> {
     command.validate()?;
     Ok(command)
 }
+
+/// Read an existing grant after an explicit capability offer, using the original poll owner.
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_capability_inventory_start_v1(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8, descriptor_json_len: usize,
+    device_id: *const u8, device_id_len: usize,
+    command_json: *const u8, command_json_len: usize,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(command_json) = input(command_json, command_json_len, MAX_CAPABILITY_INVENTORY_COMMAND_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()).filter(|id| !id.is_nil()) else { return ptr::null_mut() };
+    let Ok(command) = capability_inventory_command_from(command_json) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation { inner: bridge.inner.start_capability_inventory(descriptor, device_id, command) }))
+}) }
 
 /// Caller persists the public request UUID before starting. No fallback or
 /// resend is allowed when conversation support/revision is unavailable.
@@ -1875,5 +2069,72 @@ mod tests {
         // Code 6 is reserved to the v2 poll envelope and cannot be produced by
         // the original result-code mapping.
         assert_ne!(result_code(&PublicResult::Failed { code: "transport_closed" }), 6);
+    }
+}
+
+#[cfg(test)]
+mod capability_inventory_tests {
+    use super::*;
+    use companion_protocol::{CompanionDeviceId, StatusChallenge, ChatChallenge,
+        encode_status_challenge_with_capability_inventory_advertisement,
+        encode_chat_challenge_with_capability_inventory_advertisement, encode_server_frame};
+
+    #[test]
+    fn inventory_command_requires_bounded_explicit_scope_and_revision() {
+        assert!(capability_inventory_command_from(br#"{"inventory_schema_version":1,"revision":4,"expected_scope":"companion.status.read"}"#).is_ok());
+        for value in [
+            br#"{"inventory_schema_version":1,"revision":0,"expected_scope":"companion.status.read"}"#.as_slice(),
+            br#"{"inventory_schema_version":1,"revision":4,"expected_scope":"status_read"}"#.as_slice(),
+            br#"{"inventory_schema_version":1,"revision":4,"expected_scope":"companion.chat.send","extra":true}"#.as_slice(),
+        ] { assert!(capability_inventory_command_from(value).is_err()); }
+        assert!(capability_inventory_command_from(&[b' '; 513]).is_err());
+    }
+
+    fn fixture() -> (StatusChallenge, SigningKey) {
+        (StatusChallenge { schema_version: 3, device_id: CompanionDeviceId(Uuid::now_v7()), revision: 4,
+            listener_generation: 2, daemon_boot_id: "boot".into(), challenge_nonce: [7; 32], issued_at_unix: 9 }, SigningKey::from_bytes(&[8; 32]))
+    }
+
+    #[test]
+    fn inventory_production_prewrite_gate_rejects_legacy_or_wrong_grant_on_both_routes() {
+        let (status, key) = fixture();
+        let chat = ChatChallenge { schema_version: 3, device_id: status.device_id.clone(), revision: 4, listener_generation: 2,
+            daemon_boot_id: "boot".into(), challenge_nonce: [7; 32], issued_at_unix: 9 };
+        for (scope, legacy, offered) in [
+            (CompanionScope::StatusRead, encode_server_frame(&ServerFrame::StatusChallenge(status.clone())).unwrap(),
+                encode_status_challenge_with_capability_inventory_advertisement(&status).unwrap()),
+            (CompanionScope::ChatSend, encode_server_frame(&ServerFrame::ChatChallenge(chat.clone())).unwrap(),
+                encode_chat_challenge_with_capability_inventory_advertisement(&chat).unwrap()),
+        ] {
+            let mut command = CapabilityInventoryCommand { inventory_schema_version: 1, revision: 4, expected_scope: scope };
+            assert!(matches!(prepare_inventory_request(&legacy, status.device_id.0, &command, &key), Err(PublicResult::Failed { code: "capability_inventory_unavailable" })));
+            let request = prepare_inventory_request(&offered, status.device_id.0, &command, &key).ok().unwrap();
+            request.verify_with(&key.verifying_key().to_bytes()).unwrap();
+            assert!(prepare_inventory_request(&offered, Uuid::now_v7(), &command, &key).is_err());
+            command.revision = 5;
+            assert!(prepare_inventory_request(&offered, status.device_id.0, &command, &key).is_err());
+        }
+    }
+
+    #[test]
+    fn inventory_public_result_rejects_every_foreign_binding_and_keeps_terminal_poll_contract() {
+        let (status, key) = fixture();
+        let request = CompanionCapabilityInventoryRequest::signed_from_status(&status, Uuid::now_v7(), &key).unwrap();
+        let valid = CompanionCapabilityInventory { inventory_schema_version: 1, request_id: request.request_id,
+            device_id: request.device_id.clone(), revision: 4, effective_scope: CompanionScope::StatusRead,
+            listener_generation: 2, daemon_boot_id: "boot".into(), observed_at_unix: 10 };
+        let good = public_capability_inventory(valid.clone(), &request, CompanionScope::StatusRead);
+        assert_eq!(result_code(&good), 1);
+        let public: serde_json::Value = serde_json::from_slice(&encode_public_result(&good).unwrap()).unwrap();
+        assert_eq!(public["state"], "capability_inventory");
+        assert_eq!(public["effective_scope"], "companion.status.read");
+        for change in 0..8 {
+            let mut wrong = valid.clone();
+            match change { 0 => wrong.request_id = Uuid::now_v7(), 1 => wrong.device_id = CompanionDeviceId(Uuid::now_v7()),
+                2 => wrong.revision += 1, 3 => wrong.effective_scope = CompanionScope::ChatSend,
+                4 => wrong.listener_generation += 1, 5 => wrong.daemon_boot_id.push('x'),
+                6 => wrong.inventory_schema_version = 2, _ => wrong.observed_at_unix = -1 }
+            assert!(matches!(public_capability_inventory(wrong, &request, CompanionScope::StatusRead), PublicResult::Failed { code: "invalid_capability_inventory" }));
+        }
     }
 }

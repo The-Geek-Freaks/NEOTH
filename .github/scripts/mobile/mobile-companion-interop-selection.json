@@ -158,7 +158,13 @@
         "daemon::companion_authority::conversation_tests::jm05_conversation_incognito_and_replayed_creation_do_not_create_second_binding",
         "daemon::companion_authority::conversation_tests::jm05_conversation_state_capacity_and_corrupt_private_binding_fail_closed",
         "daemon::companion_authority::conversation_tests::jm05_read_recovery_rejects_foreign_revision_signature_replay_and_revocation",
-        "daemon::chat_runtime::tests::companion_signed_conversation_joins_context_and_recovers_without_provider_effect"
+        "daemon::chat_runtime::tests::companion_signed_conversation_joins_context_and_recovers_without_provider_effect",
+        "daemon::companion_protocol::capability_inventory_tests::inventory_signature_binds_every_challenge_field_and_request_identity",
+        "daemon::companion_protocol::capability_inventory_tests::inventory_advertisement_preserves_legacy_status_and_all_chat_offers",
+        "daemon::companion_protocol::capability_inventory_tests::inventory_wire_rejects_malformed_scope_version_and_nil_identity",
+        "daemon::companion_authority::capability_inventory_tests::inventory_reports_only_granted_scope_and_consumes_one_challenge",
+        "daemon::companion_authority::capability_inventory_tests::inventory_rejects_expired_stale_and_revoked_requests_before_marker",
+        "daemon::companion_authority::capability_inventory_tests::inventory_revoke_waits_for_delivery_drain_and_blocks_late_serialization"
       ]
     },
     "no_cluster": {
@@ -187,7 +193,13 @@
         "companion_protocol::tests::jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit",
         "tests::conversation_commands_bind_revision_public_ids_and_reject_private_or_effectful_reads",
         "tests::conversation_history_needs_matching_admission_and_read_never_claims_commit",
-        "tests::conversation_poll_keeps_large_history_bounded_and_legacy_poll_limit_unchanged"
+        "tests::conversation_poll_keeps_large_history_bounded_and_legacy_poll_limit_unchanged",
+        "companion_protocol::capability_inventory_tests::inventory_signature_binds_every_challenge_field_and_request_identity",
+        "companion_protocol::capability_inventory_tests::inventory_advertisement_preserves_legacy_status_and_all_chat_offers",
+        "companion_protocol::capability_inventory_tests::inventory_wire_rejects_malformed_scope_version_and_nil_identity",
+        "capability_inventory_tests::inventory_command_requires_bounded_explicit_scope_and_revision",
+        "capability_inventory_tests::inventory_production_prewrite_gate_rejects_legacy_or_wrong_grant_on_both_routes",
+        "capability_inventory_tests::inventory_public_result_rejects_every_foreign_binding_and_keeps_terminal_poll_contract"
       ]
     }
   },

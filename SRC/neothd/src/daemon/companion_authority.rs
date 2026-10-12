@@ -2,6 +2,7 @@
 //! A persisted delivery marker is written before the daemon may begin status I/O.
 use super::companion_protocol::{
     COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatRequest,
+    COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION, CompanionCapabilityInventory, CompanionCapabilityInventoryRequest,
     CompanionConversationReadRequest, CompanionConversationReadSelection,
     CompanionConversationSelection, CompanionDeviceId, CompanionScope, CompanionStatusSnapshot,
     EnrollmentProof, ProtocolError, ReconnectDescriptor, ServerFrame, StatusChallenge, StatusProof,
@@ -217,6 +218,24 @@ impl StatusLease {
     pub fn status_frame(&self, snapshot: CompanionStatusSnapshot) -> Result<Vec<u8>> {
         snapshot.validate().map_err(pe)?;
         encode_server_frame(&ServerFrame::StatusSnapshot(snapshot)).map_err(pe)
+    }
+    /// Serialize only the authority-derived observation belonging to this live lease.
+    pub fn capability_inventory_frame(&self, inventory: CompanionCapabilityInventory) -> Result<Vec<u8>> {
+        inventory.validate().map_err(pe)?;
+        let c = self.shared.core.lock().map_err(|_| anyhow::anyhow!("authority mutex poisoned"))?;
+        anyhow::ensure!(!c.reload_required && self.read_only, "inventory lease unavailable");
+        let grant = c.state.devices.get(&self.id).context("unknown device")?;
+        anyhow::ensure!(
+            inventory.device_id.0 == self.id && inventory.revision == self.revision
+                && grant.phase == Phase::Active && grant.revision == self.revision
+                && grant.scope == inventory.effective_scope
+                && c.owned_deliveries.contains(&self.delivery_id)
+                && c.state.delivery_markers.get(&self.delivery_id).is_some_and(|marker| {
+                    marker.device_id.0 == self.id && marker.revision == self.revision
+                }),
+            "inventory delivery denied"
+        );
+        encode_server_frame(&ServerFrame::CapabilityInventory(inventory)).map_err(pe)
     }
     /// The same non-copy lease holds the durable delivery marker until the
     /// companion runtime has written or conclusively drained this terminal.
@@ -1057,6 +1076,62 @@ impl DeviceAuthority {
             conversation,
             read_only: true,
         })
+    }
+    /// Both routes reuse their existing one-shot challenge and durable delivery owner.
+    /// The peer never chooses a grant: route_scope comes from the listener branch.
+    pub fn authorize_capability_inventory(
+        &self,
+        request: &CompanionCapabilityInventoryRequest,
+        route_scope: CompanionScope,
+        now: i64,
+    ) -> Result<(StatusLease, CompanionCapabilityInventory)> {
+        request.validate().map_err(pe)?;
+        let mut c = self.core()?;
+        anyhow::ensure!(c.state.delivery_markers.is_empty(), "companion delivery already active");
+        let grant = c.state.devices.get(&request.device_id.0).context("unknown device")?;
+        anyhow::ensure!(
+            grant.phase == Phase::Active && grant.revision == request.revision && grant.scope == route_scope,
+            "inventory grant denied"
+        );
+        request.verify_with(&grant.signing_key).map_err(pe)?;
+        let inventory = CompanionCapabilityInventory {
+            inventory_schema_version: COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION,
+            request_id: request.request_id, device_id: grant.device_id.clone(), revision: grant.revision,
+            listener_generation: request.listener_generation, daemon_boot_id: request.daemon_boot_id.clone(),
+            observed_at_unix: now, effective_scope: grant.scope,
+        };
+        inventory.validate().map_err(pe)?;
+        let matches_challenge = match route_scope {
+            CompanionScope::StatusRead => c.challenges.get(&request.device_id.0).is_some_and(|q| {
+                now >= q.value.issued_at_unix && now - q.value.issued_at_unix <= AGE
+                    && q.value.device_id == request.device_id && q.value.revision == request.revision
+                    && q.value.listener_generation == request.listener_generation
+                    && q.value.daemon_boot_id == request.daemon_boot_id && q.value.challenge_nonce == request.challenge_nonce
+            }),
+            CompanionScope::ChatSend => c.chat_challenges.get(&request.device_id.0).is_some_and(|q| {
+                now >= q.value.issued_at_unix && now - q.value.issued_at_unix <= AGE
+                    && q.value.device_id == request.device_id && q.value.revision == request.revision
+                    && q.value.listener_generation == request.listener_generation
+                    && q.value.daemon_boot_id == request.daemon_boot_id && q.value.challenge_nonce == request.challenge_nonce
+            }),
+        };
+        anyhow::ensure!(matches_challenge, "inventory challenge mismatch");
+        let delivery_id = Uuid::now_v7();
+        let mut next = c.state.clone();
+        next.delivery_markers.insert(delivery_id, DeliveryMarker {
+            delivery_id, device_id: request.device_id.clone(), revision: request.revision,
+        });
+        self.publish(&mut c, next)?;
+        c.owned_deliveries.insert(delivery_id);
+        match route_scope {
+            CompanionScope::StatusRead => { c.challenges.remove(&request.device_id.0); }
+            CompanionScope::ChatSend => { c.chat_challenges.remove(&request.device_id.0); }
+        }
+        *c.leases.entry(request.device_id.0).or_insert(0) += 1;
+        Ok((StatusLease {
+            store: self.store.clone(), shared: Arc::clone(&self.shared), id: request.device_id.0,
+            delivery_id, revision: request.revision, conversation: None, read_only: true,
+        }, inventory))
     }
     pub fn device(&self, id: &CompanionDeviceId) -> Result<DeviceGrant> {
         let c = self.core()?;
@@ -2042,5 +2117,88 @@ mod tests {
         assert!(valid(&s).is_ok());
         assert_eq!(audit_for_reconcile(&s, id).unwrap(), None);
         assert!(audit_for_reconcile(&s, Uuid::now_v7()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod capability_inventory_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn enrolled(scope: CompanionScope) -> (PathBuf, DeviceAuthority, SigningKey) {
+        let home = std::env::temp_dir().join(format!("neoth-inventory-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&home).unwrap();
+        let authority = DeviceAuthority::load(&home).unwrap();
+        let key = SigningKey::from_bytes(&[17; 32]);
+        let proof = EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32], scope, "inventory fixture".into(), &key).unwrap();
+        let descriptor = ReconnectDescriptor { schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1 };
+        let pending = authority.begin_enrollment(proof, [4; 32], descriptor, 1).unwrap();
+        assert!(matches!(authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap(), Reconcile::Finalized(_)));
+        (home, authority, key)
+    }
+
+    fn request(authority: &DeviceAuthority, key: &SigningKey, scope: CompanionScope) -> CompanionCapabilityInventoryRequest {
+        match scope {
+            CompanionScope::StatusRead => CompanionCapabilityInventoryRequest::signed_from_status(
+                &authority.begin_reconnect_for_observed_noise([5; 32], 3, "inventory-boot".into(), [9; 32], 10).unwrap(), Uuid::now_v7(), key).unwrap(),
+            CompanionScope::ChatSend => CompanionCapabilityInventoryRequest::signed_from_chat(
+                &authority.begin_chat_reconnect_for_observed_noise([5; 32], 3, "inventory-boot".into(), [9; 32], 10).unwrap(), Uuid::now_v7(), key).unwrap(),
+        }
+    }
+
+    #[test]
+    fn inventory_reports_only_granted_scope_and_consumes_one_challenge() {
+        for scope in [CompanionScope::StatusRead, CompanionScope::ChatSend] {
+            let (home, authority, key) = enrolled(scope);
+            let request = request(&authority, &key, scope);
+            let other = if scope == CompanionScope::StatusRead { CompanionScope::ChatSend } else { CompanionScope::StatusRead };
+            assert!(authority.authorize_capability_inventory(&request, other, 11).is_err());
+            assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+            let (lease, inventory) = authority.authorize_capability_inventory(&request, scope, 11).unwrap();
+            assert_eq!(inventory.effective_scope, scope); assert_eq!(inventory.observed_at_unix, 11);
+            assert!(lease.read_only); assert!(lease.admitted_conversation().is_none());
+            assert!(lease.capability_inventory_frame(inventory).is_ok());
+            assert_eq!(authority.core().unwrap().state.delivery_markers.len(), 1);
+            lease.complete_confirmed().unwrap(); drop(lease);
+            assert!(authority.authorize_capability_inventory(&request, scope, 12).is_err());
+            assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+            drop(authority); std::fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[test]
+    fn inventory_rejects_expired_stale_and_revoked_requests_before_marker() {
+        for scope in [CompanionScope::StatusRead, CompanionScope::ChatSend] {
+            let (home, authority, key) = enrolled(scope);
+            let request = request(&authority, &key, scope);
+            for now in [9, 71] { assert!(authority.authorize_capability_inventory(&request, scope, now).is_err()); }
+            let mut stale = request.clone(); stale.revision += 1;
+            stale.signature = ed25519_dalek::Signer::sign(&key, &stale.signing_bytes().unwrap()).to_bytes().to_vec();
+            assert!(authority.authorize_capability_inventory(&stale, scope, 11).is_err());
+            assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+            authority.begin_revoke_pending(&request.device_id).unwrap().unwrap();
+            assert!(authority.authorize_capability_inventory(&request, scope, 11).is_err());
+            assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+            drop(authority); std::fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn inventory_revoke_waits_for_delivery_drain_and_blocks_late_serialization() {
+        for scope in [CompanionScope::StatusRead, CompanionScope::ChatSend] {
+            let (home, authority, key) = enrolled(scope);
+            let request = request(&authority, &key, scope);
+            let (lease, inventory) = authority.authorize_capability_inventory(&request, scope, 11).unwrap();
+            let gate = lease.chat_effect_gate();
+            assert!(gate.intent(crate::providers::ChatTurnEffectKind::McpToolInvoke, "inventory-must-not-start-effect").await.is_err());
+            authority.begin_revoke_pending_after_effect_boundary(&request.device_id).await.unwrap().unwrap();
+            assert!(lease.capability_inventory_frame(inventory).is_err());
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(1), authority.wait_for_revoke_drain(&request.device_id)).await.is_err());
+            lease.complete_confirmed().unwrap(); drop(lease);
+            tokio::time::timeout(std::time::Duration::from_secs(1), authority.wait_for_revoke_drain(&request.device_id)).await.unwrap().unwrap();
+            assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+            drop(authority); std::fs::remove_dir_all(home).unwrap();
+        }
     }
 }

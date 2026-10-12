@@ -30,6 +30,113 @@ const CHAT_DOMAIN: &[u8] = b"NEOTH/companion/v3/chat";
 const CONVERSATION_READ_DOMAIN: &[u8] = b"NEOTH/companion/v3/conversation-read/v1";
 pub const COMPANION_CONVERSATION_MAX_HISTORY_BYTES: usize = 100 * 1024;
 
+pub const COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION: u8 = 1;
+const CAPABILITY_INVENTORY_DOMAIN: &[u8] = b"NEOTH/companion/v3/capability-inventory/v1";
+
+/// An explicit read of the already granted scope, never a hardware lease request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionCapabilityInventoryRequest {
+    pub inventory_schema_version: u8,
+    pub device_id: CompanionDeviceId,
+    pub revision: u64,
+    pub listener_generation: u64,
+    pub daemon_boot_id: String,
+    pub challenge_nonce: [u8; 32],
+    pub request_id: Uuid,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionCapabilityInventory {
+    pub inventory_schema_version: u8,
+    pub request_id: Uuid,
+    pub device_id: CompanionDeviceId,
+    pub revision: u64,
+    pub listener_generation: u64,
+    pub daemon_boot_id: String,
+    pub observed_at_unix: i64,
+    pub effective_scope: CompanionScope,
+}
+
+impl CompanionCapabilityInventory {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.inventory_schema_version != COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION
+            || self.request_id.is_nil() || self.device_id.0.is_nil() || self.revision == 0
+            || self.listener_generation == 0 || self.daemon_boot_id.is_empty()
+            || self.daemon_boot_id.len() > 128 || self.observed_at_unix < 0
+        {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+}
+
+impl CompanionCapabilityInventoryRequest {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.inventory_schema_version != COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION
+            || self.request_id.is_nil() || self.device_id.0.is_nil() || self.revision == 0
+            || self.listener_generation == 0 || self.daemon_boot_id.is_empty()
+            || self.daemon_boot_id.len() > 128
+        {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
+        self.validate()?;
+        let mut out = Vec::new();
+        push_field(&mut out, CAPABILITY_INVENTORY_DOMAIN);
+        push_field(&mut out, &[self.inventory_schema_version]);
+        push_field(&mut out, self.device_id.0.as_bytes());
+        push_field(&mut out, &self.revision.to_be_bytes());
+        push_field(&mut out, &self.listener_generation.to_be_bytes());
+        push_field(&mut out, self.daemon_boot_id.as_bytes());
+        push_field(&mut out, &self.challenge_nonce);
+        push_field(&mut out, self.request_id.as_bytes());
+        Ok(out)
+    }
+
+    pub fn verify_with(&self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+        VerifyingKey::from_bytes(public_key)
+            .map_err(|_| ProtocolError::InvalidSignature)?
+            .verify(&self.signing_bytes()?, &signature_bytes(&self.signature)?)
+            .map_err(|_| ProtocolError::InvalidSignature)
+    }
+
+    pub fn signed_from_status(challenge: &StatusChallenge, request_id: Uuid, key: &SigningKey) -> Result<Self, ProtocolError> {
+        challenge.validate()?;
+        let mut value = Self {
+            inventory_schema_version: COMPANION_CAPABILITY_INVENTORY_SCHEMA_VERSION,
+            device_id: challenge.device_id.clone(), revision: challenge.revision,
+            listener_generation: challenge.listener_generation,
+            daemon_boot_id: challenge.daemon_boot_id.clone(), challenge_nonce: challenge.challenge_nonce,
+            request_id, signature: Vec::new(),
+        };
+        value.signature = key.sign(&value.signing_bytes()?).to_bytes().to_vec();
+        Ok(value)
+    }
+
+    pub fn signed_from_chat(challenge: &ChatChallenge, request_id: Uuid, key: &SigningKey) -> Result<Self, ProtocolError> {
+        challenge.validate()?;
+        Self::signed_from_status(&StatusChallenge {
+            schema_version: challenge.schema_version, device_id: challenge.device_id.clone(),
+            revision: challenge.revision, listener_generation: challenge.listener_generation,
+            daemon_boot_id: challenge.daemon_boot_id.clone(), challenge_nonce: challenge.challenge_nonce,
+            issued_at_unix: challenge.issued_at_unix,
+        }, request_id, key)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum CompanionStatusClientFrame {
+    Status(StatusProof),
+    CapabilityInventory(CompanionCapabilityInventoryRequest),
+}
+
 /// Read-only recovery has a separate signing domain and no provider message.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +164,7 @@ pub enum CompanionConversationReadSelection {
 pub enum CompanionChatClientFrame {
     Chat(CompanionChatRequest),
     ConversationRead(CompanionConversationReadRequest),
+    CapabilityInventory(CompanionCapabilityInventoryRequest),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -543,6 +651,7 @@ pub enum ServerFrame {
     ChatStreamSnapshot(CompanionChatStreamSnapshot),
     ConversationAdmission(CompanionConversationAdmission),
     ConversationHistory(CompanionConversationHistory),
+    CapabilityInventory(CompanionCapabilityInventory),
     ChatTerminal(CompanionChatTerminal),
     Denied(CompanionDenied),
 }
@@ -1020,6 +1129,7 @@ impl ServerFrame {
             Self::ChatStreamSnapshot(value) => value.validate(),
             Self::ConversationAdmission(value) => value.validate(),
             Self::ConversationHistory(value) => value.validate(),
+            Self::CapabilityInventory(value) => value.validate(),
             Self::ChatTerminal(value) => value.validate(),
             Self::Denied(value) => value.validate(),
         }
@@ -1157,6 +1267,35 @@ pub fn decode_chat_challenge_with_conversation_advertisement(
         stream,
         stream && envelope.get("conversation_v1") == Some(&serde_json::Value::Bool(true)),
     ))
+}
+
+/// Keep the offer outside the frozen challenge body and activity capability map.
+pub fn encode_status_challenge_with_capability_inventory_advertisement(challenge: &StatusChallenge) -> Result<Vec<u8>, ProtocolError> {
+    let bytes = encode_server_frame(&ServerFrame::StatusChallenge(challenge.clone()))?;
+    let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    envelope["capability_inventory_v1"] = serde_json::Value::Bool(true);
+    encode_frame(&envelope)
+}
+
+pub fn decode_status_challenge_with_capability_inventory_advertisement(bytes: &[u8]) -> Result<(StatusChallenge, bool), ProtocolError> {
+    let envelope: serde_json::Value = decode_frame(bytes)?;
+    let frame: ServerFrame = serde_json::from_value(envelope.clone()).map_err(|_| ProtocolError::InvalidFrame)?;
+    let ServerFrame::StatusChallenge(challenge) = frame else { return Err(ProtocolError::InvalidFrame); };
+    challenge.validate()?;
+    Ok((challenge, envelope.get("capability_inventory_v1") == Some(&serde_json::Value::Bool(true))))
+}
+
+pub fn encode_chat_challenge_with_capability_inventory_advertisement(challenge: &ChatChallenge) -> Result<Vec<u8>, ProtocolError> {
+    let bytes = encode_chat_challenge_with_conversation_advertisement(challenge)?;
+    let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    envelope["capability_inventory_v1"] = serde_json::Value::Bool(true);
+    encode_frame(&envelope)
+}
+
+pub fn decode_chat_challenge_with_capability_inventory_advertisement(bytes: &[u8]) -> Result<(ChatChallenge, bool), ProtocolError> {
+    let (challenge, _, _, _) = decode_chat_challenge_with_conversation_advertisement(bytes)?;
+    let envelope: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    Ok((challenge, envelope.get("capability_inventory_v1") == Some(&serde_json::Value::Bool(true))))
 }
 
 pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
@@ -1778,5 +1917,78 @@ mod tests {
             br#"{"type":"denied","body":{"schema_version":2,"code":"device_denied"}}"#,
         ] { assert!(decode_server_frame(frame).is_err()); }
         assert!(decode_server_frame(br#"{"type":"enrollment_accepted","body":{"schema_version":3,"device_id":"00000000-0000-0000-0000-000000000001","revision":1,"granted_scope":"status_read","reconnect":{"schema_version":3,"carrier":"wrong","rendezvous_topic":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"daemon_noise_public_key":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"descriptor_generation":1}}"#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod capability_inventory_tests {
+    use super::*;
+
+    fn status() -> StatusChallenge {
+        StatusChallenge { schema_version: 3, device_id: CompanionDeviceId(Uuid::now_v7()), revision: 4,
+            listener_generation: 2, daemon_boot_id: "inventory-boot".into(), challenge_nonce: [5; 32], issued_at_unix: 10 }
+    }
+    fn chat(value: &StatusChallenge) -> ChatChallenge {
+        ChatChallenge { schema_version: value.schema_version, device_id: value.device_id.clone(), revision: value.revision,
+            listener_generation: value.listener_generation, daemon_boot_id: value.daemon_boot_id.clone(),
+            challenge_nonce: value.challenge_nonce, issued_at_unix: value.issued_at_unix }
+    }
+
+    #[test]
+    fn inventory_signature_binds_every_challenge_field_and_request_identity() {
+        let key = SigningKey::from_bytes(&[17; 32]);
+        let challenge = status();
+        let request = CompanionCapabilityInventoryRequest::signed_from_status(&challenge, Uuid::now_v7(), &key).unwrap();
+        request.verify_with(&key.verifying_key().to_bytes()).unwrap();
+        for change in 0..8 {
+            let mut wrong = request.clone();
+            match change {
+                0 => wrong.inventory_schema_version = 2,
+                1 => wrong.device_id = CompanionDeviceId(Uuid::now_v7()),
+                2 => wrong.revision += 1,
+                3 => wrong.listener_generation += 1,
+                4 => wrong.daemon_boot_id.push('x'),
+                5 => wrong.challenge_nonce[0] ^= 1,
+                6 => wrong.request_id = Uuid::now_v7(),
+                _ => wrong.signature = StatusProof::signed(&challenge, &key).unwrap().signature,
+            }
+            assert!(wrong.verify_with(&key.verifying_key().to_bytes()).is_err(), "field {change}");
+        }
+    }
+
+    #[test]
+    fn inventory_advertisement_preserves_legacy_status_and_all_chat_offers() {
+        let status = status(); let chat = chat(&status);
+        let bytes = encode_status_challenge_with_capability_inventory_advertisement(&status).unwrap();
+        assert_eq!(decode_server_frame(&bytes).unwrap(), ServerFrame::StatusChallenge(status.clone()));
+        assert!(decode_status_challenge_with_capability_inventory_advertisement(&bytes).unwrap().1);
+        let legacy = encode_server_frame(&ServerFrame::StatusChallenge(status)).unwrap();
+        assert!(!decode_status_challenge_with_capability_inventory_advertisement(&legacy).unwrap().1);
+        let bytes = encode_chat_challenge_with_capability_inventory_advertisement(&chat).unwrap();
+        assert_eq!(decode_server_frame(&bytes).unwrap(), ServerFrame::ChatChallenge(chat.clone()));
+        assert_eq!(decode_chat_challenge_with_conversation_advertisement(&bytes).unwrap(), (chat.clone(), true, true, true));
+        assert!(decode_chat_challenge_with_capability_inventory_advertisement(&bytes).unwrap().1);
+        let legacy = encode_chat_challenge_with_conversation_advertisement(&chat).unwrap();
+        assert!(!decode_chat_challenge_with_capability_inventory_advertisement(&legacy).unwrap().1);
+    }
+
+    #[test]
+    fn inventory_wire_rejects_malformed_scope_version_and_nil_identity() {
+        let challenge = status();
+        let valid = CompanionCapabilityInventory { inventory_schema_version: 1, request_id: Uuid::now_v7(),
+            device_id: challenge.device_id, revision: 4, listener_generation: 2, daemon_boot_id: "boot".into(),
+            observed_at_unix: 10, effective_scope: CompanionScope::StatusRead };
+        let frame = ServerFrame::CapabilityInventory(valid.clone());
+        assert_eq!(decode_server_frame(&encode_server_frame(&frame).unwrap()).unwrap(), frame);
+        let mut value = serde_json::to_value(&frame).unwrap();
+        value["body"]["effective_scope"] = serde_json::json!("camera");
+        assert!(decode_server_frame(&serde_json::to_vec(&value).unwrap()).is_err());
+        for change in 0..5 {
+            let mut wrong = valid.clone();
+            match change { 0 => wrong.inventory_schema_version = 2, 1 => wrong.request_id = Uuid::nil(),
+                2 => wrong.device_id = CompanionDeviceId(Uuid::nil()), 3 => wrong.listener_generation = 0,
+                _ => wrong.observed_at_unix = -1 }
+            assert!(encode_server_frame(&ServerFrame::CapabilityInventory(wrong)).is_err());
+        }
     }
 }

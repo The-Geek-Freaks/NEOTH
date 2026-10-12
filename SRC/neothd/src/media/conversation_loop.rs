@@ -1127,7 +1127,7 @@ pub(crate) async fn run_a2_session(
         .and(cleanup);
     // All stage-held permit clones were joined above. Release this final
     // session dependency before projecting a successful automatic stop.
-    drop(dependencies);
+    drop(dependencies.permit);
     if follow_up_expired || settled.is_err() {
         publish_follow_up_stop(&event_tx, settled, capture_terminal_rx.try_recv().ok()).await
     } else {

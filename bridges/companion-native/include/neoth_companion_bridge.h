@@ -100,6 +100,15 @@ int32_t neoth_companion_operation_poll_v3(neoth_companion_operation *operation,
     uint8_t *out, size_t out_len, size_t *required_len);
 void neoth_companion_operation_free(neoth_companion_operation *operation);
 
+/* Explicit read-only grant inspection. command_json is bounded to 512 bytes:
+ * {"inventory_schema_version":1,"revision":N,"expected_scope":"companion.status.read"}
+ * or the disjoint companion.chat.send scope. The stored scope selects a route;
+ * only the daemon determines effective scope. Old daemons are never retried or
+ * sent this request without advertising support. Uses original poll/cancel/free. */
+neoth_companion_operation *neoth_companion_capability_inventory_start_v1(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *command_json, size_t command_json_len);
 /* Conversation v1 is explicit: no fallback to one-off chat, and no automatic
  * resend. Persist public request_id scoped to the enrollment revision before
  * start. The bounded JSON command has command_schema_version=1, request_id,

@@ -1,0 +1,19 @@
+{
+  "schema": "neoth.gold-wave2565.v1",
+  "date": "2026-10-12",
+  "base": "53eff2f6e98366e5310d11fc4100ac065508fc36",
+  "run": 38274002341,
+  "failedAudioJobs": [
+    114894978693,
+    114894978978,
+    114894978820
+  ],
+  "diagnostic": "E0382: dependencies.supervisor consumed before whole-struct drop",
+  "change": "Release dependencies.permit before terminal publication; other fields drop naturally after owner completion",
+  "path": "SRC/neothd/src/media/conversation_loop.rs",
+  "review": "Independent remote Rust partial-move and permit-release ordering review",
+  "registeredAudioCases": 68,
+  "hosted": "Fresh compilation and exact execution pending",
+  "localExecutableValidationRan": false,
+  "goldCheckboxesClosed": 0
+}

@@ -28,7 +28,7 @@ SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
  "neoth_companion_operation_free","neoth_companion_bridge_free","neoth_companion_chat_start_v2","neoth_companion_operation_poll_v2",
- "neoth_companion_chat_start_v3","neoth_companion_operation_poll_v3","neoth_companion_conversation_start_v1","neoth_companion_conversation_poll_v1")
+ "neoth_companion_chat_start_v3","neoth_companion_operation_poll_v3","neoth_companion_conversation_start_v1","neoth_companion_conversation_poll_v1","neoth_companion_capability_inventory_start_v1")
 SHUTDOWN_MARKERS = (
     ("background_entry", b"shutdown checkpoint: background entry"),
     ("generation_effects_retired", b"shutdown checkpoint: generation effects retired"),
@@ -526,7 +526,7 @@ def terminal(raw: bytes, kind: str) -> dict[str,Any]:
     value = cli_json(raw, "public terminal")
     expectation = {"paired":("state","paired"),"status":("state","status"),
                    "chat":("kind","chat"),"denied":("state","denied"),
-                   "failed":("state","failed")}[kind]
+                   "failed":("state","failed"),"capability_inventory":("state","capability_inventory")}[kind]
     if not isinstance(value,dict) or value.get(expectation[0]) != expectation[1]:
         raise RuntimeError(f"unexpected {kind} terminal")
     return value
@@ -540,6 +540,8 @@ class Bridge:
         self.lib.neoth_companion_pair_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_reconnect_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_chat_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
+        self.lib.neoth_companion_capability_inventory_start_v1.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
+        self.lib.neoth_companion_capability_inventory_start_v1.restype=ptr
         self.lib.neoth_companion_chat_start_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
         self.lib.neoth_companion_chat_start_v3.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
         for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start","neoth_companion_chat_start_v2","neoth_companion_chat_start_v3"): getattr(self.lib,name).restype=ptr
@@ -858,6 +860,7 @@ def run_chat_pair_and_start(
     receipt: dict[str,Any],
     timeout: Callable[[], float],
     observe_chat_start: Callable[[str], None] | None = None,
+    check_inventory: Callable[[Any, dict[str, Any]], None] | None = None,
 ) -> tuple[dict[str,Any],dict[str,Any]]:
     chat_bridge = factory(library)
     try:
@@ -869,6 +872,7 @@ def run_chat_pair_and_start(
             raise RuntimeError("chat pair rejected")
         chat_pair=terminal(raw,"paired")
         receipt["steps"]["chat_pair"]={"code":code,"validated":True}
+        if check_inventory is not None: check_inventory(chat_bridge, chat_pair)
         receipt["stage"]="chat_start"
         if observe_chat_start is not None:
             observe_chat_start("before")
@@ -971,11 +975,37 @@ def main() -> int:
                         receipt["pair_cli_failure_category"]=error.category
                         receipt["pair_cli_failure_parse_subtype"]=error.parse_subtype
                         raise
+                def check_inventory(access_bridge: Any, paired: dict[str, Any]) -> None:
+                    scope = paired["granted_scope"]
+                    stage = "status_inventory" if scope == "companion.status.read" else "chat_inventory"
+                    receipt["stage"] = stage
+                    before_count = provider.server.request_count
+                    before_time = int(time.time())
+                    command = {"inventory_schema_version": 1, "revision": paired["revision"], "expected_scope": scope}
+                    code, raw = access_bridge.call("neoth_companion_capability_inventory_start_v1",
+                        json.dumps(paired["descriptor"], separators=(",", ":")), paired["device_id"],
+                        json.dumps(command, separators=(",", ":")), timeout=budget(work_deadline))
+                    if code != OK: raise RuntimeError("authenticated inventory rejected")
+                    inventory = terminal(raw, "capability_inventory")
+                    if (inventory.get("inventory_schema_version") != 1
+                        or inventory.get("device_id") != paired["device_id"]
+                        or inventory.get("revision") != paired["revision"]
+                        or inventory.get("effective_scope") != scope
+                        or not isinstance(inventory.get("listener_generation"), int) or inventory["listener_generation"] <= 0
+                        or not isinstance(inventory.get("daemon_boot_id"), str) or not inventory["daemon_boot_id"]
+                        or not isinstance(inventory.get("observed_at_unix"), int)
+                        or not before_time <= inventory["observed_at_unix"] <= int(time.time())
+                        or provider.server.request_count != before_count):
+                        raise RuntimeError("inventory scope, freshness or no-provider boundary failed")
+                    uuid.UUID(inventory["request_id"])
+                    receipt["steps"][stage] = {"code": OK, "scope": scope, "same_device": True,
+                        "same_revision": True, "fresh_server_observation": True, "provider_delta": 0}
                 status_pair_url=pair_url(mint_pair("status-read","pair_status_read_mint"))
                 receipt["stage"]="pair_status_start"
                 code,raw=bridge.call("neoth_companion_pair_start",status_pair_url,"w2328-status",timeout=budget(work_deadline))
                 status_pair=terminal(raw,"paired") if code==OK else (_ for _ in ()).throw(RuntimeError("status pair rejected"))
                 receipt["steps"]["status_pair"]={"code":code,"validated":True}
+                check_inventory(bridge, status_pair)
                 receipt["stage"]="status_reconnect_start"
                 reconnect_cursor=shutdown_markers.scoped_connect_cursor()
                 print("NEOTH_COMPANION_HOSTED_STAGE=status_reconnect_start",file=sys.stderr,flush=True)
@@ -1024,7 +1054,9 @@ def main() -> int:
                     receipt,
                     lambda: budget(work_deadline),
                     observe_chat_start,
+                    check_inventory,
                 )
+                if chat_pair["device_id"] == status_pair["device_id"]: raise RuntimeError("inventory device identities collided")
                 records=chat.get("records",[])
                 if provider.server.request_count != 1 or chat.get("outcome") != "accepted" or not any(isinstance(record,dict) and record.get("text") == REPLY for record in records):
                     raise RuntimeError("owned loopback provider/chat terminal proof missing")

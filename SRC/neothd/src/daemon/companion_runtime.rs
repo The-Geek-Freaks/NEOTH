@@ -30,12 +30,13 @@ use crate::{
         },
         companion_protocol::{
             COMPANION_V3_SCHEMA_VERSION, CompanionChatActivitySnapshot, CompanionChatClientFrame,
+            CompanionCapabilityInventoryRequest, CompanionStatusClientFrame,
             CompanionChatOutcome, CompanionChatRecord, CompanionChatRecordKind,
             CompanionChatTerminal, CompanionConversationAdmission,
             CompanionConversationReadRequest, CompanionDenied, CompanionDeniedCode,
             CompanionDeviceId, CompanionReadiness, CompanionScope, CompanionStatusSnapshot,
             CompanionToolActivityEvent, CompanionToolActivityPhase, EnrollmentAccepted,
-            EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
+            EnrollmentProof, ReconnectDescriptor, ServerFrame,
         },
     },
     wal::{
@@ -1225,19 +1226,29 @@ impl CompanionRuntime {
                 }
             };
             if let Err(error) =
-                write_frame(&mut connection, &ServerFrame::StatusChallenge(challenge)).await
+                write_status_challenge_with_inventory_advertisement(&mut connection, &challenge).await
             {
                 drop(connection);
                 rendezvous.shutdown_checked().await?;
                 tracing::debug!(%error, "companion v3 status challenge write failed");
                 continue;
             }
-            let proof: StatusProof = match read_frame(&mut connection).await {
+            let incoming: CompanionStatusClientFrame = match read_frame(&mut connection).await {
                 Ok(value) => value,
                 Err(error) => {
                     drop(connection);
                     rendezvous.shutdown_checked().await?;
                     tracing::debug!(%error, "companion v3 status proof read failed");
+                    continue;
+                }
+            };
+            let proof = match incoming {
+                CompanionStatusClientFrame::Status(proof) => proof,
+                CompanionStatusClientFrame::CapabilityInventory(request) => {
+                    self.run_capability_inventory(
+                        request, CompanionScope::StatusRead, connection, rendezvous,
+                        (shutdown.clone(), device_stop.clone()),
+                    ).await?;
                     continue;
                 }
             };
@@ -1341,6 +1352,11 @@ impl CompanionRuntime {
         };
         let request = match incoming {
             CompanionChatClientFrame::Chat(request) => request,
+            CompanionChatClientFrame::CapabilityInventory(request) => {
+                return self.run_capability_inventory(
+                    request, CompanionScope::ChatSend, connection, rendezvous, (shutdown, device_stop),
+                ).await;
+            }
             CompanionChatClientFrame::ConversationRead(request) => {
                 return self
                     .run_conversation_read(request, connection, rendezvous, shutdown, device_stop)
@@ -1662,6 +1678,37 @@ impl CompanionRuntime {
             .await
     }
 
+    /// Read-only delivery stays in the retained listener task and uses its checked carrier drain.
+    async fn run_capability_inventory(
+        &self,
+        request: CompanionCapabilityInventoryRequest,
+        route_scope: CompanionScope,
+        mut connection: peeroxide::SwarmConnection,
+        rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
+        stop: (watch::Receiver<bool>, watch::Receiver<bool>),
+    ) -> Result<()> {
+        let admitted = companion_now_unix_i64().and_then(|now| {
+            self.authority.authorize_capability_inventory(&request, route_scope, now)
+        });
+        let (lease, inventory) = match admitted {
+            Ok(value) => value,
+            Err(error) => {
+                let denial = match CompanionDenied::new(CompanionDeniedCode::DeviceDenied) {
+                    Ok(denied) => write_frame(&mut connection, &ServerFrame::Denied(denied)).await,
+                    Err(error) => Err(error.into()),
+                };
+                let reason = denial.err().unwrap_or(error);
+                return self.close_unaccepted_chat_connection(connection, rendezvous, reason).await;
+            }
+        };
+        let write = async {
+            anyhow::ensure!(!*stop.0.borrow() && !*stop.1.borrow(), "inventory delivery owner stopped");
+            let frame = lease.capability_inventory_frame(inventory)?;
+            // Admitted writes are never cancelled halfway through. The lease survives through teardown.
+            connection.write(&frame).await.context("companion inventory write")
+        }.await;
+        self.finish_chat_carrier(connection, rendezvous, &lease, write).await
+    }
     async fn run_conversation_read(
         &self,
         request: CompanionConversationReadRequest,
@@ -2215,12 +2262,21 @@ async fn write_frame(
 
 /// The capability is deliberately an envelope sibling, never a challenge-body
 /// field: old adjacent-tag enum decoders retain their V3 body contract.
+async fn write_status_challenge_with_inventory_advertisement(
+    connection: &mut peeroxide::SwarmConnection,
+    challenge: &crate::daemon::companion_protocol::StatusChallenge,
+) -> Result<()> {
+    let bytes = crate::daemon::companion_protocol::encode_status_challenge_with_capability_inventory_advertisement(challenge)?;
+    tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes)).await
+        .context("companion status challenge write timeout")??;
+    Ok(())
+}
 async fn write_chat_challenge_with_activity_advertisement(
     connection: &mut peeroxide::SwarmConnection,
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
     let bytes =
-        crate::daemon::companion_protocol::encode_chat_challenge_with_conversation_advertisement(
+        crate::daemon::companion_protocol::encode_chat_challenge_with_capability_inventory_advertisement(
             challenge,
         )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
