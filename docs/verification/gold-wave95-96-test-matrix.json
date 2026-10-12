@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "A04 reviewed implementation; hosted rustfmt receipt applied; compile and runtime proof pending",
+  "status": "Three W186 platform receipts canonically admitted; A04 fast gates green; full CI and A04 runtime remain open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 419172,
-    "sha256": "FA39C4F1FB4F9E8283C291A0279F64772E65D74C55B97C90E44C4F4A79AD7084"
+    "bytes": 419378,
+    "sha256": "1D999C53D8228FA6170233FC4FB934D8C2ADF99A9C433C45A96A100281556F6C"
   },
-  "sourceInputs": 2286,
+  "sourceInputs": 2287,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81815,6 +81815,26 @@
       }
     ],
     "note": "Imported verified artifact11740106571 from Preflight38234043281 at0629c318; six exact Rust paths only; dedicated25-case catalog rebound. No local formatter/compiler/runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2558ThreePlatformAudio": {
+    "base": "a856b682f376b524e69d62f0992fa0e768488813",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2558-cross-platform-audio.json",
+        "bytes": 3276,
+        "sha256": "0D17CEAB20D1C594C10C9A3F9EE5F8B3D8023D7A1E05200B99657420883D3EE6",
+        "blob": "cb50c2981783b857dd2612d19fb77538db6ce246"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2584761,
+        "sha256": "6E5CF5EE55CFAC479AF0A75C934488119A409D87D1FEF5708AC3F981AF483A9C",
+        "blob": "fde07a8e1311a157db59c459b2425438bc9fdf9c"
+      }
+    ],
+    "note": "Original GitHub archives on immutable50404471 producer:52 exact cases on Linux Windows macOS;12 raw source bindings per platform. Paperlessa856b682 fast gates succeeded. No device/release acceptance or local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

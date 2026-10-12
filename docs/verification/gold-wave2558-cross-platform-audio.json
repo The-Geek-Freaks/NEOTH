@@ -1,0 +1,71 @@
+{
+  "schema": "neoth.gold-wave2558.cross-platform-audio.v1",
+  "capturedUtc": "2026-10-12T10:11:29.0681796Z",
+  "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+  "scope": "52 exact W186 hosted fixtures per platform; immutable producer catalog and raw Git blob verification",
+  "platforms": [
+    {
+      "platform": "linux",
+      "runId": 38228541674,
+      "jobId": 114742147185,
+      "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+      "artifactId": 11737104029,
+      "archiveSha256": "598400833fccecbdb3ec522889ae5cfafef2c96e5f3dc312fcd36b8d23eb3f23",
+      "passed": 52,
+      "canonicalCatalogSha256": "6a66d3b73afff63e4f2e1d11e1b9ab78f6f7d0f312231876f3431bfb74c9dc59",
+      "sourceBindings": 12,
+      "archiveEntries": 4,
+      "admissionPath": "work/gold-20260906/wave2558-scheduled-integration/ROOT_LINUX_AUDIO_CANONICAL_ADMISSION.json",
+      "admissionSha256": "0F12033934540C288EAF644495880B1072052CCACD0BF696CF945BC7C72170CF"
+    },
+    {
+      "platform": "windows",
+      "runId": 38228541674,
+      "jobId": 114742147201,
+      "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+      "artifactId": 11738895527,
+      "archiveSha256": "67e6cfd6c1d6b00707daf317998bbfcfade71863fc359270967acd1ba918fe49",
+      "passed": 52,
+      "canonicalCatalogSha256": "6a66d3b73afff63e4f2e1d11e1b9ab78f6f7d0f312231876f3431bfb74c9dc59",
+      "sourceBindings": 12,
+      "archiveEntries": 4,
+      "admissionPath": "work/gold-20260906/wave2558-scheduled-integration/ROOT_WINDOWS_AUDIO_CANONICAL_ADMISSION.json",
+      "admissionSha256": "0F0053C4CF2E4A508283A318907F8745BF2D2657C98C772B60FF8A4040798EAC"
+    },
+    {
+      "platform": "macos",
+      "runId": 38228541674,
+      "jobId": 114742147097,
+      "producer": "50404471b0a006f16bdaf098deee9588a8d7347e",
+      "artifactId": 11739607532,
+      "archiveSha256": "eb54629c924b3894b06015de60431ed9a9d6c0c1dcd9718db9de68b957eed3b8",
+      "passed": 52,
+      "canonicalCatalogSha256": "6a66d3b73afff63e4f2e1d11e1b9ab78f6f7d0f312231876f3431bfb74c9dc59",
+      "sourceBindings": 12,
+      "archiveEntries": 4,
+      "admissionPath": "work/gold-20260906/wave2558-scheduled-integration/ROOT_MACOS_AUDIO_CANONICAL_ADMISSION.json",
+      "admissionSha256": "549A26D0D1A5D4FA3E1ED5D528EE328BABBE5E3DC7D17F403406884876D65DBA"
+    }
+  ],
+  "totalExecutions": 156,
+  "distinctCases": 52,
+  "canonicalOrderedIdentityMatch": true,
+  "apiArchiveDigestsVerified": true,
+  "limits": [
+    "Synthetic capture/playback and embedded graph cases; no physical microphone/device acceptance",
+    "Full integration still running at capture",
+    "Different later Paperless sources are not covered by this producer",
+    "No release or Gold completion claim"
+  ],
+  "paperless": {
+    "producer": "a856b682f376b524e69d62f0992fa0e768488813",
+    "sourcePublication": "0629c318b4e6811dbdc83745fa41777eb710f84d",
+    "preflight": 38234598324,
+    "preflightConclusion": "success",
+    "codeQuality": 38234597347,
+    "codeQualityConclusion": "success",
+    "runtime": "25-case focused compilation/execution pending after active full CI",
+    "independentReview": "Published source remotely reviewed; no remaining concrete compile/feature/integration finding; static only"
+  },
+  "localExecutableValidationRan": false
+}
