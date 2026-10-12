@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T10:17:43.9484950Z",
-  "validationStatus": "A04 source fast gates passed; serialized canary policy reviewed; new cadence contract hosted check pending",
+  "capturedUtc": "2026-10-12T15:16:25.3880134Z",
+  "validationStatus": "Paperless fixture type corrected; hosted rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4308,8 +4308,8 @@
     },
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
-      "bytes": 9360,
-      "sha256": "2569AD049AC57DA9CDA347E279CDE77479C539C273CD3CD1A34F3FF3452BCBFC"
+      "bytes": 9419,
+      "sha256": "CF8A5A7BE5FB78DEDB3AA50ADFE5AC702E80BC829718A9FFA7036D00855242C9"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4325,6 +4325,11 @@
       "path": "docs/verification/gold-wave2559-paperless-ci-serialization.json",
       "bytes": 1511,
       "sha256": "367027DB054A873E7EF9DC9C76A07145378DA9173C9567E2B471375F12692F81"
+    },
+    {
+      "path": "docs/verification/gold-wave2561-paperless-fixture-repair.json",
+      "bytes": 826,
+      "sha256": "2FAC4C161167CC376D75B00305F6FFC7EC8B67E708B4E2C598B28D4BA1503BE0"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5493,8 +5498,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2586094,
-      "sha256": "2FE5DED1FB3318EFC616D0D1FA2F5C1834C1C0D795BFA31603737A7980F1139D"
+      "bytes": 2587222,
+      "sha256": "30F3DC8DECC2C48D35AE8C4554C965AFD245F6158DA5045924B0B59C0D2D8FB3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7503,8 +7508,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 37165,
-      "sha256": "CC2CC30E92E3F2BCE0DD8DA9C69926F94271A71C1B217018E99B56F4769BDF80"
+      "bytes": 37171,
+      "sha256": "1556ED76E57E5BCD513EE1FA55C6ACE9627D45DB638BC13B5C2E428E1F0D2185"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",

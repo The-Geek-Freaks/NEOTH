@@ -1,6 +1,6 @@
 {
   "schema": "neoth.email-paperless-recovery.v1",
-  "status": "22 new plus 3 existing compatibility cases; hosted execution pending",
+  "status": "22 new plus 3 compatibility cases; first hosted test compile failed at fixture Option<String>; fixture corrected, rerun pending",
   "feature": "imap_fetch",
   "requiredTests": [
     {
@@ -90,14 +90,14 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "CC2CC30E92E3F2BCE0DD8DA9C69926F94271A71C1B217018E99B56F4769BDF80",
+      "sourceSha256": "1556ED76E57E5BCD513EE1FA55C6ACE9627D45DB638BC13B5C2E428E1F0D2185",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "CC2CC30E92E3F2BCE0DD8DA9C69926F94271A71C1B217018E99B56F4769BDF80",
+      "sourceSha256": "1556ED76E57E5BCD513EE1FA55C6ACE9627D45DB638BC13B5C2E428E1F0D2185",
       "newCase": true,
       "requiresImapFeature": false
     },

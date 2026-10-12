@@ -712,7 +712,7 @@ mod tests {
         let mut email = crate::email::inbound::InboundEmail {
             uid: "7".into(),
             from: "sender@example.com".into(),
-            from_domain: "example.com".into(),
+            from_domain: Some("example.com".into()),
             subject: "invoice".into(),
             body: "invoice body".into(),
             attachment_filenames: vec![],

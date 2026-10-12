@@ -1,0 +1,20 @@
+{
+  "schema": "neoth.gold-wave2561.v1",
+  "date": "2026-10-12",
+  "base": "56c8bcd5c5e63ad18c1746265539c03ea9ee7e62",
+  "failedRun": 38235985647,
+  "failedProducer": "56c8bcd5c5e63ad18c1746265539c03ea9ee7e62",
+  "job": 114800060432,
+  "error": "E0277: fixture from_domain must be Option<String>",
+  "source": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+  "sourceBlob": "05b56a8f19196987e1092d050945d4f9d963fd17",
+  "sourceSha256": "1556ED76E57E5BCD513EE1FA55C6ACE9627D45DB638BC13B5C2E428E1F0D2185",
+  "change": "Wrap existing fixture domain in Some; production behavior unchanged",
+  "existingCliBuild": "success on failed producer",
+  "testCatalogCases": 25,
+  "testCatalogBindingsRefreshed": 2,
+  "newTests": 0,
+  "hostedRepairValidation": "pending",
+  "localExecutableValidationRan": false,
+  "goldCheckboxesClosed": 0
+}
