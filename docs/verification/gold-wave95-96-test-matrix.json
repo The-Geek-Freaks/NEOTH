@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Opt-in voice follow-up implemented;68 W186 cases registered; hosted voice validation pending; Paperless25 and lifecycle admitted on e5d27cc8",
+  "status": "Voice follow-up hosted formatting applied;68 cases rebound; fresh hosted gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 420519,
-    "sha256": "3DE0DD93696DB4BFA50822C72CB34219EB71310C19EA27A6BB720D70F69F0B7B"
+    "bytes": 420465,
+    "sha256": "FAB26C2194E30C5A960BA4C0BCEE37A5B185972FB886BFDDA954456C86296C9A"
   },
   "sourceInputs": 2293,
   "requiredNativeTests": [
@@ -17515,7 +17515,7 @@
     {
       "test": "config::features::conversation_follow_up_tests::follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds",
       "sourcePath": "SRC/neothd/src/config/features.rs",
-      "sourceSha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79",
+      "sourceSha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC",
       "junitClass": "neoth"
     }
   ],
@@ -81979,6 +81979,44 @@
       }
     ],
     "note": "Reviewed generation/deadline/queue/settlement boundaries.1newportable+15liveaudio tests.No local runtime.No physicaldevice or fullGold claim.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2560HostedFormat": {
+    "base": "549eaf6fc7adb5eaa28a8f02aa68c421643824cf",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 19024,
+        "sha256": "ACD57CD3D53F477E2D4ABF51DA899D3F6D60CB147012661084FF52EE0D2F7E68",
+        "blob": "af0706723a1dad978e8ffec20241643397db02f6"
+      },
+      {
+        "path": "docs/verification/gold-wave2560-voice-follow-up.json",
+        "bytes": 3340,
+        "sha256": "152D247DBE6B808ABE9700421AEEDC43626DBB6F96319EC6FC131BCCD125F17F",
+        "blob": "5d8c636c87f5d594bd16139d734a27c8589c8078"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2591799,
+        "sha256": "B9F51BE47E5E3B2047657AA74A2870B1B7FE7B320A3541732D4F5A6F49B0FFDB",
+        "blob": "d168ad683c75096b60f6d000e08eaa330ea4b4ff"
+      },
+      {
+        "path": "SRC/neothd/src/config/features.rs",
+        "bytes": 58266,
+        "sha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC",
+        "blob": "01e17489c62f3495eda0f913d0b191854679c5ad"
+      },
+      {
+        "path": "SRC/neothd/src/media/conversation_loop.rs",
+        "bytes": 79968,
+        "sha256": "7FBD1154D7DD92D2312CAC419993F70BA5A0C8C22D9F237830D154DC773A9727",
+        "blob": "ead5bdd4bda23cb5a18ff777aae2583b18e32b11"
+      }
+    ],
+    "note": "Verified original11756953790 on549eaf6f;two ownedRustpaths;no localformatter/compiler.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

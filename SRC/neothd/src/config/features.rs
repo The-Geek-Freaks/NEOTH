@@ -968,7 +968,9 @@ impl MediaConfig {
         match self.conversation_follow_up_secs {
             None => Ok(None),
             Some(seconds @ 1..=300) => Ok(Some(std::time::Duration::from_secs(seconds))),
-            Some(_) => anyhow::bail!("media.conversation_follow_up_secs must be between 1 and 300 seconds"),
+            Some(_) => {
+                anyhow::bail!("media.conversation_follow_up_secs must be between 1 and 300 seconds")
+            }
         }
     }
 }
@@ -1312,17 +1314,34 @@ mod conversation_follow_up_tests {
     fn follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds() {
         let absent: MediaConfig = serde_yaml::from_str("{}").unwrap();
         assert_eq!(absent.conversation_follow_up_duration().unwrap(), None);
-        assert_eq!(MediaConfig::default().conversation_follow_up_duration().unwrap(), None);
+        assert_eq!(
+            MediaConfig::default()
+                .conversation_follow_up_duration()
+                .unwrap(),
+            None
+        );
         for seconds in [1, 7, 300] {
-            let config: MediaConfig = serde_yaml::from_str(&format!("conversation_follow_up_secs: {seconds}")).unwrap();
-            assert_eq!(config.conversation_follow_up_duration().unwrap(), Some(Duration::from_secs(seconds)));
+            let config: MediaConfig =
+                serde_yaml::from_str(&format!("conversation_follow_up_secs: {seconds}")).unwrap();
+            assert_eq!(
+                config.conversation_follow_up_duration().unwrap(),
+                Some(Duration::from_secs(seconds))
+            );
         }
         for seconds in [0, 301, u64::MAX] {
-            let config = MediaConfig { conversation_follow_up_secs: Some(seconds), ..MediaConfig::default() };
+            let config = MediaConfig {
+                conversation_follow_up_secs: Some(seconds),
+                ..MediaConfig::default()
+            };
             assert!(config.conversation_follow_up_duration().is_err());
         }
         for invalid in ["-1", "1.5", "true", "\"7\""] {
-            assert!(serde_yaml::from_str::<MediaConfig>(&format!("conversation_follow_up_secs: {invalid}")).is_err());
+            assert!(
+                serde_yaml::from_str::<MediaConfig>(&format!(
+                    "conversation_follow_up_secs: {invalid}"
+                ))
+                .is_err()
+            );
         }
     }
 }

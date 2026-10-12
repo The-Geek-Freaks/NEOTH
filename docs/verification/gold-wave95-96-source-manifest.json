@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T15:44:43.4646125Z",
-  "validationStatus": "Opt-in voice follow-up implemented;68 W186 cases registered; hosted voice validation pending; Paperless25 and lifecycle admitted on e5d27cc8",
+  "capturedUtc": "2026-10-12T15:49:26.5349125Z",
+  "validationStatus": "Voice follow-up hosted formatting applied;68 cases rebound; fresh hosted gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3314,7 +3314,7 @@
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 19024,
-      "sha256": "3FE08BB5AFB760E0C122AA25A7C3A2D98F7B4BF36BBCB82FA32778E50A0A4987"
+      "sha256": "ACD57CD3D53F477E2D4ABF51DA899D3F6D60CB147012661084FF52EE0D2F7E68"
     },
     {
       "path": "docs/verification/gold-wave186-silero-specialization.json",
@@ -4333,8 +4333,8 @@
     },
     {
       "path": "docs/verification/gold-wave2560-voice-follow-up.json",
-      "bytes": 2552,
-      "sha256": "8E6D94B3F84E5D93AE3455147AC973973431831EDC0E92DE0E3525829FD89F22"
+      "bytes": 3340,
+      "sha256": "152D247DBE6B808ABE9700421AEEDC43626DBB6F96319EC6FC131BCCD125F17F"
     },
     {
       "path": "docs/verification/gold-wave2561-paperless-fixture-repair.json",
@@ -5513,8 +5513,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2591253,
-      "sha256": "05F3B9F20090432AFFA89DFCC010F8D64CA7A229E35857B56842604831453CF8"
+      "bytes": 2591799,
+      "sha256": "B9F51BE47E5E3B2047657AA74A2870B1B7FE7B320A3541732D4F5A6F49B0FFDB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7213,8 +7213,8 @@
     },
     {
       "path": "SRC/neothd/src/config/features.rs",
-      "bytes": 57976,
-      "sha256": "F6A0A8314F521BC40827E0048FD12BAFE13050337B63A58F4F2BB77F2E694C79"
+      "bytes": 58266,
+      "sha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC"
     },
     {
       "path": "SRC/neothd/src/config/inference.rs",
@@ -8178,8 +8178,8 @@
     },
     {
       "path": "SRC/neothd/src/media/conversation_loop.rs",
-      "bytes": 77234,
-      "sha256": "A3E93768E858F2DFBF77C42B39E4A01938526FAEE90913C854A32EF097D9C87A"
+      "bytes": 79968,
+      "sha256": "7FBD1154D7DD92D2312CAC419993F70BA5A0C8C22D9F237830D154DC773A9727"
     },
     {
       "path": "SRC/neothd/src/media/conversation_scope.rs",

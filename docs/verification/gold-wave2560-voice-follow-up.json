@@ -46,5 +46,27 @@
   "localExecutableValidationRan": false,
   "fullA2IntegrationHarness": "not available; not claimed",
   "physicalDeviceAcceptance": "open",
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "paths": [
+      "SRC/neothd/src/config/features.rs",
+      "SRC/neothd/src/media/conversation_loop.rs"
+    ],
+    "originalArchiveSha256": "b6ec45c418fe1395a1000a6dadd9c2f3f872ab6e519fb926184b89b2b8a348e4",
+    "localFormatterExecuted": false,
+    "bindings": [
+      {
+        "path": "SRC/neothd/src/config/features.rs",
+        "blob": "01e17489c62f3495eda0f913d0b191854679c5ad",
+        "sha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC"
+      },
+      {
+        "path": "SRC/neothd/src/media/conversation_loop.rs",
+        "blob": "ead5bdd4bda23cb5a18ff777aae2583b18e32b11",
+        "sha256": "7FBD1154D7DD92D2312CAC419993F70BA5A0C8C22D9F237830D154DC773A9727"
+      }
+    ],
+    "artifact": 11756953790,
+    "run": 38272889072
+  }
 }
