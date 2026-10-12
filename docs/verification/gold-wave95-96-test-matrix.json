@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2553 audio catalog corrected; W2554 Jarvis deltas mapped; W2555 offline comparison implemented; hosted fast checks pending",
+  "status": "W2555 hosted synthetic comparison contracts accepted on5571bc91; W2556 proposals retained open; full acceptance remains source-bound and incomplete.",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 417893,
-    "sha256": "262CF67697F7DCB406274D1CC172ED6574C7F5929B50AD642AFCAB3B44C679B9"
+    "bytes": 417918,
+    "sha256": "C21B19D70EE4375C97FAC2549FF2F61F602ED89D9C493059F801133F16C667A6"
   },
   "sourceInputs": 2279,
   "requiredNativeTests": [
@@ -81487,6 +81487,32 @@
       }
     ],
     "note": "No Rust product changes. Active full-CI38217375243 remains bound to92534440; one existing full stream retained. Local runtime prohibited; original roadmap prefix and all checkbox lines preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2555HostedFollowthrough": {
+    "base": "5571bc91a38e049d956aa52fd63709aea4921813",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2553-live-audio-source-binding.json",
+        "bytes": 1933,
+        "sha256": "11DA8D910338480242D18D0281A231B54D5E7C6D4DA336DC68C12DEA3ADBE9BE",
+        "blob": "11389160ed2de065762298eeb870737e743c45dc"
+      },
+      {
+        "path": "docs/verification/gold-wave2555-workflow-comparison.json",
+        "bytes": 2784,
+        "sha256": "4B09F321BAC2DF37F86FDF4F05D13B81841C376B3DE923FBBCD248B6A8E14E7E",
+        "blob": "0bdb73a93573b83554fe69ac01b65e08be0b6635"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2579076,
+        "sha256": "CF5B5144BBD020041AA173E7DFD59D12FE0097DB2925EC74E82215C6B9840166",
+        "blob": "c1222268b63a5d36bf805785eef433ab2af6c337"
+      }
+    ],
+    "note": "13 actual comparator CLI regression methods passed in Preflight38221800056; CodeQuality38221800358 passed; immutable source review found no new defect. W2556 ten proposals received from authorized Jarvis chat; no device/runtime adoption claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

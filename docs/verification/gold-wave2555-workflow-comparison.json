@@ -9,7 +9,7 @@
     "Output contains hashes/counts/indices only; no prompts, responses, failure reasons or episode names.",
     "Thirteen actual-CLI synthetic regression methods added to the existing Preflight stream; no new provider workflow or scheduler."
   ],
-  "status": "implemented candidate; static reviewed against actual Rust reporter; hosted validation pending",
+  "status": "Published at 5571bc91; thirteen synthetic CLI regression tests passed in hosted Preflight; Code Quality passed; provider/training benefit remains unmeasured.",
   "localExecutableValidationRan": false,
   "trainingRunStarted": false,
   "providerRunStarted": false,
@@ -30,5 +30,15 @@
     "Reports are operator-provided evidence; no independent run authenticity is asserted.",
     "Future live pilot still needs an explicit model, licensed data/model/trainer, remote resource and cost cap."
   ],
-  "independentStaticReview": "adoption_scheduling_ops: accepted with report-only containment and explicit inconclusive state for missing variant observation; both incorporated."
+  "independentStaticReview": "adoption_scheduling_ops: accepted with report-only containment and explicit inconclusive state for missing variant observation; both incorporated.",
+  "hostedValidation": {
+    "producer": "5571bc91a38e049d956aa52fd63709aea4921813",
+    "preflightRun": 38221800056,
+    "codeQualityRun": 38221800358,
+    "comparisonTests": 13,
+    "testTerminal": "OK",
+    "preflightLogSha256": "6AC86A3E3EEAEA0ACB21A117416D81A5E50DF3535CA1ED24190C6F5F352E780F",
+    "independentSourceReview": "adoption_agent_harnesses: no new correctness findings on immutable published source; report authenticity remains self-attested",
+    "localProof": "work/gold-20260906/wave2555-workflow-comparison/FAST_GATE_ADMISSION.json"
+  }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-12T07:58:53.6339502Z",
-  "validationStatus": "W2553 audio catalog corrected; W2554 Jarvis deltas mapped; W2555 offline comparison implemented; hosted fast checks pending",
+  "capturedUtc": "2026-10-12T09:06:20.5710756Z",
+  "validationStatus": "W2555 hosted synthetic comparison contracts accepted on5571bc91; W2556 proposals retained open; full acceptance remains source-bound and incomplete.",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4288,8 +4288,8 @@
     },
     {
       "path": "docs/verification/gold-wave2553-live-audio-source-binding.json",
-      "bytes": 1790,
-      "sha256": "2925FD16AE4B2685FB972672D26AE2F823A08CF71BD1DFFC05AA5A73F2A52366"
+      "bytes": 1933,
+      "sha256": "11DA8D910338480242D18D0281A231B54D5E7C6D4DA336DC68C12DEA3ADBE9BE"
     },
     {
       "path": "docs/verification/gold-wave2554-jarvis-adoption-reconciliation.json",
@@ -4298,8 +4298,8 @@
     },
     {
       "path": "docs/verification/gold-wave2555-workflow-comparison.json",
-      "bytes": 2163,
-      "sha256": "88180DAF69DEFFD018E46EB56B558BF37FEABE07F931DF409A0DC88D700BB78A"
+      "bytes": 2784,
+      "sha256": "4B09F321BAC2DF37F86FDF4F05D13B81841C376B3DE923FBBCD248B6A8E14E7E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5468,8 +5468,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2568763,
-      "sha256": "3F9DFB1BF239D50397D741B19E399D544012AE32A10140CDB2DAE1C0D05C6686"
+      "bytes": 2579076,
+      "sha256": "CF5B5144BBD020041AA173E7DFD59D12FE0097DB2925EC74E82215C6B9840166"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

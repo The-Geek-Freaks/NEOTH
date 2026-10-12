@@ -30,7 +30,7 @@
   },
   "acceptance": {
     "localExecutableValidationRan": false,
-    "freshHostedPreflight": "pending",
+    "freshHostedPreflight": "success: run 38221800056 on 5571bc91a38e049d956aa52fd63709aea4921813; catalog containment and source hashes checked, live-audio fixtures still pending",
     "freshLiveAudioLinux": "pending",
     "freshLiveAudioWindows": "pending",
     "freshLiveAudioMacos": "pending",
