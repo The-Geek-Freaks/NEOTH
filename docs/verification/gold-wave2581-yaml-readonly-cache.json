@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2581",
+  "base": "12d4e8a13443923c84a8cd403c69f4dfd962b78f",
+  "status": "READ_ONLY_CACHE_REUSE_CANDIDATE",
+  "workflow": ".github/workflows/yaml-dependency-candidate.yml",
+  "cacheAction": "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+  "cacheFamily": "linux-1.91-cargo-complete",
+  "sameOriginalLockRequired": true,
+  "crossLockFallback": false,
+  "cachedPaths": [
+    "~/.cargo/registry/index/",
+    "~/.cargo/registry/cache/",
+    "~/.cargo/git/db/",
+    "SRC/target/"
+  ],
+  "profile": {
+    "os": "ubuntu-24.04",
+    "rust": "1.91",
+    "jobs": 1,
+    "incremental": 0,
+    "devDebug": 0,
+    "testDebug": 0
+  },
+  "targetCacheSave": false,
+  "registryCacheUnchanged": true,
+  "isolatedDifferentialFixtureFresh": true,
+  "sourceAndLockQualificationUnchanged": true,
+  "requiredCases": {
+    "differential": 9,
+    "product": 4,
+    "lockGuards": 9
+  },
+  "officialCacheVersionReference": "https://github.com/actions/cache#cache-version",
+  "independentReviewer": "/root/yaml_candidate_review",
+  "measuredSpeedup": null,
+  "runtimeAccepted": false,
+  "localRuntimeExecuted": false
+}

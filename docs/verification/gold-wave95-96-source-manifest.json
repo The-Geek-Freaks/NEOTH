@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T13:48:47.5916891Z",
-  "validationStatus": "W2580_COMBINED_CANDIDATE_HOSTED_PENDING",
+  "capturedUtc": "2026-10-13T14:04:58.8224883Z",
+  "validationStatus": "W2581_YAML_READONLY_CACHE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -363,8 +363,8 @@
     },
     {
       "path": ".github/workflows/yaml-dependency-candidate.yml",
-      "bytes": 8167,
-      "sha256": "94ACF55CFDCBF6502C63403F3D4A921D7DD6748DDF4C4879B7F2E6D30B696E81"
+      "bytes": 8830,
+      "sha256": "381FBB746C3A2CDF8693721242CAD1A30575C074FAEBA5E3C0A171282F4E97F1"
     },
     {
       "path": ".trivyignore",
@@ -4437,6 +4437,11 @@
       "sha256": "B64CA92273800A3AF6470747C783D8A158639AB405C63597935AB6044CF25542"
     },
     {
+      "path": "docs/verification/gold-wave2581-yaml-readonly-cache.json",
+      "bytes": 1145,
+      "sha256": "CA34C59DDEE35A8CFC6242451285E5D645082CFEA9D813B1282F1B854720751D"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5613,8 +5618,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2616293,
-      "sha256": "A88E16698E55567BB679C03DD153C411AD39AC22CAD4D95681054F7A38346B8E"
+      "bytes": 2617403,
+      "sha256": "D5DBF9ED90507F96FD74715CE2D3F8E46C69325874638D36E6B76E45448E8AC7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2580_COMBINED_CANDIDATE_HOSTED_PENDING",
+  "status": "W2581_YAML_READONLY_CACHE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 424331,
-    "sha256": "1F6B3FA54A08A28FE5425D9F0D4A8E4ACEE046AE8C8FBACBCD8C4699C3922AD7"
+    "bytes": 424523,
+    "sha256": "09D64E1FAE9E11F7FCD8B3914A3BD2DB145378DDA19FB1DC6EFD7DF6CC5F240F"
   },
-  "sourceInputs": 2314,
+  "sourceInputs": 2315,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -83359,6 +83359,32 @@
       }
     ],
     "note": "Unmodified reviewed W2577 completion provenance and W2579 EPUB table columns combined on W2578; four new exact native regressions retained. No runtime admission or primary integration while GUI active.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2581YamlReadOnlyCache": {
+    "base": "12d4e8a13443923c84a8cd403c69f4dfd962b78f",
+    "sources": [
+      {
+        "path": ".github/workflows/yaml-dependency-candidate.yml",
+        "bytes": 8830,
+        "sha256": "381FBB746C3A2CDF8693721242CAD1A30575C074FAEBA5E3C0A171282F4E97F1",
+        "blob": "113cd96dc333ce6b021aa087244e939e1912e68d"
+      },
+      {
+        "path": "docs/verification/gold-wave2581-yaml-readonly-cache.json",
+        "bytes": 1145,
+        "sha256": "CA34C59DDEE35A8CFC6242451285E5D645082CFEA9D813B1282F1B854720751D",
+        "blob": "65269853b7cf6d93e148984b22d53dec794f2f40"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2617403,
+        "sha256": "D5DBF9ED90507F96FD74715CE2D3F8E46C69325874638D36E6B76E45448E8AC7",
+        "blob": "99ef4000cecaa4e0320844d918740fedfd115751"
+      }
+    ],
+    "note": "Read-only same-lock complete CI cache with identical full path set; no target save/cross-lock fallback; all qualification gates retained; runtime and measured speedup pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

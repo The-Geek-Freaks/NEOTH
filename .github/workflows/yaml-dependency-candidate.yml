@@ -52,6 +52,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             apparmor-utils dbus-user-session libfontconfig1-dev libx11-dev \
             libxcb1-dev libxkbcommon-dev libxkbcommon-x11-0 xauth xvfb ffmpeg
+      # Cache versions include paths and compression: match CI's full set.
+      # Restore only the same-lock Rust 1.91 cache; a miss keeps the normal build.
+      # Cargo validates changed candidate fingerprints. Never save candidate
+      # targets into this CI-owned cache namespace.
+      - name: Restore read-only complete Linux Cargo cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
       - name: Cache Cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
