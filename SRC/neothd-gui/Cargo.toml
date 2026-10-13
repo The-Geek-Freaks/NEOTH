@@ -56,7 +56,7 @@ rusqlite = { version = "0.37", features = ["bundled", "functions", "hooks", "lim
 toml = "0.8"
 serde.workspace      = true
 serde_json.workspace = true
-serde_yaml = "0.9"
+serde_yaml = { package = "yaml_serde", version = "=0.10.7" }
 zeroize.workspace = true
 tracing.workspace    = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

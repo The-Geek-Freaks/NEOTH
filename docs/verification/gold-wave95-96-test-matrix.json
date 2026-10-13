@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static_graphify_hosted_eol_repair_pending",
+  "status": "YAML_PRODUCT_IMPORTED_HOSTED_CANDIDATE_ADMITTED_FULL_CI_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 425257,
-    "sha256": "4CE2A76DA3BB3949D7209E24518D8475AE2A7998BDC4D25087D41C61083AC324"
+    "bytes": 425631,
+    "sha256": "925058E79C99E69F7C9DF15FDAA3BF9143E4CD56C0E652F499C961133DFE7652"
   },
-  "sourceInputs": 2319,
+  "sourceInputs": 2321,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -83495,6 +83495,62 @@
       }
     ],
     "note": "Disposable hosted PS1 EOL-only restoration to exact Git bytes; first map failed before extraction; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2584YamlProductImport": {
+    "base": "dc52a371c5fddeb5a5f1d7dd224172a7ad1fd286",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2584-yaml-product-import.json",
+        "bytes": 3151,
+        "sha256": "12804C3EC9FC4978FD24FBFF92FEE9ECA4BD2602EAB7A57E30D8FC3B27C8077E",
+        "blob": "7669880e34caa7b233a2373392771e28c84ae272"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2622922,
+        "sha256": "90284B16276F67AE0F6F3211E13A5378B0D8B130F4D56EBECE4A1BEB65092B2C",
+        "blob": "54ca566d26f844485cdaad3e7905fc407ff9a98c"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 386972,
+        "sha256": "1AC582E445ECAE15F651F4075D2B4E4D7B688107CC6BB87E29546B79B9074A58",
+        "blob": "d6b7a218d4fd9320a4ba5a9397c5c86524b5f159"
+      },
+      {
+        "path": "SRC/neoth-migrate/Cargo.toml",
+        "bytes": 2849,
+        "sha256": "25FABEEBB403DA8D18285E8C6A9057CCE0EAB97315C6273873DD676F96F89726",
+        "blob": "d0a9e47691e722368d72f5572db8cd34f96317b8"
+      },
+      {
+        "path": "SRC/neoth-relay/Cargo.toml",
+        "bytes": 1511,
+        "sha256": "78FA71906B03512B49C68AA666AE1AB72B2F8611E4A7BD3D4EC171C9949B2192",
+        "blob": "052c0bb6d633f0723eb28d5297caa3b68c2f30a5"
+      },
+      {
+        "path": "SRC/neothd-gui/Cargo.toml",
+        "bytes": 3911,
+        "sha256": "03E5E6B1A1FAECB9E4AA7593786C589CCCE9291A924A50CDB8A8C41E4801F242",
+        "blob": "2d90823db68f8333219c7301e1ca7a04b4469a80"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46680,
+        "sha256": "3A4784462BFE96DDE028B81E710B86F9449B7588AB011B950057F3E30B0F1B4D",
+        "blob": "37fe002b774cbc9e0c66d776981ce59c8030e941"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2313064,
+        "sha256": "509BD922454502F6A3405AC95495F9589106C613901AA65DA4B4C9EABF9F127D",
+        "blob": "99585dd626223d0ebfe6fc15e9d4616f9832acc9"
+      }
+    ],
+    "note": "Original YAML candidate and notice artifacts admitted. Exact five product blobs and generated notices; user physical Cargo.lock preserved index-only. Graphify compact index used with explicit gaps; fresh product/full/native proof pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

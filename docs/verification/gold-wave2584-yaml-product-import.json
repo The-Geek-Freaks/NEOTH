@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2584",
+  "base": "dc52a371c5fddeb5a5f1d7dd224172a7ad1fd286",
+  "status": "PRODUCT_IMPORT_WITH_ADMITTED_HOSTED_CANDIDATE",
+  "roadmapScope": "RUSTSEC-2024-0449 YAML dependency replacement",
+  "change": "Four unchanged serde_yaml import aliases now use pinned yaml_serde=0.10.7; exact two-package/two-block lock replacement uses libyaml-rs=0.3.0 with no unrelated dependency change.",
+  "qualification": {
+    "run": 38418677744,
+    "producer": "dc52a371c5fddeb5a5f1d7dd224172a7ad1fd286",
+    "differentialPassed": 9,
+    "existingProductCasesPassed": 4,
+    "guardCasesPassed": 14,
+    "directConsumerChecksPassed": 4,
+    "cargoDenyPassed": true,
+    "artifact": 11825774399,
+    "originalZipSha256": "6caf3f43248c522e78d186e3b645e971acde7bb9d9eb65837bb2b84b778b387b",
+    "rawSourceBindings": 12,
+    "all32MembersVerified": true
+  },
+  "notices": {
+    "run": 38434799672,
+    "producer": "a9af773c8b683a66fb389e76633f9d63c1054765",
+    "artifact": 11833180045,
+    "originalZipSha256": "b96846162961a5c992d44a233eb062e5df470946342106857b6666a4ee13b1ae",
+    "sha256": "509bd922454502f6a3405ac95495f9589106c613901aa65da4b4c9eabf9f127d",
+    "result": "success",
+    "sourceSnapshotUnchanged": true,
+    "delta": "Only two removed/two added package rows and matching license-group memberships; no license prose edits"
+  },
+  "productPaths": [
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "d6b7a218d4fd9320a4ba5a9397c5c86524b5f159",
+      "sha256": "1AC582E445ECAE15F651F4075D2B4E4D7B688107CC6BB87E29546B79B9074A58"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "blob": "37fe002b774cbc9e0c66d776981ce59c8030e941",
+      "sha256": "3A4784462BFE96DDE028B81E710B86F9449B7588AB011B950057F3E30B0F1B4D"
+    },
+    {
+      "path": "SRC/neoth-migrate/Cargo.toml",
+      "blob": "d0a9e47691e722368d72f5572db8cd34f96317b8",
+      "sha256": "25FABEEBB403DA8D18285E8C6A9057CCE0EAB97315C6273873DD676F96F89726"
+    },
+    {
+      "path": "SRC/neoth-relay/Cargo.toml",
+      "blob": "052c0bb6d633f0723eb28d5297caa3b68c2f30a5",
+      "sha256": "78FA71906B03512B49C68AA666AE1AB72B2F8611E4A7BD3D4EC171C9949B2192"
+    },
+    {
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "blob": "2d90823db68f8333219c7301e1ca7a04b4469a80",
+      "sha256": "03E5E6B1A1FAECB9E4AA7593786C589CCCE9291A924A50CDB8A8C41E4801F242"
+    }
+  ],
+  "physicalOperatorLockPreserved": "A53BF380469CD0242E9F64735AEAAF2ABF6BCE4098E32200E8EF00DB61B2552A",
+  "lockImport": "Index-only; physical operator work retained",
+  "graphNavigation": {
+    "run": 38417658940,
+    "producer": "dc52a371c5fddeb5a5f1d7dd224172a7ad1fd286",
+    "selectedInputs": 1852,
+    "parsedInputs": 1519,
+    "unsupportedInputs": 333,
+    "nodes": 76113,
+    "edges": 236736,
+    "parserErrors": 0,
+    "use": "Compact file index guided existing generator/test and next Paperless owner navigation; relevant source edges checked",
+    "limits": "TOML/YAML/Slint unsupported; missing or inferred links are not caller or test proof"
+  },
+  "localRuntimeExecuted": false,
+  "currentProducerFullCiAccepted": false,
+  "nativeReleaseAccepted": false,
+  "goldAccepted": false
+}

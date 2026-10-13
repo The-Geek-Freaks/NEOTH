@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T14:51:41.8478491Z",
-  "validationStatus": "static_graphify_hosted_eol_repair_pending",
+  "capturedUtc": "2026-10-13T16:59:32.8901772Z",
+  "validationStatus": "YAML_PRODUCT_IMPORTED_HOSTED_CANDIDATE_ADMITTED_FULL_CI_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4457,6 +4457,11 @@
       "sha256": "90B65615A81722E034A2DF00B732E9C9B1A1C995251412DFD7305538A70FEE23"
     },
     {
+      "path": "docs/verification/gold-wave2584-yaml-product-import.json",
+      "bytes": 3151,
+      "sha256": "12804C3EC9FC4978FD24FBFF92FEE9ECA4BD2602EAB7A57E30D8FC3B27C8077E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5633,8 +5638,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2620808,
-      "sha256": "AFB8533E9A7E796AC8DC7C58FECDB879076E2BE9FC8F864F0D1D9F98F81E473A"
+      "bytes": 2622922,
+      "sha256": "90284B16276F67AE0F6F3211E13A5378B0D8B130F4D56EBECE4A1BEB65092B2C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5708,8 +5713,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 386992,
-      "sha256": "6CB6188C26019CDEDE860A2BA599EA066F70C299B12B1ADE16F60926087C43B0"
+      "bytes": 386972,
+      "sha256": "1AC582E445ECAE15F651F4075D2B4E4D7B688107CC6BB87E29546B79B9074A58"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -5728,8 +5733,8 @@
     },
     {
       "path": "SRC/neoth-migrate/Cargo.toml",
-      "bytes": 2807,
-      "sha256": "CE4B56B93947515276B931FA4B76885A4AB1D0F8AF08E8E247082AB2AF5552C3"
+      "bytes": 2849,
+      "sha256": "25FABEEBB403DA8D18285E8C6A9057CCE0EAB97315C6273873DD676F96F89726"
     },
     {
       "path": "SRC/neoth-migrate/fixtures/openclaw/4c667aac8859114bd8f0a589ac6cd1de8bfe1474/RELOCATION.md",
@@ -5812,6 +5817,11 @@
       "sha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B"
     },
     {
+      "path": "SRC/neoth-relay/Cargo.toml",
+      "bytes": 1511,
+      "sha256": "78FA71906B03512B49C68AA666AE1AB72B2F8611E4A7BD3D4EC171C9949B2192"
+    },
+    {
       "path": "SRC/neothd-gui/AGENTS.md",
       "bytes": 807,
       "sha256": "46AAED9D0B1FA1CEA66421A336B5564F8BA269C1B55FC35FBA40A1CD65B96BBA"
@@ -5823,8 +5833,8 @@
     },
     {
       "path": "SRC/neothd-gui/Cargo.toml",
-      "bytes": 3869,
-      "sha256": "296EF213746C9DD31CD818112BA546F21425B870120181058152B277AEAD6261"
+      "bytes": 3911,
+      "sha256": "03E5E6B1A1FAECB9E4AA7593786C589CCCE9291A924A50CDB8A8C41E4801F242"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_activity.rs",
@@ -6348,8 +6358,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46638,
-      "sha256": "7576BB05C5084DD214BE59294D2C87A2096F29AB2BC7150DA8117B2E9E3CA63A"
+      "bytes": 46680,
+      "sha256": "3A4784462BFE96DDE028B81E710B86F9449B7588AB011B950057F3E30B0F1B4D"
     },
     {
       "path": "SRC/neothd/src/adr/extractor.rs",
@@ -11588,8 +11598,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2313117,
-      "sha256": "781AF720C2EA48E13F724824552C739D4EC99C8528D67A6794A3597DC99E5D94"
+      "bytes": 2313064,
+      "sha256": "509BD922454502F6A3405AC95495F9589106C613901AA65DA4B4C9EABF9F127D"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",
