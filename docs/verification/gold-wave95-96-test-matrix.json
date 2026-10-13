@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2581_YAML_READONLY_CACHE_HOSTED_PENDING",
+  "status": "static_graphify_navigation_hosted_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 424523,
-    "sha256": "09D64E1FAE9E11F7FCD8B3914A3BD2DB145378DDA19FB1DC6EFD7DF6CC5F240F"
+    "bytes": 425062,
+    "sha256": "B8DFF63E1C4929996FC174FC7CB2F3699ABC00259EB529D1E95F19975B0544CB"
   },
-  "sourceInputs": 2315,
+  "sourceInputs": 2318,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -83385,6 +83385,38 @@
       }
     ],
     "note": "Read-only same-lock complete CI cache with identical full path set; no target save/cross-lock fallback; all qualification gates retained; runtime and measured speedup pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2582GraphifyNavigation": {
+    "base": "8e9db3b32cf96e0d65e4cfdfcf09fc5b8e9e427b",
+    "sources": [
+      {
+        "path": ".github/workflows/graphify-navigation.yml",
+        "bytes": 2480,
+        "sha256": "41BB92DC57C1989C33A5F2B5235871AF9452ABAB5226D655724B9E7B8A12F47D",
+        "blob": "40c52a03ee73a29f4a7addf4cf6c41dc1c67272d"
+      },
+      {
+        "path": "docs/verification/gold-wave2582-graphify-navigation.json",
+        "bytes": 1289,
+        "sha256": "924735DBF090810EB1425D1F636EF0E247BAF021AC1B90D5F5F11109C6673B6C",
+        "blob": "719053a901a43c1f5d00bb49ee46aa708fcaa2fe"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2618615,
+        "sha256": "B9BB0F655070F5BF7765CCD68D1C3099D39B8B27EF086D445E42D6B2F50DD047",
+        "blob": "5b9b3f8a349e9d53d365525536fa641d762f7223"
+      },
+      {
+        "path": "scripts/build_graphify_navigation.py",
+        "bytes": 8463,
+        "sha256": "4EAD579899AFEB899677AE2CFAF6AB3ACFFE971C0952D178F390C4AFF48B98AE",
+        "blob": "a6fc19e71e5b77d3164b943becab0795abfc27df"
+      }
+    ],
+    "note": "Fresh serial structural developer map; parser omissions explicit; no local runtime and no Gold acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

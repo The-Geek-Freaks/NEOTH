@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T14:04:58.8224883Z",
-  "validationStatus": "W2581_YAML_READONLY_CACHE_HOSTED_PENDING",
+  "capturedUtc": "2026-10-13T14:30:42.5808574Z",
+  "validationStatus": "static_graphify_navigation_hosted_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -160,6 +160,11 @@
       "path": ".github/workflows/gchat-live-regressions.yml",
       "bytes": 145294,
       "sha256": "A404560220A608AAC84C42048B03EDA165CA4DB2FFC0FD3CB7CBFB0C03884885"
+    },
+    {
+      "path": ".github/workflows/graphify-navigation.yml",
+      "bytes": 2480,
+      "sha256": "41BB92DC57C1989C33A5F2B5235871AF9452ABAB5226D655724B9E7B8A12F47D"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -4442,6 +4447,11 @@
       "sha256": "CA34C59DDEE35A8CFC6242451285E5D645082CFEA9D813B1282F1B854720751D"
     },
     {
+      "path": "docs/verification/gold-wave2582-graphify-navigation.json",
+      "bytes": 1289,
+      "sha256": "924735DBF090810EB1425D1F636EF0E247BAF021AC1B90D5F5F11109C6673B6C"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5618,8 +5628,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2617403,
-      "sha256": "D5DBF9ED90507F96FD74715CE2D3F8E46C69325874638D36E6B76E45448E8AC7"
+      "bytes": 2618615,
+      "sha256": "B9BB0F655070F5BF7765CCD68D1C3099D39B8B27EF086D445E42D6B2F50DD047"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5645,6 +5655,11 @@
       "path": "scripts/acquire_paperless_provenance.py",
       "bytes": 24551,
       "sha256": "EA94F50A699D7D878140D3F11EE76F955271724E84D7E8706470A42F98AD7667"
+    },
+    {
+      "path": "scripts/build_graphify_navigation.py",
+      "bytes": 8463,
+      "sha256": "4EAD579899AFEB899677AE2CFAF6AB3ACFFE971C0952D178F390C4AFF48B98AE"
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",

@@ -1,0 +1,36 @@
+{
+  "schema": "neoth.w2582.graphify-navigation.v1",
+  "base": "8e9db3b32cf96e0d65e4cfdfcf09fc5b8e9e427b",
+  "status": "STATIC_HOSTED_EXECUTION_PENDING",
+  "purpose": "Developer navigation for current source and affected batch paths; not release self-knowledge or Gold acceptance",
+  "files": [
+    "scripts/build_graphify_navigation.py",
+    ".github/workflows/graphify-navigation.yml"
+  ],
+  "dependency": "Existing packaging/graphify-release lock: graphifyy0.8.41, Python3.12.10, uv0.9.28",
+  "scope": [
+    "SRC",
+    "apps/neoth_companion",
+    "bridges",
+    "scripts",
+    "packaging",
+    ".github"
+  ],
+  "controls": [
+    "Exact source/workflow producer and raw Git blob binding",
+    "Serial structural extraction; no model calls",
+    "Fresh cache outside checkout; one observed parser result per supported input",
+    "Unsupported extensions and parser warnings explicitly retained",
+    "Original evidence labels retained; Dart heuristic explicitly identified",
+    "No source execution, compilation, Cargo, tests, release, or automatic completion"
+  ],
+  "oldGraph": {
+    "current": false,
+    "reportedProducer": "1cc92ef7",
+    "reportedDate": "2026-08-01"
+  },
+  "hostedRun": null,
+  "newGraphGenerated": false,
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}
