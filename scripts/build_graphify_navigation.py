@@ -36,7 +36,7 @@ def git(repo, *args):
     return subprocess.check_output(["git", *args], cwd=repo)
 
 
-def source_inputs(repo, producer):
+def source_inputs(repo, producer, powershell_normalizations=None):
     require(git(repo, "rev-parse", "HEAD").decode().strip() == producer, "producer differs")
     records = []
     for record in git(repo, "ls-tree", "-rz", "--full-tree", producer, "--", *SCOPES).split(b"\0"):
@@ -54,6 +54,16 @@ def source_inputs(repo, producer):
         require(full.resolve().is_relative_to(repo), f"input escapes checkout: {relative}")
         data = full.read_bytes()
         actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+        if actual != blob and powershell_normalizations is not None and path.suffix == ".ps1":
+            # .gitattributes intentionally checks PS1 out as CRLF. Restore only
+            # this proven EOL-only conversion in the disposable hosted checkout.
+            committed = git(repo, "cat-file", "blob", blob)
+            require(data.replace(b"\r\n", b"\n") == committed.replace(b"\r\n", b"\n"),
+                    f"PowerShell input has a non-EOL change: {relative}")
+            full.write_bytes(committed)
+            data = full.read_bytes()
+            actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+            powershell_normalizations.append(relative)
         require(actual == blob, f"input differs from Git blob: {relative}")
         records.append({"path": relative, "blob": blob, "bytes": len(data),
                         "sha256": hashlib.sha256(data).hexdigest()})
@@ -80,7 +90,9 @@ def build(repo, producer, output):
     # Set before importing: Graphify captures this variable at module import.
     import graphify.extract as extractor
 
-    records = source_inputs(repo, producer)
+    powershell_normalizations = []
+    records = source_inputs(repo, producer, powershell_normalizations)
+    save(output / "powershell-eol-normalizations.json", powershell_normalizations)
     save(output / "inputs.json", {"producer": producer, "files": records})
     supported, unsupported = [], []
     for record in records:
@@ -181,6 +193,7 @@ def build(repo, producer, output):
         "nodes": len(graph["nodes"]) if graph else 0, "edges": len(graph["edges"]) if graph else 0,
         "completeSemanticMap": False, "testOrGoldAcceptance": False,
         "parallel": False, "modelCalls": 0, "privateApiPinned": True,
+        "hostedPowerShellEolNormalizations": len(powershell_normalizations),
     }
     save(output / "receipt.json", receipt)
     counts = Counter(Path(item["path"]).suffix for item in unsupported)

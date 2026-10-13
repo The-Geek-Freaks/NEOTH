@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static_graphify_navigation_hosted_pending",
+  "status": "static_graphify_hosted_eol_repair_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 425257,
-    "sha256": "B2C268949DF04F8AD5417AAE9D35B1C144D7A435CFC19B9DA8EA16DD1FDFF3CB"
+    "sha256": "4CE2A76DA3BB3949D7209E24518D8475AE2A7998BDC4D25087D41C61083AC324"
   },
   "sourceInputs": 2319,
   "requiredNativeTests": [
@@ -83475,6 +83475,26 @@
       }
     ],
     "note": "Compact file-level JSON index supports bounded navigation under local runtime hold.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2582GraphifyHostedEol": {
+    "base": "38b89949858ab1152f8ffaf10bbdd10e83dddcf7",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2620808,
+        "sha256": "AFB8533E9A7E796AC8DC7C58FECDB879076E2BE9FC8F864F0D1D9F98F81E473A",
+        "blob": "91efb399927386f0d2489d07c47ea40a4cb331fa"
+      },
+      {
+        "path": "scripts/build_graphify_navigation.py",
+        "bytes": 11085,
+        "sha256": "90668F0D0CFF868B7B6519EA52F70557661B2CFF1E3E9F2ABDBBC3176318904D",
+        "blob": "5bcbe12c0c8da51765ad89890b73c097b0f752c4"
+      }
+    ],
+    "note": "Disposable hosted PS1 EOL-only restoration to exact Git bytes; first map failed before extraction; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
