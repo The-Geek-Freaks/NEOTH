@@ -1427,7 +1427,8 @@ impl CompanionRuntime {
         // Mint only after the signed request has passed the device lease.
         // `request_id` is the authenticated, request-scoped identity; it is
         // never substituted with a provider, session, or transport id.
-        let tool_activity_sink = if request.requests_tool_activity_v1() {
+        let activity_v2 = request.requests_tool_activity_v2();
+        let tool_activity_sink = if request.requests_tool_activity_v1() || activity_v2 {
             Some(
                 crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
                     request_id.to_string(),
@@ -1497,7 +1498,7 @@ impl CompanionRuntime {
                     biased;
                     result = &mut chat => break result,
                     frame = next_chat_progress(request_id, tool_activity_sink.as_ref(),
-                        &mut observed_revision, &mut stream_receiver, stream_requested) => {
+                        &mut observed_revision, &mut stream_receiver, stream_requested, activity_v2) => {
                         match race_admitted_chat_with_activity_write(
                             &mut chat,
                             async {
@@ -2299,7 +2300,7 @@ async fn write_chat_challenge_with_activity_advertisement(
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
     let bytes =
-        crate::daemon::companion_protocol::encode_chat_challenge_with_capability_inventory_advertisement(
+        crate::daemon::companion_protocol::encode_chat_challenge_with_activity_v2_advertisement(
             challenge,
         )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
@@ -2319,6 +2320,7 @@ async fn next_chat_progress(
         super::companion_protocol::CompanionChatStreamSnapshot,
     >,
     stream_requested: bool,
+    activity_v2: bool,
 ) -> ServerFrame {
     tokio::select! {
         changed = async {
@@ -2328,7 +2330,7 @@ async fn next_chat_progress(
             }
         } => {
             *observed = changed;
-            ServerFrame::ChatActivitySnapshot(companion_activity_snapshot(request_id, activity.expect("observed activity")))
+            companion_activity_frame(request_id, activity.expect("observed activity"), activity_v2)
         }
         changed = stream.changed(), if stream_requested => {
             if changed.is_err() { return std::future::pending().await; }
@@ -2337,6 +2339,49 @@ async fn next_chat_progress(
     }
 }
 
+/// The authenticated request selects the projection once for the whole turn.
+fn companion_activity_frame(
+    request_id: Uuid,
+    sink: &crate::mcp::dispatch_loop::ToolActivitySink,
+    activity_v2: bool,
+) -> ServerFrame {
+    if !activity_v2 {
+        return ServerFrame::ChatActivitySnapshot(companion_activity_snapshot(request_id, sink));
+    }
+    use super::companion_protocol::{
+        COMPANION_ACTIVITY_V2_SCHEMA_VERSION, CompanionChatActivitySnapshotV2,
+        CompanionToolActivityEventV2, CompanionToolActivityReason,
+    };
+    use crate::mcp::dispatch_loop::{ToolActivityPhase, ToolActivityReason};
+    let (events, incomplete) = sink.snapshot();
+    ServerFrame::ChatActivitySnapshotV2(CompanionChatActivitySnapshotV2 {
+        activity_schema_version: COMPANION_ACTIVITY_V2_SCHEMA_VERSION,
+        request_id,
+        max_event_seq: events.last().map_or(0, |event| event.event_seq),
+        incomplete,
+        events: events
+            .into_iter()
+            .map(|event| CompanionToolActivityEventV2 {
+                event_seq: event.event_seq,
+                ordinal: event.ordinal,
+                phase: match event.phase {
+                    ToolActivityPhase::Started => CompanionToolActivityPhase::Started,
+                    ToolActivityPhase::Succeeded => CompanionToolActivityPhase::Succeeded,
+                    ToolActivityPhase::Failed => CompanionToolActivityPhase::Failed,
+                    ToolActivityPhase::Rejected => CompanionToolActivityPhase::Rejected,
+                    ToolActivityPhase::Unknown => CompanionToolActivityPhase::Unknown,
+                },
+                label: event.label,
+                reason: match (event.phase, event.reason) {
+                    (ToolActivityPhase::Failed, Some(ToolActivityReason::PeerReportedError)) => {
+                        Some(CompanionToolActivityReason::PeerReportedError)
+                    }
+                    _ => None,
+                },
+            })
+            .collect(),
+    })
+}
 async fn write_activity_frame(
     connection: &mut peeroxide::SwarmConnection,
     frame: &ServerFrame,
@@ -2406,6 +2451,53 @@ async fn read_frame<T: for<'a> Deserialize<'a>>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn jm_ex_05_activity_projection_requires_v2_and_preserves_unknown() {
+        use crate::mcp::dispatch_loop::ToolActivitySink;
+        let id = Uuid::from_u128(1);
+        let sink = ToolActivitySink::new_authenticated(id.to_string()).unwrap();
+        let call = crate::mcp::tool_call_parser::ParsedToolCall {
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({"private": "/not/projected"}),
+        };
+        let failed = sink.try_observe(&call).unwrap();
+        failed.started_at_write_edge();
+        failed.settled_from_result(true);
+        drop(failed);
+        let unknown = sink.try_observe(&call).unwrap();
+        unknown.started_at_write_edge();
+        drop(unknown);
+        let v1 = companion_activity_frame(id, &sink, false);
+        let ServerFrame::ChatActivitySnapshot(legacy) = &v1 else {
+            panic!("legacy projection changed")
+        };
+        assert_eq!(legacy.events.len(), 4);
+        let bytes = crate::daemon::companion_protocol::encode_server_frame(&v1).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("reason"));
+        assert!(!text.contains("/not/projected"));
+        let v2 = companion_activity_frame(id, &sink, true);
+        let ServerFrame::ChatActivitySnapshotV2(snapshot) = v2 else {
+            panic!("v2 projection absent")
+        };
+        snapshot.validate().unwrap();
+        assert_eq!(
+            snapshot.events[1].reason,
+            Some(super::super::companion_protocol::CompanionToolActivityReason::PeerReportedError)
+        );
+        assert_eq!(
+            snapshot.events[3].phase,
+            CompanionToolActivityPhase::Unknown
+        );
+        assert!(
+            snapshot
+                .events
+                .iter()
+                .enumerate()
+                .all(|(index, event)| index == 1 || event.reason.is_none())
+        );
+    }
     #[tokio::test]
     async fn jm03_owner_keeps_polling_chat_while_activity_ack_is_held() {
         let (chat_tx, chat_rx) = oneshot::channel::<&'static str>();

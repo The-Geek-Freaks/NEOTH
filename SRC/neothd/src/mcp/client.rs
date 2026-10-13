@@ -1087,6 +1087,47 @@ mod tests {
         );
         assert_eq!(events[0].label, "Read file");
         assert_eq!(events[0].detail, None);
+        assert_eq!(events[0].reason, None);
+    }
+
+    #[test]
+    fn tool_activity_reason_requires_a_confirmed_peer_error_after_write() {
+        use crate::mcp::dispatch_loop::{ToolActivityPhase, ToolActivityReason, ToolActivitySink};
+        let call = crate::mcp::tool_call_parser::ParsedToolCall {
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({"private": "never projected"}),
+        };
+        for is_error in [false, true] {
+            let sink = ToolActivitySink::new_authenticated("confirmed-result".into()).unwrap();
+            let activity = sink.try_observe(&call).unwrap();
+            // A result notification before the write cannot create an outcome.
+            activity.settled_from_result(is_error);
+            assert!(sink.snapshot().0.is_empty());
+            activity.started_at_write_edge();
+            activity.settled_from_result(is_error);
+            // Repeated settlement and Drop cannot replace the observed result.
+            activity.settled_from_result(!is_error);
+            drop(activity);
+            let (events, incomplete) = sink.snapshot();
+            assert!(!incomplete);
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].phase, ToolActivityPhase::Started);
+            assert_eq!(events[0].reason, None);
+            assert_eq!(
+                events[1].phase,
+                if is_error {
+                    ToolActivityPhase::Failed
+                } else {
+                    ToolActivityPhase::Succeeded
+                }
+            );
+            assert_eq!(
+                events[1].reason,
+                is_error.then_some(ToolActivityReason::PeerReportedError)
+            );
+            assert!(events.iter().all(|event| event.detail.is_none()));
+        }
     }
 
     #[tokio::test]
@@ -1123,6 +1164,7 @@ mod tests {
                 crate::mcp::dispatch_loop::ToolActivityPhase::Unknown,
             ]
         );
+        assert!(events.iter().all(|event| event.reason.is_none()));
     }
 
     /// Subprocess fixture for the environment/stderr policy regression below.

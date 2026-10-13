@@ -1,0 +1,169 @@
+name: YAML dependency candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main producer for the isolated YAML compatibility candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaml-dependency-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Bind exact producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+      - name: Setup Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Install existing Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            apparmor-utils dbus-user-session libfontconfig1-dev libx11-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-0 xauth xvfb ffmpeg
+      - name: Cache Cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: yaml-candidate-cargo-${{ hashFiles('SRC/Cargo.lock', 'packaging/fixtures/yaml-compatibility/Cargo.toml', 'packaging/fixtures/yaml-compatibility/src/lib.rs') }}
+      - name: Capture source custody and prepare four requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/yaml-dependency-candidate.py custody --proof "$RUNNER_TEMP/yaml-dependency-candidate"
+          python3 -m unittest discover -s .github/scripts -p test_yaml_dependency_candidate.py -v 2>&1 | tee "$RUNNER_TEMP/yaml-dependency-candidate/lock-guard-regressions.log"
+          python3 .github/scripts/yaml-dependency-candidate.py prepare --proof "$RUNNER_TEMP/yaml-dependency-candidate"
+      - name: Resolve product candidate and validate lock delta
+        id: resolve
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/yaml-dependency-candidate"
+          cargo metadata --manifest-path SRC/Cargo.toml --all-features --format-version 1 > "$proof/cargo-metadata.json" 2> "$proof/cargo-metadata.stderr"
+          python3 .github/scripts/yaml-dependency-candidate.py validate --proof "$proof" --metadata "$proof/cargo-metadata.json"
+      - name: Run isolated baseline-versus-candidate YAML fixture
+        id: differential
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/yaml-dependency-candidate"
+          fixture="$RUNNER_TEMP/yaml-compatibility"
+          test ! -e "$fixture"
+          mkdir -p "$fixture"
+          cp -a packaging/fixtures/yaml-compatibility/. "$fixture/"
+          cargo generate-lockfile --manifest-path "$fixture/Cargo.toml" 2>&1 | tee "$proof/differential-resolve.log"
+          cp "$fixture/Cargo.lock" "$proof/differential.Cargo.lock"
+          expected=(
+            tests::dynamic_mapping_mutation_preserves_unknown_nested_blocks
+            tests::from_value_rejects_wrong_field_type
+            tests::from_value_rejects_unknown_field_under_strict_schema
+            tests::null_and_absent_defaults_match
+            tests::tagged_enum_values_match
+            tests::legacy_scalar_resolution_is_compared
+            tests::anchors_and_explicit_merge_preserve_overrides
+            tests::duplicate_key_acceptance_matches_for_typed_and_dynamic_values
+            tests::recipe_like_serialization_cross_decodes_for_rollback
+          )
+          cargo test --manifest-path "$fixture/Cargo.toml" --lib --locked -- --list --color never > "$proof/differential.list"
+          test "$(grep -c ': test$' "$proof/differential.list")" -eq 9
+          for name in "${expected[@]}"; do test "$(grep -Fxc "$name: test" "$proof/differential.list")" -eq 1; done
+          cargo test --manifest-path "$fixture/Cargo.toml" --lib --locked -- --test-threads=1 --color never 2>&1 | tee "$proof/differential.log"
+          for name in "${expected[@]}"; do test "$(grep -Fxc "test $name ... ok" "$proof/differential.log")" -eq 1; done
+          test "$(grep -Ec '^test result: ok\. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;' "$proof/differential.log")" -eq 1
+          sha256sum "$fixture/Cargo.lock" > "$proof/differential-lock-after.sha256"
+          cmp "$fixture/Cargo.lock" "$proof/differential.Cargo.lock"
+      - name: Run existing config and recipe contracts
+        id: contracts
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/yaml-dependency-candidate"
+          cases=(
+            cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields
+            config::inline_tests::tests::load_tolerates_unknown_fields
+            recipes::deeplink::tests::round_trips_through_a_deeplink
+            config::presets::tests::apply_model_only_role_preserves_provider_and_reports_change
+          )
+          for identity in "${cases[@]}"; do
+            stem="${identity//[^A-Za-z0-9]/_}"
+            list="$proof/$stem.list"
+            log="$proof/$stem.log"
+            cargo test --manifest-path SRC/Cargo.toml -p neoth --lib --locked "$identity" -- --exact --list --color never > "$list"
+            test "$(grep -c ': test$' "$list")" -eq 1
+            test "$(grep -Fxc "$identity: test" "$list")" -eq 1
+            cargo test --manifest-path SRC/Cargo.toml -p neoth --lib --locked "$identity" -- --exact --test-threads=1 --color never 2>&1 | tee "$log"
+            test "$(grep -Fxc "test $identity ... ok" "$log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out;' "$log")" -eq 1
+          done
+      - name: Check every direct YAML consumer
+        id: consumers
+        timeout-minutes: 60
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check -p neoth -p neoth-migrate -p neoth-relay -p neothd-gui --locked --color never 2>&1 | tee "$RUNNER_TEMP/yaml-dependency-candidate/consumer-check.log"
+      - name: Run pinned cargo-deny candidate gate
+        id: deny
+        timeout-minutes: 20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: SRC/Cargo.toml
+          command: check
+          arguments: --workspace --all-features --locked --config SRC/deny.toml
+          command-arguments: --deny yanked
+          rust-version: '1.91'
+      - name: Retain original and candidate bytes and outcomes
+        if: always()
+        env:
+          RESOLVE: ${{ steps.resolve.outcome }}
+          DIFFERENTIAL: ${{ steps.differential.outcome }}
+          CONTRACTS: ${{ steps.contracts.outcome }}
+          CONSUMERS: ${{ steps.consumers.outcome }}
+          DENY: ${{ steps.deny.outcome }}
+        shell: bash
+        run: python3 .github/scripts/yaml-dependency-candidate.py finalize --proof "$RUNNER_TEMP/yaml-dependency-candidate"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: yaml-dependency-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/yaml-dependency-candidate/
+          if-no-files-found: error
+          retention-days: 14

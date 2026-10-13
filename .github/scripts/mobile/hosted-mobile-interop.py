@@ -23,12 +23,14 @@ V2_PROMPT = "W2491 held tool activity interop canary"
 V3_PROMPT = "W2514 held streaming interop canary"
 V3_PREFIX = "visible ä " * 700
 V3_REPLY = V3_PREFIX + "canonical final"
+V4_PROMPT = "W2571 held tool-error activity-v2 interop canary"
+V4_REPLY = "W2571 deterministic peer-error recovery reply"
 ACTIVITY_SERVER = "w2491-activity-fixture"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
  "neoth_companion_operation_free","neoth_companion_bridge_free","neoth_companion_chat_start_v2","neoth_companion_operation_poll_v2",
- "neoth_companion_chat_start_v3","neoth_companion_operation_poll_v3","neoth_companion_conversation_start_v1","neoth_companion_conversation_poll_v1","neoth_companion_capability_inventory_start_v1")
+ "neoth_companion_chat_start_v3","neoth_companion_chat_start_v4","neoth_companion_operation_poll_v3","neoth_companion_conversation_start_v1","neoth_companion_conversation_start_v2","neoth_companion_conversation_poll_v1","neoth_companion_capability_inventory_start_v1")
 SHUTDOWN_MARKERS = (
     ("background_entry", b"shutdown checkpoint: background entry"),
     ("generation_effects_retired", b"shutdown checkpoint: generation effects retired"),
@@ -283,6 +285,9 @@ class Provider(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length > 65536: self.send_error(413); return
         request_body=self.rfile.read(length)
+        if self.server.v4_mode:
+            self.serve_v4(request_body)
+            return
         if self.server.v3_mode:
             self.serve_v3(request_body)
             return
@@ -346,6 +351,42 @@ class Provider(http.server.BaseHTTPRequestHandler):
             self.server.v3_completed.set()
         except (BrokenPipeError, ConnectionResetError):
             return
+    def serve_v4(self, request_body: bytes) -> None:
+        with self.server.provider_lock:
+            self.server.request_count += 1
+            self.server.v4_request_count += 1
+            request_number = self.server.v4_request_count
+            try:
+                request = json.loads(request_body)
+                messages = request.get("messages")
+                valid = request.get("stream") is True and isinstance(messages, list) and bool(messages)
+                if request_number == 1:
+                    valid = valid and messages[-1] == {"role":"user", "content":V4_PROMPT}
+                    self.server.v4_prompt_verified = bool(valid)
+                else:
+                    valid = valid and request_number == 2
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError): valid = False
+            if not valid: self.send_error(400); return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            if request_number == 1:
+                content = "```mcp-tool-call\n{\"server\":\"w2491-activity-fixture\",\"tool\":\"read\",\"arguments\":{}}\n```"
+            else:
+                self.server.v4_second_request_seen.set()
+                # Failed activity must be observed before this terminal can finish.
+                if not self.server.v4_release.wait(timeout=60.0): return
+                content = V4_REPLY
+            body = {"id":"w2571-activity-v2", "object":"chat.completion.chunk",
+                    "model":"w2328-loopback-model", "choices":[{"index":0,
+                    "delta":{"content":content}, "finish_reason":"stop"}]}
+            self.wfile.write(b"data: " + json.dumps(body, separators=(",", ":")).encode() + b"\n\n")
+            self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+            if request_number == 2: self.server.v4_completed.set()
+        except (BrokenPipeError, ConnectionResetError): return
     def log_message(self, *_: Any) -> None: pass
 
 class Loopback:
@@ -361,17 +402,30 @@ class Loopback:
         self.server.v3_prefix_sent = threading.Event()
         self.server.v3_release = threading.Event()
         self.server.v3_completed = threading.Event()
+        self.server.v4_mode = False
+        self.server.v4_request_count = 0
+        self.server.v4_prompt_verified = False
+        self.server.v4_second_request_seen = threading.Event()
+        self.server.v4_release = threading.Event()
+        self.server.v4_completed = threading.Event()
         self.server.provider_lock = threading.Lock()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"; return self
     def __exit__(self, *_: Any) -> None:
         self.server.v3_release.set()
+        self.server.v4_release.set()
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
     def begin_v2_activity_journey(self) -> int:
         with self.server.provider_lock:
             if self.server.v2_mode: raise RuntimeError("v2 loopback journey already selected")
             self.server.v2_mode = True
             return self.server.request_count
+    def begin_v4_activity_v2_journey(self) -> int:
+        with self.server.provider_lock:
+            if self.server.v4_mode: raise RuntimeError("v4 journey already selected")
+            self.server.v4_mode = True
+            return self.server.request_count
+
     def begin_v3_stream_journey(self) -> int:
         with self.server.provider_lock:
             if self.server.v3_mode: raise RuntimeError("v3 loopback journey already selected")
@@ -398,10 +452,11 @@ def write_config(home: pathlib.Path, provider_url: str, health_port: int, compan
     (home / "credentials.yaml").write_text("provider_key: w2328-loopback-only\n", encoding="utf-8")
     return config
 
-def write_activity_fixture_config(home: pathlib.Path, counter: pathlib.Path, entered: pathlib.Path, release: pathlib.Path) -> pathlib.Path:
+def write_activity_fixture_config(home: pathlib.Path, counter: pathlib.Path, entered: pathlib.Path, release: pathlib.Path, error: pathlib.Path | None = None) -> pathlib.Path:
     fixture = pathlib.Path(__file__).resolve().parents[3] / "SRC" / "neothd" / "tests" / "fixtures" / "mcp_stdio_held_activity_fixture.py"
     if not fixture.is_file(): raise RuntimeError("held activity fixture unavailable")
     values = [str(fixture), str(counter), str(entered), str(release)]
+    if error is not None: values.append(str(error))
     quoted = ", ".join(json.dumps(value) for value in values)
     target = home / "mcp_servers.yaml"
     target.write_text(
@@ -544,6 +599,8 @@ class Bridge:
         self.lib.neoth_companion_capability_inventory_start_v1.restype=ptr
         self.lib.neoth_companion_chat_start_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
         self.lib.neoth_companion_chat_start_v3.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
+        self.lib.neoth_companion_chat_start_v4.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
+        self.lib.neoth_companion_chat_start_v4.restype=ptr
         for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start","neoth_companion_chat_start_v2","neoth_companion_chat_start_v3"): getattr(self.lib,name).restype=ptr
         self.lib.neoth_companion_operation_poll.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll.restype=ctypes.c_int32
         self.lib.neoth_companion_operation_poll_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll_v2.restype=ctypes.c_int32
@@ -677,6 +734,133 @@ class Bridge:
             self.lib.neoth_companion_operation_free(op)
             for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
 
+    def call_chat_v4_live_activity_error(self, descriptor: str, device_id: str,
+            server: Any, counter: pathlib.Path, entered: pathlib.Path,
+            release: pathlib.Path, error: pathlib.Path,
+            timeout: float = DEADLINE) -> tuple[bytes, dict[str, Any]]:
+        values = (descriptor, device_id, V4_PROMPT)
+        buffers = [(ctypes.c_ubyte * len(value.encode())).from_buffer_copy(value.encode()) for value in values]
+        op = self.lib.neoth_companion_chat_start_v4(self.handle, buffers[0], len(buffers[0]),
+            buffers[1], len(buffers[1]), buffers[2], len(buffers[2]), 1)
+        if not op: raise RuntimeError("chat_start_v4 returned null")
+        observed = {"v4_started": True, "activity_snapshot_v2_seen": False,
+            "activity_started_seen": False, "fixture_error_released_after_started": False,
+            "peer_reported_error_seen": False, "terminal_request_id_matched": False,
+            "fixture_call_count": 0, "preview_revision": 0}
+        request_id = None
+        def poll(deadline: float) -> tuple[int, bytes]:
+            budget(deadline)
+            required = ctypes.c_size_t()
+            code = self.lib.neoth_companion_operation_poll_v3(op, None, 0, ctypes.byref(required))
+            if code == PENDING: return code, b""
+            if code != BUFFER_TOO_SMALL or not 0 < required.value <= MAX_PUBLIC:
+                raise RuntimeError("v4 poll probe invalid")
+            while True:
+                budget(deadline)
+                capacity = required.value; out = (ctypes.c_ubyte * capacity)()
+                code = self.lib.neoth_companion_operation_poll_v3(op, out, capacity, ctypes.byref(required))
+                if code == PENDING: return code, b""
+                if code == BUFFER_TOO_SMALL:
+                    if not capacity < required.value <= MAX_PUBLIC: raise RuntimeError("v4 poll resize invalid")
+                    continue
+                if not 0 < required.value <= capacity: raise RuntimeError("v4 poll length invalid")
+                return code, bytes(out[:required.value])
+        def bind(value: dict[str, Any]) -> None:
+            nonlocal request_id
+            current = value.get("request_id")
+            if not isinstance(current, str): raise RuntimeError("v4 request id absent")
+            try: parsed = uuid.UUID(current)
+            except ValueError: raise RuntimeError("v4 request id invalid")
+            if parsed.int == 0 or str(parsed) != current: raise RuntimeError("v4 request id invalid")
+            if request_id is None: request_id = current
+            elif request_id != current: raise RuntimeError("v4 request id changed")
+        try:
+            until = time.monotonic() + timeout
+            while time.monotonic() < until:
+                code, raw = poll(until)
+                if code == PENDING:
+                    time.sleep(min(.125, budget(until, .125))); continue
+                value = cli_json(raw, "v4 frame")
+                if not isinstance(value, dict): raise RuntimeError("v4 frame is not an object")
+                bind(value)
+                if code == STREAM:
+                    keys = {"kind", "stream_schema_version", "request_id", "revision", "text", "truncated"}
+                    if (set(value) != keys or value["kind"] != "chat_stream_snapshot"
+                            or type(value["stream_schema_version"]) is not int or value["stream_schema_version"] != 1 or type(value["revision"]) is not int
+                            or not observed["preview_revision"] < value["revision"] <= 2**64 - 1
+                            or not isinstance(value["text"], str) or len(value["text"].encode()) > 10240
+                            or type(value["truncated"]) is not bool):
+                        raise RuntimeError("v4 stream observation invalid")
+                    observed["preview_revision"] = value["revision"]
+                    continue
+                if code == ACTIVITY:
+                    keys = {"kind", "activity_schema_version", "request_id", "max_event_seq", "incomplete", "events"}
+                    if (set(value) != keys or value["kind"] != "chat_activity_snapshot_v2"
+                            or type(value["activity_schema_version"]) is not int or value["activity_schema_version"] != 2 or type(value["incomplete"]) is not bool
+                            or type(value["max_event_seq"]) is not int or not isinstance(value["events"], list)
+                            or not 0 < len(value["events"]) <= 16):
+                        raise RuntimeError("v4 activity observation invalid")
+                    prior = 0; started = False; peer_error = False
+                    for event in value["events"]:
+                        if not isinstance(event, dict): raise RuntimeError("v4 activity row invalid")
+                        phase = event.get("phase")
+                        expected = {"event_seq", "ordinal", "phase", "label"}
+                        if phase == "failed": expected.add("reason")
+                        if (set(event) != expected or phase not in {"started", "succeeded", "failed", "rejected", "unknown"}
+                                or type(event["event_seq"]) is not int or not prior < event["event_seq"] <= 2**64 - 1
+                                or type(event["ordinal"]) is not int or event["ordinal"] != 1
+                                or event["label"] != "Tool call"):
+                            raise RuntimeError("v4 activity row invalid")
+                        prior = event["event_seq"]
+                        started = started or phase == "started"
+                        if phase == "failed":
+                            if event["reason"] != "peer_reported_error": raise RuntimeError("v4 error reason differs")
+                            peer_error = True
+                    if value["max_event_seq"] != prior: raise RuntimeError("v4 activity maximum differs")
+                    observed["activity_snapshot_v2_seen"] = True
+                    observed["activity_started_seen"] = observed["activity_started_seen"] or started
+                    if observed["activity_started_seen"] and not observed["fixture_error_released_after_started"]:
+                        while True:
+                            budget(until)
+                            try: count = int(counter.read_text(encoding="utf-8").strip())
+                            except (OSError, ValueError): count = -1
+                            if count == 2 and entered.is_file(): break
+                            if count > 2: raise RuntimeError("v4 fixture invoked more than once")
+                            time.sleep(min(.05, budget(until, .05)))
+                        error.write_text("error\n", encoding="ascii")
+                        release.write_text("release\n", encoding="ascii")
+                        observed["fixture_error_released_after_started"] = True
+                        observed["fixture_call_count"] = count
+                    if peer_error:
+                        if not observed["fixture_error_released_after_started"]:
+                            raise RuntimeError("v4 peer error preceded fixture release")
+                        observed["peer_reported_error_seen"] = True
+                        server.v4_release.set()
+                    continue
+                if (code != OK or not observed["peer_reported_error_seen"]
+                        or not server.v4_second_request_seen.is_set() or value.get("kind") != "chat"
+                        or value.get("schema_version") != CHAT_SCHEMA_VERSION or value.get("outcome") != "accepted"):
+                    raise RuntimeError("v4 terminal missing after peer error")
+                if value.get("records") != [{"kind": "stdout", "text": V4_REPLY}]:
+                    raise RuntimeError("v4 terminal records differ")
+                if int(counter.read_text(encoding="utf-8").strip()) != 2:
+                    raise RuntimeError("v4 fixture count changed after terminal")
+                observed["fixture_call_count_after_terminal"] = 2
+                observed["terminal_request_id_matched"] = True
+                return raw, observed
+            raise WorkDeadline("v4 work deadline exhausted")
+        except Exception:
+            self.lib.neoth_companion_operation_cancel(op)
+            server.v4_release.set()
+            drain_until = time.monotonic() + 15.0
+            while time.monotonic() < drain_until:
+                code, _ = poll(drain_until)
+                if code not in (PENDING, STREAM, ACTIVITY): break
+                time.sleep(min(.125, budget(drain_until, .125)))
+            raise
+        finally:
+            self.lib.neoth_companion_operation_free(op)
+            for value in buffers: ctypes.memset(ctypes.addressof(value), 0, len(value))
     def call_chat_v3_live_stream(self, descriptor: str, device_id: str, server: Any,
                                  timeout: float = DEADLINE) -> tuple[bytes,dict[str,Any]]:
         buffers=[(ctypes.c_ubyte*len(value.encode())).from_buffer_copy(value.encode())
@@ -936,8 +1120,8 @@ def main() -> int:
         receipt["scheduler_margin_seconds"]=int(START_MARGIN_SECONDS)
         home=pathlib.Path(base)/"home"; home.mkdir(mode=0o700); health_port,companion_port=port(),port()
         config=write_config(home,provider.url,health_port,companion_port)
-        fixture_counter,fixture_entered,fixture_release=(home/"activity-counter",home/"activity-entered",home/"activity-release")
-        fixture_config=write_activity_fixture_config(home,fixture_counter,fixture_entered,fixture_release)
+        fixture_counter,fixture_entered,fixture_release,fixture_error=(home/"activity-counter",home/"activity-entered",home/"activity-release",home/"activity-error")
+        fixture_config=write_activity_fixture_config(home,fixture_counter,fixture_entered,fixture_release,fixture_error)
         receipt["isolated_config_sha256"]=sha(config)
         receipt["isolated_mcp_config_sha256"]=sha(fixture_config)
         env={**os.environ,"NEOTH_HOME":str(home),"NEOTH_COMPANION_DIAGNOSTICS":"1","NEOTH_MCP_AUTOROUTE":"1"}
@@ -1133,6 +1317,41 @@ def main() -> int:
                     or v3_views[0].get("revision") != v3_pair["revision"]+1 or provider.server.request_count != 4):
                     raise RuntimeError("v3 durable revoke/provider boundary missing")
                 receipt["steps"]["revoke_v3"]={"revoked":True,"grant_state":"revoked","revision_advanced":True,"loopback_request_count":4}
+                receipt["stage"] = "pair_chat_v4_mint"
+                for marker in (fixture_release, fixture_error, fixture_entered):
+                    if marker.exists(): marker.unlink()
+                v4_pair_url = pair_url(mint_pair("chat-send", "pair_chat_v4_send_mint"))
+                v4_before = provider.begin_v4_activity_v2_journey()
+                v4_bridge = Bridge(library)
+                try:
+                    receipt["stage"] = "pair_chat_v4_start"
+                    code, raw = v4_bridge.call("neoth_companion_pair_start", v4_pair_url,
+                        "w2571-chat-v4", timeout=budget(work_deadline))
+                    if code != OK: raise RuntimeError("v4 pair rejected")
+                    v4_pair = terminal(raw, "paired")
+                    receipt["steps"]["chat_v4_pair"] = {"code":OK, "validated":True}
+                    receipt["stage"] = "chat_v4_start"
+                    _, observed = v4_bridge.call_chat_v4_live_activity_error(
+                        json.dumps(v4_pair["descriptor"], separators=(",", ":")), v4_pair["device_id"],
+                        provider.server, fixture_counter, fixture_entered, fixture_release, fixture_error,
+                        timeout=budget(work_deadline))
+                    if (v4_before != 4 or provider.server.request_count != 6 or provider.server.v4_request_count != 2
+                            or not provider.server.v4_prompt_verified or not observed["terminal_request_id_matched"]
+                            or not provider.server.v4_completed.wait(timeout=min(1.0, budget(work_deadline)))):
+                        raise RuntimeError("v4 exact provider boundary missing")
+                    receipt["steps"]["chat_v4"] = {**observed, "code":OK, "outcome":"accepted",
+                        "loopback_request_delta":2, "loopback_request_count":6, "provider_completed":True}
+                finally: v4_bridge.close()
+                receipt["stage"] = "device_v4_revoke"
+                revoke = cli_json(invoke([str(binary), "--output", "json", "companion", "devices", "revoke", v4_pair["device_id"]], env, budget(work_deadline, 20.0), companion_rpc=True), "v4 revoke")
+                views = cli_json(invoke([str(binary), "--output", "json", "companion", "devices", "status", v4_pair["device_id"]], env, budget(work_deadline, 20.0), companion_rpc=True), "v4 status")
+                if (revoke != {"revoked":True} or not isinstance(views, list) or len(views) != 1
+                        or not isinstance(views[0], dict) or views[0].get("device_id") != v4_pair["device_id"]
+                        or views[0].get("grant_state") != "revoked" or type(v4_pair.get("revision")) is not int
+                        or views[0].get("revision") != v4_pair["revision"] + 1 or provider.server.request_count != 6):
+                    raise RuntimeError("v4 durable revoke boundary missing")
+                receipt["steps"]["revoke_v4"] = {"revoked":True, "grant_state":"revoked",
+                    "revision_advanced":True, "loopback_request_count":6}
             finally: bridge.close()
             receipt["outcome"]="passed"
         except WorkDeadline:

@@ -57,6 +57,106 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def reason_snapshot(self, phase: str = "failed", **changes: object) -> dict:
+        event = {"event_seq":2 if phase == "failed" else 1, "ordinal":1, "phase":phase, "label":"Tool call"}
+        if phase == "failed": event["reason"] = "peer_reported_error"
+        event.update(changes)
+        return {"kind":"chat_activity_snapshot_v2", "activity_schema_version":2,
+            "request_id":"00000000-0000-7000-8000-000000000123", "max_event_seq":event["event_seq"],
+            "incomplete":False, "events":[event]}
+
+    def reason_bridge(self, frames: list[tuple[int, dict]], server: object) -> tuple[object, object]:
+        payloads = [(code, json.dumps(value).encode()) for code, value in frames]
+        owner = self
+        class FakeV4:
+            def __init__(self) -> None:
+                self.cancelled = self.freed = self.resizes = 0
+                self.released_before_cancel = False
+            def neoth_companion_chat_start_v4(self, *_args: object) -> object:
+                owner.assertEqual(_args[-1], 1)
+                return object()
+            def neoth_companion_operation_cancel(self, _op: object) -> None:
+                self.released_before_cancel = server.v4_release.is_set()
+                self.cancelled += 1
+            def neoth_companion_operation_free(self, _op: object) -> None: self.freed += 1
+            def neoth_companion_operation_poll_v3(self, _op: object, out: object, capacity: int, required: object) -> int:
+                code, raw = (INTEROP.FAILED, b'{"state":"cancelled"}') if self.cancelled else payloads[0]
+                if out is None:
+                    required._obj.value = 8 if code in (INTEROP.STREAM, INTEROP.ACTIVITY) else len(raw) + 100
+                    return INTEROP.BUFFER_TOO_SMALL
+                required._obj.value = len(raw)
+                if capacity < len(raw):
+                    self.resizes += 1
+                    return INTEROP.BUFFER_TOO_SMALL
+                if not self.cancelled and code == INTEROP.ACTIVITY and b'peer_reported_error' in raw:
+                    owner.assertFalse(server.v4_release.is_set())
+                    server.v4_second_request_seen.set()
+                for index, byte in enumerate(raw): out[index] = byte
+                if not self.cancelled: payloads.pop(0)
+                return code
+        fake = FakeV4(); bridge = object.__new__(INTEROP.Bridge)
+        bridge.handle = object(); bridge.lib = fake
+        return bridge, fake
+
+    def test_v4_reason_live_observation_allows_preview_before_activity_and_waits_for_fixture(self) -> None:
+        terminal = {"kind":"chat", "schema_version":3, "request_id":self.stream_snapshot()["request_id"],
+            "outcome":"accepted", "records":[{"kind":"stdout", "text":INTEROP.V4_REPLY}]}
+        server = SimpleNamespace(v4_release=threading.Event(), v4_second_request_seen=threading.Event())
+        frames = [(INTEROP.STREAM, self.stream_snapshot()), (INTEROP.ACTIVITY, self.reason_snapshot("started")),
+            (INTEROP.ACTIVITY, self.reason_snapshot()), (INTEROP.OK, terminal)]
+        bridge, fake = self.reason_bridge(frames, server)
+        with tempfile.TemporaryDirectory() as temporary:
+            base = pathlib.Path(temporary); counter, entered, release, error = [base / name for name in ("counter", "entered", "release", "error")]
+            counter.write_text("1")
+            def enter_fixture(_seconds: float) -> None:
+                self.assertFalse(release.exists()); self.assertFalse(error.exists())
+                counter.write_text("2"); entered.write_text("entered")
+            with mock.patch.object(INTEROP.time, "sleep", side_effect=enter_fixture):
+                raw, observed = bridge.call_chat_v4_live_activity_error("descriptor", "device", server,
+                    counter, entered, release, error, timeout=1.0)
+            self.assertTrue(release.exists()); self.assertTrue(error.exists())
+        self.assertTrue(observed["peer_reported_error_seen"])
+        self.assertTrue(observed["terminal_request_id_matched"])
+        self.assertEqual(observed["preview_revision"], 1)
+        self.assertTrue(server.v4_release.is_set())
+        self.assertEqual(json.loads(raw)["records"][0]["text"], INTEROP.V4_REPLY)
+        self.assertEqual((fake.cancelled, fake.freed), (0, 1)); self.assertGreater(fake.resizes, 0)
+
+    def test_v4_reason_invalid_rows_cancel_and_free_before_any_success(self) -> None:
+        cases = [self.reason_snapshot(reason="private"), self.reason_snapshot("unknown", reason="peer_reported_error"),
+            self.reason_snapshot(detail="/private/path"), {**self.reason_snapshot(), "events":["bad"]},
+            {**self.reason_snapshot(), "activity_schema_version":2.0},
+            {**self.reason_snapshot(), "request_id":"00000000-0000-7000-8000-000000000124"}]
+        for bad in cases:
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temporary:
+                server = SimpleNamespace(v4_release=threading.Event(), v4_second_request_seen=threading.Event())
+                bridge, fake = self.reason_bridge([(INTEROP.ACTIVITY, self.reason_snapshot("started")), (INTEROP.ACTIVITY, bad)], server)
+                base = pathlib.Path(temporary); counter, entered, release, error = [base / name for name in ("counter", "entered", "release", "error")]
+                counter.write_text("2"); entered.write_text("entered")
+                with self.assertRaises(RuntimeError):
+                    bridge.call_chat_v4_live_activity_error("descriptor", "device", server, counter, entered, release, error, timeout=1.0)
+                self.assertEqual((fake.cancelled, fake.freed), (1, 1))
+                self.assertFalse(fake.released_before_cancel)
+                self.assertTrue(server.v4_release.is_set())  # Drain must release the owned provider wait.
+
+    def test_v4_reason_resize_keeps_work_deadline_and_drains_once(self) -> None:
+        server = SimpleNamespace(v4_release=threading.Event(), v4_second_request_seen=threading.Event())
+        bridge, fake = self.reason_bridge([(INTEROP.ACTIVITY, self.reason_snapshot("started"))], server)
+        original = fake.neoth_companion_operation_poll_v3
+        def grow(op: object, out: object, capacity: int, required: object) -> int:
+            if fake.cancelled: return original(op, out, capacity, required)
+            required._obj.value = capacity + 1
+            fake.resizes += 1
+            return INTEROP.BUFFER_TOO_SMALL
+        fake.neoth_companion_operation_poll_v3 = grow
+        ticks = iter(range(100))
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(INTEROP.time, "monotonic", side_effect=lambda:float(next(ticks))):
+            base = pathlib.Path(temporary)
+            with self.assertRaises(INTEROP.WorkDeadline):
+                bridge.call_chat_v4_live_activity_error("descriptor", "device", server,
+                    base / "counter", base / "entered", base / "release", base / "error", timeout=5.0)
+        self.assertEqual((fake.cancelled, fake.freed), (1, 1)); self.assertGreater(fake.resizes, 1)
+
     def stream_server(self) -> SimpleNamespace:
         server=SimpleNamespace(v3_prefix_sent=threading.Event(),v3_completed=threading.Event(),v3_release=threading.Event())
         server.v3_prefix_sent.set()

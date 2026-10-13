@@ -1,0 +1,62 @@
+{
+  "schema": "neoth.gold-wave2568-lane.v1",
+  "date": "2026-10-13",
+  "base": "ea247fd1efe7d55eed56bcb2578a25bac123b36f",
+  "status": "Isolated qualification lane; product dependencies unchanged and runtime pending",
+  "advisory": "RUSTSEC-2024-0449",
+  "replacement": "serde_yaml alias to yaml_serde=0.10.7",
+  "candidateChecksum": "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918",
+  "directConsumers": 4,
+  "productFiles": [
+    "SRC/neothd/Cargo.toml",
+    "SRC/neoth-migrate/Cargo.toml",
+    "SRC/neoth-relay/Cargo.toml",
+    "SRC/neothd-gui/Cargo.toml",
+    "SRC/Cargo.lock"
+  ],
+  "laneFiles": [
+    ".github/workflows/yaml-dependency-candidate.yml",
+    ".github/scripts/yaml-dependency-candidate.py",
+    ".github/scripts/test_yaml_dependency_candidate.py",
+    "packaging/fixtures/yaml-compatibility/Cargo.toml",
+    "packaging/fixtures/yaml-compatibility/src/lib.rs"
+  ],
+  "expected": {
+    "lockGuard": 9,
+    "differential": 9,
+    "existingProductExact": [
+      "cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields",
+      "config::inline_tests::tests::load_tolerates_unknown_fields",
+      "recipes::deeplink::tests::round_trips_through_a_deeplink",
+      "config::presets::tests::apply_model_only_role_preserves_provider_and_reports_change"
+    ],
+    "consumerChecks": 4,
+    "cargoDeny": "Pinned existing action, all features, --deny yanked"
+  },
+  "invariants": [
+    "Only exact current main producer may run the manual qualification lane",
+    "One Cargo job and independent step bounds",
+    "Generate candidate lock only in hosted Cargo; no handwritten lock",
+    "Accept only removal of serde_yaml and unsafe-libyaml, addition of pinned yaml_serde and registry libyaml-rs0.3, and exact four consumer edge changes",
+    "All retained package identities, checksums, metadata and other dependency edges must remain identical",
+    "Differential fixture has separate temporary lock outside product workspace",
+    "Original bytes, candidate bytes, patch, execution outcomes and hashes retained even on failure",
+    "Root must admit original artifacts and review actual resolved lock before product import",
+    "Preserve unrelated dirty physical SRC/Cargo.lock; no automatic integration or release approval"
+  ],
+  "preflightGuard": "Nine pure Python lock/manifest boundary regressions added to existing fast hosted preflight",
+  "productYamlChanged": false,
+  "localExecutableValidationRan": false,
+  "hostedQualificationAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "releaseAccepted": false,
+  "preflightAllowlistRepair": {
+    "failedRun": "38384120468",
+    "producer": "1436b9f1a6ad83f5986a66dc39668ff311b24e19",
+    "cause": "The new pure YAML lock/manifest unittest command was absent from the exact preflight command oracle",
+    "change": "Register exactly one noncompiling command in its actual workflow position",
+    "review": "Remote exact-source review confirmed the nine in-memory tests invoke no Cargo or subprocess path",
+    "localExecution": false,
+    "freshHostedVerification": "pending"
+  }
+}

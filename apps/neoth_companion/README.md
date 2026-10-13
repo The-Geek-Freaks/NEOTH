@@ -85,10 +85,16 @@ ordering so an older in-flight write cannot recreate a forgotten checkpoint.
 
 `.github/workflows/mobile-companion.yml` uses pinned Flutter 3.24.5 and the
 committed Rust/Flutter locks. Native inputs and locks are hash-bound. The iOS
-gate requires all fourteen FFI exports in the final Runner binary, including
-the additive conversation start/poll pair. Legacy chat APIs keep their original
-result limits and behavior. `bootstrap_locks=true` is a historical recovery
-path, not normal qualification.
+gate requires all 17 FFI exports in the final Runner binary, including the V4
+activity and V2 conversation starts. The new starts select activity V2 only
+after the daemon's exact authenticated advertisement, with V1 fallback chosen
+before sending. `request_tool_activity=0` requests no activity. Earlier chat APIs
+keep their original result limits and V1 JSON shape. `bootstrap_locks=true` is a
+historical recovery path, not normal qualification.
+
+The passive activity card may show "The tool reported an error." only for a
+confirmed tool error. An unknown outcome or missing progress does not invent a
+cause. The message contains no raw tool error text, arguments or private details.
 
 The hosted interop workflow checks the actual daemon and encrypted native
 client. The conversation journey sends two messages around a daemon/native

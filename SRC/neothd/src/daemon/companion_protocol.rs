@@ -18,6 +18,7 @@ pub const COMPANION_V3_MAX_CHAT_TERMINAL_BYTES: usize = 80 * 1024;
 pub const COMPANION_V3_MAX_CHAT_MESSAGE_BYTES: usize = 640;
 pub const COMPANION_V3_MAX_CHAT_RECORDS: usize = 64;
 pub const COMPANION_ACTIVITY_SCHEMA_VERSION: u8 = 1;
+pub const COMPANION_ACTIVITY_V2_SCHEMA_VERSION: u8 = 2;
 pub const COMPANION_ACTIVITY_MAX_EVENTS: usize = 16;
 pub const COMPANION_ACTIVITY_MAX_LABEL_BYTES: usize = 96;
 pub const COMPANION_V3_MAX_LABEL_BYTES: usize = 64;
@@ -489,6 +490,8 @@ pub struct CompanionChatCapabilities {
     #[serde(default)]
     pub tool_activity_v1: bool,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub tool_activity_v2: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub chat_stream_v1: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_v1: Option<CompanionConversationSelection>,
@@ -519,7 +522,10 @@ impl CompanionConversationSelection {
 
 impl CompanionChatCapabilities {
     pub const fn is_empty(&self) -> bool {
-        !self.tool_activity_v1 && !self.chat_stream_v1 && self.conversation_v1.is_none()
+        !self.tool_activity_v1
+            && !self.tool_activity_v2
+            && !self.chat_stream_v1
+            && self.conversation_v1.is_none()
     }
 }
 
@@ -673,6 +679,7 @@ pub enum ServerFrame {
     StatusSnapshot(CompanionStatusSnapshot),
     ChatChallenge(ChatChallenge),
     ChatActivitySnapshot(CompanionChatActivitySnapshot),
+    ChatActivitySnapshotV2(CompanionChatActivitySnapshotV2),
     ChatStreamSnapshot(CompanionChatStreamSnapshot),
     ConversationAdmission(CompanionConversationAdmission),
     ConversationHistory(CompanionConversationHistory),
@@ -834,12 +841,73 @@ impl ChatChallenge {
 }
 
 impl CompanionChatRequest {
+    pub const fn requests_tool_activity_v2(&self) -> bool {
+        self.capabilities.tool_activity_v2
+    }
+
+    pub fn signed_with_tool_activity_v2(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
+        let mut request = Self::signed(challenge, request_id, message, signing_key)?;
+        request.capabilities.tool_activity_v2 = true;
+        request.signature = signing_key
+            .sign(&request.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
+        Ok(request)
+    }
+
+    pub fn signed_with_chat_stream_v2(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        tool_activity: bool,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
+        let mut request = Self::signed(challenge, request_id, message, signing_key)?;
+        request.capabilities.tool_activity_v2 = tool_activity;
+        request.capabilities.chat_stream_v1 = true;
+        request.signature = signing_key
+            .sign(&request.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
+        Ok(request)
+    }
+
+    pub fn signed_with_conversation_v2(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        selection: CompanionConversationSelection,
+        tool_activity: bool,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
+        let mut request = Self::signed_with_chat_stream_v2(
+            challenge,
+            request_id,
+            message,
+            tool_activity,
+            signing_key,
+        )?;
+        request.capabilities.conversation_v1 = Some(selection);
+        request.signature = signing_key
+            .sign(&request.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
+        Ok(request)
+    }
     pub const fn requests_tool_activity_v1(&self) -> bool {
         self.capabilities.tool_activity_v1
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_version(self.schema_version)?;
+        if self.capabilities.tool_activity_v1 && self.capabilities.tool_activity_v2 {
+            return Err(ProtocolError::InvalidFrame);
+        }
         if let Some(selection) = &self.capabilities.conversation_v1 {
             selection.validate()?;
             if !self.capabilities.chat_stream_v1 || self.request_id.is_nil() {
@@ -879,6 +947,9 @@ impl CompanionChatRequest {
         // bound to the request and cannot be introduced by a relay.
         if self.requests_tool_activity_v1() {
             push_field(&mut out, b"tool_activity_v1");
+        }
+        if self.requests_tool_activity_v2() {
+            push_field(&mut out, b"tool_activity_v2");
         }
         if self.capabilities.chat_stream_v1 {
             push_field(&mut out, b"chat_stream_v1");
@@ -1112,6 +1183,65 @@ impl CompanionChatTerminal {
     }
 }
 
+/// Fixed, non-secret causes from a decoded tool result.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionToolActivityReason {
+    PeerReportedError,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionToolActivityEventV2 {
+    pub event_seq: u64,
+    pub ordinal: u32,
+    pub phase: CompanionToolActivityPhase,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<CompanionToolActivityReason>,
+}
+
+/// V2 is separately negotiated; the strict V1 event remains unchanged.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatActivitySnapshotV2 {
+    pub activity_schema_version: u8,
+    pub request_id: Uuid,
+    pub max_event_seq: u64,
+    pub incomplete: bool,
+    pub events: Vec<CompanionToolActivityEventV2>,
+}
+
+impl CompanionChatActivitySnapshotV2 {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.activity_schema_version != COMPANION_ACTIVITY_V2_SCHEMA_VERSION
+            || self.events.len() > COMPANION_ACTIVITY_MAX_EVENTS
+            || self.events.iter().any(|event| {
+                event.reason.is_some() && event.phase != CompanionToolActivityPhase::Failed
+            })
+        {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        // Reuse the exact V1 sequence and redaction limits after bounding allocation.
+        CompanionChatActivitySnapshot {
+            activity_schema_version: COMPANION_ACTIVITY_SCHEMA_VERSION,
+            request_id: self.request_id,
+            max_event_seq: self.max_event_seq,
+            incomplete: self.incomplete,
+            events: self
+                .events
+                .iter()
+                .map(|event| CompanionToolActivityEvent {
+                    event_seq: event.event_seq,
+                    ordinal: event.ordinal,
+                    phase: event.phase,
+                    label: event.label.clone(),
+                })
+                .collect(),
+        }
+        .validate()
+    }
+}
 impl CompanionChatActivitySnapshot {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.activity_schema_version != COMPANION_ACTIVITY_SCHEMA_VERSION
@@ -1151,6 +1281,7 @@ impl ServerFrame {
             Self::StatusSnapshot(value) => value.validate(),
             Self::ChatChallenge(value) => value.validate(),
             Self::ChatActivitySnapshot(value) => value.validate(),
+            Self::ChatActivitySnapshotV2(value) => value.validate(),
             Self::ChatStreamSnapshot(value) => value.validate(),
             Self::ConversationAdmission(value) => value.validate(),
             Self::ConversationHistory(value) => value.validate(),
@@ -1321,6 +1452,27 @@ pub fn decode_status_challenge_with_capability_inventory_advertisement(
     ))
 }
 
+/// The sibling keeps the frozen V1 map and inventory offer intact.
+pub fn encode_chat_challenge_with_activity_v2_advertisement(
+    challenge: &ChatChallenge,
+) -> Result<Vec<u8>, ProtocolError> {
+    let bytes = encode_chat_challenge_with_capability_inventory_advertisement(challenge)?;
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    envelope["tool_activity_v2"] = serde_json::Value::Bool(true);
+    encode_frame(&envelope)
+}
+
+pub fn decode_chat_challenge_with_activity_v2_advertisement(
+    bytes: &[u8],
+) -> Result<(ChatChallenge, bool, bool, bool, bool), ProtocolError> {
+    let (challenge, v1, stream, conversation) =
+        decode_chat_challenge_with_conversation_advertisement(bytes)?;
+    let envelope: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    let v2 = v1 && envelope.get("tool_activity_v2") == Some(&serde_json::Value::Bool(true));
+    Ok((challenge, v1, stream, conversation, v2))
+}
 pub fn encode_chat_challenge_with_capability_inventory_advertisement(
     challenge: &ChatChallenge,
 ) -> Result<Vec<u8>, ProtocolError> {
@@ -2099,5 +2251,192 @@ mod capability_inventory_tests {
             }
             assert!(encode_server_frame(&ServerFrame::CapabilityInventory(wrong)).is_err());
         }
+    }
+    fn activity_v2_challenge() -> ChatChallenge {
+        ChatChallenge {
+            schema_version: 3,
+            device_id: CompanionDeviceId(Uuid::from_u128(1)),
+            revision: 2,
+            listener_generation: 3,
+            daemon_boot_id: "activity-v2-boot".into(),
+            challenge_nonce: [4; 32],
+            issued_at_unix: 5,
+        }
+    }
+
+    #[test]
+    fn jm_ex_05_activity_v2_signed_choices_preserve_legacy() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let challenge = activity_v2_challenge();
+        let id = Uuid::from_u128(6);
+        let legacy = CompanionChatRequest::signed_with_tool_activity_v1(
+            &challenge,
+            id,
+            "hello".into(),
+            &key,
+        )
+        .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&encode_frame(&legacy).unwrap()).unwrap();
+        assert_eq!(
+            value["capabilities"],
+            serde_json::json!({"tool_activity_v1": true})
+        );
+        legacy.verify_with(key.verifying_key().as_bytes()).unwrap();
+        let requests = [
+            CompanionChatRequest::signed_with_tool_activity_v2(
+                &challenge,
+                id,
+                "hello".into(),
+                &key,
+            )
+            .unwrap(),
+            CompanionChatRequest::signed_with_chat_stream_v2(
+                &challenge,
+                id,
+                "hello".into(),
+                true,
+                &key,
+            )
+            .unwrap(),
+            CompanionChatRequest::signed_with_conversation_v2(
+                &challenge,
+                id,
+                "hello".into(),
+                CompanionConversationSelection::New { incognito: true },
+                true,
+                &key,
+            )
+            .unwrap(),
+        ];
+        for (index, request) in requests.iter().enumerate() {
+            assert!(request.requests_tool_activity_v2());
+            assert!(!request.requests_tool_activity_v1());
+            assert_eq!(request.capabilities.chat_stream_v1, index > 0);
+            assert_eq!(request.capabilities.conversation_v1.is_some(), index == 2);
+            request.verify_with(key.verifying_key().as_bytes()).unwrap();
+            let mut tampered = request.clone();
+            tampered.capabilities.tool_activity_v2 = false;
+            assert!(
+                tampered
+                    .verify_with(key.verifying_key().as_bytes())
+                    .is_err()
+            );
+            let mut mixed = request.clone();
+            mixed.capabilities.tool_activity_v1 = true;
+            assert!(mixed.validate().is_err());
+            let mut revised = request.clone();
+            revised.revision += 1;
+            assert!(revised.verify_with(key.verifying_key().as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn jm_ex_05_activity_v2_offer_preserves_inventory_and_legacy_decoders() {
+        let challenge = activity_v2_challenge();
+        let legacy =
+            encode_chat_challenge_with_capability_inventory_advertisement(&challenge).unwrap();
+        assert_eq!(
+            decode_chat_challenge_with_activity_v2_advertisement(&legacy).unwrap(),
+            (challenge.clone(), true, true, true, false)
+        );
+        let bytes = encode_chat_challenge_with_activity_v2_advertisement(&challenge).unwrap();
+        assert_eq!(
+            decode_server_frame(&bytes).unwrap(),
+            ServerFrame::ChatChallenge(challenge.clone())
+        );
+        assert_eq!(
+            decode_chat_challenge_with_conversation_advertisement(&bytes).unwrap(),
+            (challenge.clone(), true, true, true)
+        );
+        assert_eq!(
+            decode_chat_challenge_with_capability_inventory_advertisement(&bytes).unwrap(),
+            (challenge.clone(), true)
+        );
+        assert!(
+            decode_chat_challenge_with_activity_v2_advertisement(&bytes)
+                .unwrap()
+                .4
+        );
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for bad in [
+            serde_json::Value::Bool(false),
+            serde_json::json!("true"),
+            serde_json::Value::Null,
+        ] {
+            envelope["tool_activity_v2"] = bad;
+            assert!(
+                !decode_chat_challenge_with_activity_v2_advertisement(
+                    &encode_frame(&envelope).unwrap()
+                )
+                .unwrap()
+                .4
+            );
+        }
+        envelope["tool_activity_v2"] = serde_json::Value::Bool(true);
+        for capabilities in [
+            serde_json::json!({}),
+            serde_json::json!({"tool_activity_v1": false}),
+            serde_json::json!({"tool_activity_v1": true, "extra": true}),
+        ] {
+            envelope["capabilities"] = capabilities;
+            let (_, v1, _, _, v2) = decode_chat_challenge_with_activity_v2_advertisement(
+                &encode_frame(&envelope).unwrap(),
+            )
+            .unwrap();
+            assert!(!v1 && !v2);
+        }
+    }
+
+    #[test]
+    fn jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows() {
+        let mut snapshot = CompanionChatActivitySnapshotV2 {
+            activity_schema_version: 2,
+            request_id: Uuid::from_u128(1),
+            max_event_seq: 1,
+            incomplete: false,
+            events: vec![CompanionToolActivityEventV2 {
+                event_seq: 1,
+                ordinal: 1,
+                phase: CompanionToolActivityPhase::Failed,
+                label: "Tool call".into(),
+                reason: Some(CompanionToolActivityReason::PeerReportedError),
+            }],
+        };
+        snapshot.validate().unwrap();
+        let mut raw = serde_json::to_value(&snapshot).unwrap();
+        raw["events"][0]["reason"] = serde_json::json!("peer private error");
+        assert!(serde_json::from_value::<CompanionChatActivitySnapshotV2>(raw).is_err());
+        for phase in [
+            CompanionToolActivityPhase::Started,
+            CompanionToolActivityPhase::Succeeded,
+            CompanionToolActivityPhase::Rejected,
+            CompanionToolActivityPhase::Unknown,
+        ] {
+            snapshot.events[0].phase = phase;
+            assert!(snapshot.validate().is_err());
+            snapshot.events[0].reason = None;
+            snapshot.validate().unwrap();
+            snapshot.events[0].reason = Some(CompanionToolActivityReason::PeerReportedError);
+        }
+        snapshot.events[0].phase = CompanionToolActivityPhase::Failed;
+        for index in 0..6 {
+            let mut wrong = snapshot.clone();
+            match index {
+                0 => wrong.activity_schema_version = 1,
+                1 => wrong.max_event_seq = 2,
+                2 => wrong.events[0].event_seq = 0,
+                3 => wrong.events[0].ordinal = 0,
+                4 => wrong.events[0].label = "/private/path".into(),
+                _ => wrong.events = vec![wrong.events[0].clone(); 17],
+            }
+            assert!(wrong.validate().is_err());
+        }
+        let bytes =
+            encode_server_frame(&ServerFrame::ChatActivitySnapshotV2(snapshot.clone())).unwrap();
+        assert_eq!(
+            decode_server_frame(&bytes).unwrap(),
+            ServerFrame::ChatActivitySnapshotV2(snapshot)
+        );
     }
 }

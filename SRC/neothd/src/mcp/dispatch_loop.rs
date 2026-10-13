@@ -63,6 +63,12 @@ pub enum ToolActivityPhase {
     Unknown,
 }
 
+/// Fixed provenance from a decoded tool response, never a peer error string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolActivityReason {
+    PeerReportedError,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolActivity {
     pub turn_id: String,
@@ -72,6 +78,8 @@ pub struct ToolActivity {
     pub label: String,
     /// This first producer deliberately has no detail leaf.
     pub detail: Option<String>,
+    #[cfg(any(feature = "cluster", test))]
+    pub(crate) reason: Option<ToolActivityReason>,
 }
 
 #[derive(Debug)]
@@ -158,7 +166,16 @@ impl ToolActivitySink {
         })
     }
 
-    fn try_emit(&self, ordinal: u32, phase: ToolActivityPhase, label: &str) {
+    fn try_emit(
+        &self,
+        ordinal: u32,
+        phase: ToolActivityPhase,
+        label: &str,
+        reason: Option<ToolActivityReason>,
+    ) {
+        // Slim builds have no negotiated Companion activity consumer.
+        #[cfg(not(any(feature = "cluster", test)))]
+        let _ = reason;
         let Ok(mut state) = self.state.try_lock() else {
             self.contention_or_loss.store(true, Ordering::Relaxed);
             self.changed();
@@ -181,6 +198,8 @@ impl ToolActivitySink {
             phase,
             label: label.to_owned(),
             detail: None,
+            #[cfg(any(feature = "cluster", test))]
+            reason,
         });
         drop(state);
         self.changed();
@@ -214,7 +233,7 @@ impl ToolActivityCall {
     pub(crate) fn started_at_write_edge(&self) {
         if !self.started.swap(true, Ordering::AcqRel) {
             self.sink
-                .try_emit(self.ordinal, ToolActivityPhase::Started, &self.label);
+                .try_emit(self.ordinal, ToolActivityPhase::Started, &self.label, None);
         }
     }
     pub(crate) fn settled_from_result(&self, is_error: bool) {
@@ -227,6 +246,7 @@ impl ToolActivityCall {
                     ToolActivityPhase::Succeeded
                 },
                 &self.label,
+                is_error.then_some(ToolActivityReason::PeerReportedError),
             );
         }
     }
@@ -243,6 +263,7 @@ impl Drop for ToolActivityCall {
                     ToolActivityPhase::Rejected
                 },
                 &self.label,
+                None,
             );
         }
     }

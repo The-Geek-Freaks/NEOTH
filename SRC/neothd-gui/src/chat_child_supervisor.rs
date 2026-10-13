@@ -604,6 +604,64 @@ struct LinuxChatUnitSetup {
     launch_frame: Vec<u8>,
 }
 
+// Test diagnostics retain only closed state labels and numeric exit metadata.
+// In particular, StatusText and the private launch envelope never enter logs.
+#[cfg(all(test, target_os = "linux"))]
+fn test_linux_activation_failure_class(error: &str) -> &'static str {
+    if error.starts_with(LINUX_SYSTEMD_MANAGER_ERROR) {
+        "manager"
+    } else if error.starts_with(LINUX_SERVICE_ERROR) {
+        "service"
+    } else if error.starts_with(LINUX_NAMESPACE_ERROR) {
+        "namespace"
+    } else if error.starts_with(LINUX_SYSTEMD_TOOL_ERROR) {
+        "tool"
+    } else {
+        "other"
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn test_linux_known_state(value: &str, allowed: &'static [&'static str]) -> &'static str {
+    allowed
+        .iter()
+        .copied()
+        .find(|known| *known == value)
+        .unwrap_or("other")
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn test_linux_activation_snapshot(snapshot: &LinuxUnitSnapshot) -> String {
+    let load = test_linux_known_state(&snapshot.load_state, &["loaded", "not-found"]);
+    let active = test_linux_known_state(
+        &snapshot.active_state,
+        &["active", "activating", "inactive", "failed"],
+    );
+    let sub = test_linux_known_state(&snapshot.sub_state, &["running", "start", "dead", "failed"]);
+    let result = test_linux_known_state(
+        &snapshot.result,
+        &[
+            "success",
+            "exit-code",
+            "signal",
+            "core-dump",
+            "timeout",
+            "watchdog",
+            "resources",
+            "oom-kill",
+            "start-limit-hit",
+        ],
+    );
+    let main_code =
+        test_linux_known_state(&snapshot.exec_main_code, &["exited", "killed", "dumped"]);
+    let main_status = snapshot.exec_main_status.parse::<i32>().ok();
+    let started_monotonic = snapshot.exec_main_start_timestamp_monotonic;
+    format!(
+        "load={load} active={active} sub={sub} result={result} main_code={main_code} \
+         main_status={main_status:?} started_monotonic={started_monotonic:?}"
+    )
+}
+
 #[cfg(target_os = "linux")]
 impl LinuxChatUnitSetup {
     fn configure(request_id: ChatStreamRequestId, command: &mut Command) -> Result<Self, String> {
@@ -699,6 +757,10 @@ impl LinuxChatUnitSetup {
     fn activate(self, child: &mut Child) -> Result<LinuxChatUnit, String> {
         use std::io::Write as _;
 
+        #[cfg(test)]
+        let mut test_last_snapshot = None;
+        #[cfg(test)]
+        let mut test_early_exit = None;
         let activation = (|| {
             let stdin = child.stdin.as_mut().ok_or_else(|| {
                 format!("{LINUX_SERVICE_ERROR}: private launch stdin was not configured as a pipe")
@@ -716,6 +778,11 @@ impl LinuxChatUnitSetup {
                 if let Some(status) = child.try_wait().map_err(|error| {
                     format!("{LINUX_SYSTEMD_MANAGER_ERROR}: poll systemd-run: {error}")
                 })? {
+                    #[cfg(test)]
+                    {
+                        use std::os::unix::process::ExitStatusExt as _;
+                        test_early_exit = Some((status.code(), status.signal()));
+                    }
                     return Err(format!(
                         "{LINUX_SYSTEMD_MANAGER_ERROR}: systemd-run exited {status} before the \
                          request service reported READY; last state: {last_state}"
@@ -723,6 +790,10 @@ impl LinuxChatUnitSetup {
                 }
                 match inspect_linux_unit(&self.systemctl, &self.unit_name) {
                     Ok(snapshot) => {
+                        #[cfg(test)]
+                        {
+                            test_last_snapshot = Some(test_linux_activation_snapshot(&snapshot));
+                        }
                         last_state = format!(
                             "load={}, active={}, sub={}",
                             snapshot.load_state, snapshot.active_state, snapshot.sub_state
@@ -773,6 +844,14 @@ impl LinuxChatUnitSetup {
             }
         })();
 
+        #[cfg(test)]
+        if let Err(error) = &activation {
+            eprintln!(
+                "test-only contained activation failure: class={} last_snapshot={} early_exit_code_signal={test_early_exit:?}",
+                test_linux_activation_failure_class(error),
+                test_last_snapshot.as_deref().unwrap_or("unavailable"),
+            );
+        }
         if activation.is_err() {
             let _ = stop_linux_unit(&self.systemctl, &self.unit_name);
         }
@@ -3295,6 +3374,42 @@ mod tests {
         let unit_offset = LINUX_LAUNCH_FRAME_MAGIC.len() + 8 + 4;
         wrong_unit[unit_offset] = b'x';
         assert!(LinuxLaunchEnvelope::decode(&wrong_unit).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_test_activation_diagnostic_uses_only_fixed_failure_classes() {
+        for (prefix, expected) in [
+            (LINUX_SYSTEMD_MANAGER_ERROR, "manager"),
+            (LINUX_SERVICE_ERROR, "service"),
+            (LINUX_NAMESPACE_ERROR, "namespace"),
+            (LINUX_SYSTEMD_TOOL_ERROR, "tool"),
+            ("private arbitrary error", "other"),
+        ] {
+            assert_eq!(
+                test_linux_activation_failure_class(&format!("{prefix}: private details")),
+                expected,
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_test_activation_diagnostic_redacts_unrecognised_unit_text() {
+        let snapshot = parse_linux_unit_snapshot(
+            "LoadState=private-load\nActiveState=private-active\nSubState=private-sub\n\
+             ControlGroup=/private/path\nDelegate=no\nKillMode=control-group\nSendSIGKILL=yes\nMainPID=99\n\
+             Result=private-result\nExecMainCode=private-code\nExecMainStatus=125\n\
+             StatusText=private-token-should-never-appear\nExecMainStartTimestampMonotonic=42\n",
+        )
+        .unwrap();
+        let rendered = test_linux_activation_snapshot(&snapshot);
+        assert_eq!(
+            rendered,
+            "load=other active=other sub=other result=other main_code=other \
+             main_status=Some(125) started_monotonic=Some(42)"
+        );
+        assert!(!rendered.contains("private"));
     }
 
     #[cfg(target_os = "linux")]

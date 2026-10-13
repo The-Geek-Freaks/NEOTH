@@ -1,0 +1,96 @@
+{
+  "schema": "neoth.gold-wave2571.v1",
+  "date": "2026-10-13",
+  "base": "ea247fd1efe7d55eed56bcb2578a25bac123b36f",
+  "status": "Isolated activity V2 implementation candidate; fresh hosted execution pending",
+  "roadmap": "JM-EX-05",
+  "implementation": [
+    "Retain only the fixed peer_reported_error cause from confirmed typed MCP is_error replies after write",
+    "Keep V1 wire and signed request bytes unchanged when V2 absent; use separate strict schema 2 snapshots and mutually exclusive signed opt-in",
+    "Advertise V2 as an envelope sibling while preserving the frozen V1 capability map and inventory offer",
+    "Optional native chat_start_v4 and conversation_start_v2 select the new wire before the only request write; missing older ABI falls back only before invocation; opt-out remains opt-out",
+    "Dart V1/V2 closed-schema decoding and passive fixed-reason presentation",
+    "Hosted real held-error journey observes Failed reason before provider continuation, then proves two tool calls at terminal"
+  ],
+  "sourceFiles": [
+    ".github/scripts/mobile/build-host-interop-bridge.sh",
+    ".github/scripts/mobile/hosted-mobile-conversation.py",
+    ".github/scripts/mobile/hosted-mobile-interop.py",
+    ".github/scripts/mobile/materialize-neoth-companion.ps1",
+    ".github/scripts/mobile/mobile-companion-interop-selection.json",
+    ".github/scripts/mobile/test_hosted_mobile_conversation.py",
+    ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+    "apps/neoth_companion/README.md",
+    "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
+    "apps/neoth_companion/lib/companion_activity_presentation.dart",
+    "apps/neoth_companion/lib/models.dart",
+    "apps/neoth_companion/lib/native_bridge.dart",
+    "apps/neoth_companion/test/activity_reason_test.dart",
+    "bridges/companion-native/ABI_CONTRACT.md",
+    "bridges/companion-native/README.md",
+    "bridges/companion-native/include/neoth_companion_bridge.h",
+    "bridges/companion-native/src/lib.rs",
+    "SRC/neothd/src/channels/whatsapp_baileys.rs",
+    "SRC/neothd/src/daemon/companion_protocol.rs",
+    "SRC/neothd/src/daemon/companion_runtime.rs",
+    "SRC/neothd/src/mcp/client.rs",
+    "SRC/neothd/src/mcp/dispatch_loop.rs",
+    "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py",
+    ".github/scripts/mobile/test_mobile_interop_selection.py"
+  ],
+  "newCoreTests": [
+    "mcp::client::tests::tool_activity_reason_requires_a_confirmed_peer_error_after_write",
+    "daemon::companion_runtime::tests::jm_ex_05_activity_projection_requires_v2_and_preserves_unknown",
+    "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_signed_choices_preserve_legacy",
+    "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_offer_preserves_inventory_and_legacy_decoders",
+    "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows"
+  ],
+  "newBridgeTests": [
+    "tests::activity_wire_selection_keeps_opt_out_and_legacy_fallback",
+    "tests::native_boundary_v2_binds_fixed_reason_to_failed_event_and_request",
+    "tests::activity_v2_invalid_starts_do_not_allocate_operations"
+  ],
+  "expected": {
+    "flutter": 79,
+    "ffiSymbols": 17,
+    "collector": 32,
+    "conversationObserver": 9,
+    "rustExact": 179,
+    "interopSourceBindings": 84
+  },
+  "portableWorkspaceRegistrations": 2926,
+  "boundary": [
+    "No guessed reason for rejected, cancelled, unknown, or observer loss",
+    "No raw tool error text or arguments in mobile cards",
+    "Existing drain, revoke, history, marker, and ownership contracts remain",
+    "No new .slint changes",
+    "No physical mobile device or complete JM-EX-05 acceptance"
+  ],
+  "localExecutableValidationRan": false,
+  "primaryImported": false,
+  "hostedRuntimeAccepted": false,
+  "releaseAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": "38382917147",
+    "producer": "b688559de88fff9426ed585993fb2f0f49a64e4d",
+    "artifact": "11803842978",
+    "zipSha256": "A5C06CC4B637F1486167EF647D4581A05BFB2FDC94B5E095F4068E11E1AC0C87",
+    "patchSha256": "283778F2339628C769BC8054682F12BF0E766C48CC01003D3BFDEE8E3BEDADE2",
+    "paths": [
+      "SRC/neothd/src/daemon/companion_protocol.rs",
+      "SRC/neothd/src/daemon/companion_runtime.rs",
+      "SRC/neothd/src/mcp/client.rs"
+    ],
+    "freshPreflight": "pending"
+  },
+  "selectionContractRepair": {
+    "run": "38383261255",
+    "producer": "a3ebbf1df676572c526370b4f30c37754334f1c4",
+    "failure": "Exact-selection contract retained old171/29/81 expectations while candidate intentionally registered179/32/84",
+    "change": "Update independent expected group counts to core108/bridge27 and append exactly three new named collector identities",
+    "testCasesUnchanged": 9,
+    "freshPreflight": "pending",
+    "failureLogSha256": "481646EA9BB6587F3F5267D96017FFDA55D3B55575E9FE9331A11CA09DA85634"
+  }
+}

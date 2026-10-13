@@ -29,6 +29,31 @@ by its authenticated request UUID and maximum event sequence; a same-sequence
 transition from `incomplete:false` to `incomplete:true` is retained as a loss
 notice, while stale or fabricated sequence progress is rejected.
 
+## Activity reason V2
+
+`neoth_companion_chat_start_v4` has the same C ABI as `chat_start_v3`.
+`request_tool_activity=0` requests no activity even when the daemon advertises
+newer support. With the flag set to 1, it selects signed V2 activity only after
+an exact V2 advertisement on the authenticated ChatChallenge. Selection occurs
+before the sole request write. Without that advertisement it selects V1 when
+V1 was advertised, or no activity otherwise. There is no post-write retry.
+
+`neoth_companion_conversation_start_v2` has the same ABI as its V1 start. Its
+chat-bearing commands use the same pre-write V2 selection and V1 fallback.
+Read-only history/recovery requests retain their established signed form.
+
+Only these new starts can negotiate `chat_activity_snapshot_v2` with
+`activity_schema_version: 2`. An optional `reason` carries only the fixed value
+`peer_reported_error`, only for a `failed` event confirmed by a decoded tool
+response. Unknown outcomes and missing updates do not imply a failure cause.
+Peer error text, tool arguments and private diagnostic detail are never included
+in an activity event. Older starts retain their V1 activity envelopes and never
+gain a `reason` member. Poll, cancellation and terminal priority remain unchanged.
+
+The Flutter owner looks up the new start symbols optionally and can select the
+older supported start before invoking it. It never retries a started operation
+through another API. Current host/mobile package manifests require 17 exports.
+
 ## C ownership and concurrency preconditions
 
 Each opaque bridge and operation pointer has one C owner. Any non-null input
@@ -108,6 +133,6 @@ This is a last observed grant, not a hardware-availability or resource-lease cla
 
 The existing original operation poll returns terminal code 1 with normal code-5
 buffer discovery. Existing serialized cancel/free ownership applies unchanged.
-This adds one start symbol to the prior 14-symbol host/mobile manifests; there
-is no new polling protocol. Missing optional FFI support is reported without
-starting a different operation.
+Inventory uses its separate start and the existing polling protocol. Missing
+optional inventory support is reported without starting a chat or status
+operation.

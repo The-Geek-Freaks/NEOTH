@@ -224,12 +224,28 @@ class CompanionChatStreamSnapshot {
   }
 }
 
+enum CompanionToolActivityReason { peerReportedError }
+
 class CompanionToolActivityEvent {
-  const CompanionToolActivityEvent({required this.eventSeq, required this.ordinal, required this.phase, required this.label});
+  const CompanionToolActivityEvent({required this.eventSeq, required this.ordinal, required this.phase, required this.label, this.reason});
   final int eventSeq;
   final int ordinal;
   final CompanionToolActivityPhase phase;
   final String label;
+  final CompanionToolActivityReason? reason;
+
+  factory CompanionToolActivityEvent.fromV2Json(Map<String, Object?> value, int prior) {
+    final v1 = Map<String, Object?>.of(value);
+    final hasReason = v1.containsKey('reason');
+    final reason = v1.remove('reason');
+    final event = CompanionToolActivityEvent.fromJson(v1, prior);
+    if (hasReason && (reason != 'peer_reported_error' || event.phase != CompanionToolActivityPhase.failed)) {
+      throw const FormatException('invalid activity reason');
+    }
+    return CompanionToolActivityEvent(eventSeq: event.eventSeq, ordinal: event.ordinal,
+        phase: event.phase, label: event.label,
+        reason: hasReason ? CompanionToolActivityReason.peerReportedError : null);
+  }
 
   factory CompanionToolActivityEvent.fromJson(Map<String, Object?> value, int prior) {
     const keys = {'event_seq', 'ordinal', 'phase', 'label'};
@@ -252,6 +268,27 @@ class CompanionToolActivityEvent {
 class CompanionChatActivitySnapshot {
   const CompanionChatActivitySnapshot({required this.requestId, required this.maxEventSeq, required this.incomplete, required this.events});
   final String requestId; final int maxEventSeq; final bool incomplete; final List<CompanionToolActivityEvent> events;
+  factory CompanionChatActivitySnapshot.fromBridgeObservation(Map<String, Object?> value) {
+    if (value['kind'] != 'chat_activity_snapshot_v2') {
+      return CompanionChatActivitySnapshot.fromBridgeJson(value);
+    }
+    const keys = {'kind', 'activity_schema_version', 'request_id', 'max_event_seq', 'incomplete', 'events'};
+    if (value.length != keys.length || !value.keys.toSet().containsAll(keys) || value['activity_schema_version'] != 2) {
+      throw const FormatException('unexpected activity v2 snapshot');
+    }
+    final maximum = value['max_event_seq']; final incomplete = value['incomplete']; final raw = value['events'];
+    if (maximum is! int || maximum < 0 || incomplete is! bool || raw is! List || raw.length > 16) throw const FormatException('invalid activity snapshot');
+    var prior = 0; final events = <CompanionToolActivityEvent>[];
+    for (final entry in raw) {
+      if (entry is! Map<String, Object?>) throw const FormatException('invalid activity event');
+      final event = CompanionToolActivityEvent.fromV2Json(entry, prior);
+      prior = event.eventSeq; events.add(event);
+    }
+    if (maximum != prior) throw const FormatException('invalid activity maximum');
+    return CompanionChatActivitySnapshot(requestId: _uuid(value['request_id']), maxEventSeq: maximum,
+        incomplete: incomplete, events: List.unmodifiable(events));
+  }
+
   factory CompanionChatActivitySnapshot.fromBridgeJson(Map<String, Object?> value) {
     const keys = {'kind', 'activity_schema_version', 'request_id', 'max_event_seq', 'incomplete', 'events'};
     if (value.length != keys.length || !value.keys.toSet().containsAll(keys) || value['kind'] != 'chat_activity_snapshot' || value['activity_schema_version'] != 1) throw const FormatException('unexpected activity snapshot');

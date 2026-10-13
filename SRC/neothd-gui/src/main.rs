@@ -33015,8 +33015,16 @@ fn parse_chat_stream_protocol_with_mode(
     input_complete: bool,
     route_report_delivered: bool,
 ) -> ParsedChatStream {
+    // A read can contain a complete done followed by only part of its feedback
+    // target. Discover the terminal from complete lines while preserving the
+    // unfinished tail for the next read and strict EOF validation below.
     let terminal = if input_complete || raw.ends_with('\n') {
         final_stream_sentinel(raw, expected_control_token)
+    } else if let Some((complete_prefix, tail)) = raw.rsplit_once('\n')
+        && is_incomplete_stream_control_tail(tail)
+        && !is_unsupported_stream_control_candidate(tail)
+    {
+        final_stream_sentinel(complete_prefix, expected_control_token)
     } else {
         None
     };
@@ -33287,6 +33295,16 @@ fn parse_chat_stream_protocol_with_mode(
         let mut tail_offset = tail_start;
         for segment in raw[tail_start..].split_inclusive('\n') {
             let segment_end = tail_offset + segment.len();
+            if !input_complete
+                && !segment.ends_with('\n')
+                && is_incomplete_stream_control_tail(segment)
+            {
+                if is_unsupported_stream_control_candidate(segment) {
+                    protocol_valid = false;
+                }
+                tail_offset = segment_end;
+                continue;
+            }
             let line = match classify_stream_control_line(segment) {
                 StreamControlLine::V1(line) => line.trim(),
                 StreamControlLine::ReservedUnsupported | StreamControlLine::Ordinary => {
@@ -34717,6 +34735,121 @@ mod chat_subprocess_tests {
         assert!(parsed.provider_done);
         assert!(parsed.done);
         assert!(parsed.protocol_valid);
+    }
+
+    fn response_feedback_target_frame(token: &str) -> String {
+        control_frame(serde_json::json!({
+            "neoth_stream": "response_feedback_target",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id(token),
+            "control_token": token,
+            "response_id": "aabbccddeeff00112233445566778899",
+            "session_id": "session-w164",
+            "revision": 0,
+            "status": "ready",
+        }))
+    }
+
+    #[test]
+    fn split_post_done_feedback_preserves_terminal_and_compacts_exactly_once() {
+        let token = "split-feedback-token";
+        let prefix = format!(
+            "{}\n{}\n{}\n{}\n",
+            skill_route_frame(token),
+            provider_delta_frame(token, 1, "reply"),
+            provider_done_frame(token, 1, "reply"),
+            control_frame(done_frame(token, 1, "reply")),
+        );
+        let feedback = format!("{}\n", response_feedback_target_frame(token));
+        for split in 0..feedback.len() {
+            let mut accumulated = format!("{prefix}{}", &feedback[..split]).into_bytes();
+            let parsed = parse_chat_stream_protocol_incremental_with_route_state(
+                std::str::from_utf8(&accumulated).unwrap(),
+                Some(token),
+                false,
+            );
+            assert!(parsed.protocol_valid, "feedback split at byte {split}");
+            assert!(parsed.done);
+            assert!(parsed.provider_done);
+            assert_eq!(parsed.text, "reply");
+            assert!(parsed.response_feedback_controls.is_empty());
+            assert!(parsed.route_report.is_some());
+            assert_eq!(parsed.completed_control_ranges.len(), 1);
+            assert!(
+                parsed
+                    .completed_control_ranges
+                    .iter()
+                    .all(|range| range.end <= prefix.len())
+            );
+            compact_completed_control_frames(&mut accumulated, &parsed.completed_control_ranges)
+                .unwrap();
+
+            accumulated.extend_from_slice(&feedback.as_bytes()[split..]);
+            let parsed = parse_chat_stream_protocol_incremental_with_route_state(
+                std::str::from_utf8(&accumulated).unwrap(),
+                Some(token),
+                true,
+            );
+            assert!(parsed.protocol_valid, "completed split at byte {split}");
+            assert!(parsed.done);
+            assert!(parsed.provider_done);
+            assert_eq!(parsed.text, "reply");
+            assert!(parsed.route_report.is_none());
+            assert_eq!(parsed.response_feedback_controls.len(), 1);
+            let mut projection =
+                chat_response_feedback::Projection::new(chat_stream_request_id(token));
+            projection.stream_done();
+            let snapshot = projection
+                .apply_json(
+                    parsed.response_feedback_controls[0].raw.as_str(),
+                    token,
+                    CHAT_STREAM_PROTOCOL_VERSION,
+                )
+                .unwrap();
+            assert!(snapshot.available);
+            compact_completed_control_frames(&mut accumulated, &parsed.completed_control_ranges)
+                .unwrap();
+            let drained = parse_chat_stream_protocol_with_route_state(
+                std::str::from_utf8(&accumulated).unwrap(),
+                Some(token),
+                true,
+            );
+            assert!(drained.protocol_valid);
+            assert!(drained.done);
+            assert!(drained.response_feedback_controls.is_empty());
+        }
+    }
+
+    #[test]
+    fn post_done_incomplete_or_invalid_controls_still_fail_closed() {
+        let token = "split-feedback-token";
+        let prefix = format!(
+            "{}\n{}\n{}\n{}\n",
+            skill_route_frame(token),
+            provider_delta_frame(token, 1, "reply"),
+            provider_done_frame(token, 1, "reply"),
+            control_frame(done_frame(token, 1, "reply")),
+        );
+        let feedback = response_feedback_target_frame(token);
+        for split in 1..feedback.len() {
+            let raw = format!("{prefix}{}", &feedback[..split]);
+            assert!(
+                !parse_chat_stream_protocol(&raw, Some(token)).protocol_valid,
+                "truncated feedback accepted at EOF byte {split}"
+            );
+        }
+        for tail in [
+            format!("{}\n", control_frame(done_frame(token, 1, "reply"))),
+            format!("{}\n", response_feedback_target_frame("wrong-token")),
+            format!("{}\n", provider_delta_frame(token, 2, "late")),
+            format!("{CHAT_STREAM_CONTROL_NAMESPACE}2 {{"),
+            format!("{CHAT_STREAM_CONTROL_PREFIX}{{broken}}\n"),
+            "unexpected post-done text".to_string(),
+        ] {
+            let raw = format!("{prefix}{tail}");
+            assert!(!parse_chat_stream_protocol_incremental(&raw, Some(token)).protocol_valid);
+            assert!(!parse_chat_stream_protocol(&raw, Some(token)).protocol_valid);
+        }
     }
 
     #[test]

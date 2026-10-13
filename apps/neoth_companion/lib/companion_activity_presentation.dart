@@ -29,7 +29,7 @@ class CompanionActivityCard extends StatelessWidget {
                   decoration: BoxDecoration(color: colors.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Row(children: [Icon(_icon(event.phase), color: _color(colors, event.phase), semanticLabel: _phaseText(event.phase)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(event.label), const SizedBox(height: 2), Text(_phaseText(event.phase), style: Theme.of(context).textTheme.labelMedium)]))]),
+                    child: Row(children: [Icon(_icon(event.phase), color: _color(colors, event.phase), semanticLabel: _phaseText(event.phase)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(event.label), const SizedBox(height: 2), Text(_phaseText(event.phase), style: Theme.of(context).textTheme.labelMedium), if (_reasonText(event) case final reason?) Padding(padding: const EdgeInsets.only(top: 4), child: Text(reason))]))]),
                   ),
                 ),
               ),
@@ -51,3 +51,8 @@ List<CompanionToolActivityEvent> _latestByOrdinal(List<CompanionToolActivityEven
 String _phaseText(CompanionToolActivityPhase phase) => switch (phase) { CompanionToolActivityPhase.started => 'Started', CompanionToolActivityPhase.succeeded => 'Completed', CompanionToolActivityPhase.failed => 'Failed', CompanionToolActivityPhase.rejected => 'Rejected', CompanionToolActivityPhase.unknown => 'Outcome unknown' };
 IconData _icon(CompanionToolActivityPhase phase) => switch (phase) { CompanionToolActivityPhase.started => Icons.hourglass_top_outlined, CompanionToolActivityPhase.succeeded => Icons.check_circle_outline, CompanionToolActivityPhase.failed => Icons.error_outline, CompanionToolActivityPhase.rejected => Icons.block_outlined, CompanionToolActivityPhase.unknown => Icons.info_outline };
 Color _color(ColorScheme colors, CompanionToolActivityPhase phase) => switch (phase) { CompanionToolActivityPhase.succeeded => colors.primary, CompanionToolActivityPhase.failed || CompanionToolActivityPhase.rejected => colors.error, _ => colors.secondary };
+
+String? _reasonText(CompanionToolActivityEvent event) =>
+    event.phase == CompanionToolActivityPhase.failed && event.reason == CompanionToolActivityReason.peerReportedError
+        ? 'The tool reported an error.'
+        : null;

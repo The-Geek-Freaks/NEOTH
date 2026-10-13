@@ -43,7 +43,7 @@ the reviewed lock files before a normal qualification can use exact lock
 hashes. Bootstrap is not a native build, application signing, release, or
 phone acceptance result.
 
-The iOS build binds the local framework directory and verifies all seven
-bridge exports in the final Runner binary. Until the platform builds and
-these checks pass, this bridge is not
-evidence of an installable Android/iOS application or a release-ready binary.
+The iOS build binds the local framework directory and verifies all 17 required
+bridge exports in the final Runner binary, including the V4 activity and V2
+conversation starts. Until platform builds and these checks pass, this bridge
+is not evidence of an installable Android/iOS application or a release-ready binary.

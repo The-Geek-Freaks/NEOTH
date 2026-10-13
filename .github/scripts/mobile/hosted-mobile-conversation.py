@@ -104,6 +104,8 @@ class ConversationBridge(H.Bridge):
         u8, size, ptr = ctypes.c_ubyte, ctypes.c_size_t, ctypes.c_void_p
         self.lib.neoth_companion_conversation_start_v1.argtypes = [ptr, ctypes.POINTER(u8), size, ctypes.POINTER(u8), size, ctypes.POINTER(u8), size]
         self.lib.neoth_companion_conversation_start_v1.restype = ptr
+        self.lib.neoth_companion_conversation_start_v2.argtypes = [ptr, ctypes.POINTER(u8), size, ctypes.POINTER(u8), size, ctypes.POINTER(u8), size]
+        self.lib.neoth_companion_conversation_start_v2.restype = ptr
         self.lib.neoth_companion_conversation_poll_v1.argtypes = [ptr, ctypes.POINTER(u8), size, ctypes.POINTER(size)]
         self.lib.neoth_companion_conversation_poll_v1.restype = ctypes.c_int32
 
@@ -117,12 +119,17 @@ class ConversationBridge(H.Bridge):
         require(bool(self.handle), "native identity restore failed")
 
     def conversation(self, descriptor: dict[str, Any], device_id: str, revision: int,
-                     request_id: str, action: dict[str, Any], timeout: float) -> dict[str, Any]:
+                     request_id: str, action: dict[str, Any], timeout: float,
+                     *, start_v2: bool = False) -> dict[str, Any]:
         read = action["operation"] in ("history", "recover")
         command = {"command_schema_version": 1, "request_id": request_id, "revision": revision, "action": action}
         values = (json.dumps(descriptor, separators=(",", ":")), device_id, json.dumps(command, separators=(",", ":")))
         buffers = [(ctypes.c_ubyte * len(value.encode())).from_buffer_copy(value.encode()) for value in values]
-        op = self.lib.neoth_companion_conversation_start_v1(self.handle, buffers[0], len(buffers[0]),
+        # Select once before writing. Failure never retries through another ABI.
+        start = (self.lib.neoth_companion_conversation_start_v2 if start_v2
+                 else self.lib.neoth_companion_conversation_start_v1)
+        activity_kind = "chat_activity_snapshot_v2" if start_v2 else "chat_activity_snapshot"
+        op = start(self.handle, buffers[0], len(buffers[0]),
                 buffers[1], len(buffers[1]), buffers[2], len(buffers[2]))
         require(bool(op), "conversation start returned null")
         until = time.monotonic() + timeout
@@ -144,7 +151,10 @@ class ConversationBridge(H.Bridge):
                                 "invalid conversation preview")
                         preview_revision = value["revision"]
                     else:
-                        require(value.get("kind") == "chat_activity_snapshot", "invalid activity frame")
+                        require(value.get("kind") == activity_kind, "invalid activity frame")
+                        if start_v2:
+                            require(type(value.get("activity_schema_version")) is int
+                                    and value["activity_schema_version"] == 2, "invalid v2 activity schema")
                     continue
                 if code != H.OK or value.get("request_id") != request_id or (read and value.get("kind") != "conversation_history"):
                     raise ConversationFrameError(code, value, request_id)
@@ -307,10 +317,11 @@ def main() -> int:
                 rows = [{"role": "operator", "text": PROMPTS[0], "truncated": False}, {"role": "agent", "text": REPLIES[0], "truncated": False}]
                 receipt["stage"] = "first_encrypted_message"
                 first = bridge.conversation(descriptor, device_id, revision, request_id,
-                        {"operation": "new", "message": PROMPTS[0], "incognito": False}, H.budget(work_deadline))
+                        {"operation": "new", "message": PROMPTS[0], "incognito": False}, H.budget(work_deadline),
+                        start_v2=True)
                 validate_chat(first, request_id, revision, None, rows=rows, reply=REPLIES[0])
                 require(server.request_count == 1, "first message provider count differs")
-                receipt["steps"]["first"] = {"accepted": True, "canonical_rows": 2, "provider_calls": 1}
+                receipt["steps"]["first"] = {"accepted": True, "conversation_start": "v2", "canonical_rows": 2, "provider_calls": 1}
                 del first  # Simulate loss of the local terminal/admission, never replay its prompt.
                 receipt["stage"] = "restart_daemon_and_native"
                 stop_generation()
@@ -334,7 +345,7 @@ def main() -> int:
                         {"operation": "resume", "conversation_id": conversation_id, "message": PROMPTS[1]}, H.budget(work_deadline))
                 validate_chat(second, second_request, revision, conversation_id, rows=rows, reply=REPLIES[1])
                 require(server.request_count == 2 and server.context_verified and server.provider_valid, "resumed provider did not receive exact prior context")
-                receipt["steps"]["second"] = {"accepted": True, "same_conversation": True, "canonical_rows": 4,
+                receipt["steps"]["second"] = {"accepted": True, "conversation_start": "v1", "same_conversation": True, "canonical_rows": 4,
                         "provider_calls": 2, "prior_context_verified": True}
                 receipt["stage"] = "readonly_history_and_missing_creator"
                 history_request = str(uuid.uuid4())

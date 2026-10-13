@@ -1,0 +1,99 @@
+{
+  "schema": "neoth.gold-wave2572.v1",
+  "date": "2026-10-13",
+  "base": "ea247fd1efe7d55eed56bcb2578a25bac123b36f",
+  "status": "Isolated parser repair and test-only Linux activation diagnostics; hosted verification pending",
+  "failure": {
+    "run": "38368061087",
+    "job": "115197894859",
+    "passed": 19436,
+    "failed": 4,
+    "skipped": 32,
+    "proof": "work/gold-20260906/wave2570-full-integration/ROOT_LINUX_FAILURE_CUSTODY.json",
+    "proofSha256": "B40139872A5F834C1F703434D6D516C0B79D24492292F542D1C2B0E15C67AB30",
+    "fullRunStillActiveAtPreparation": true
+  },
+  "parserRepair": {
+    "cause": "Incremental parsing lost an authenticated done when the same read ended inside the subsequent feedback control. The preceding complete done was then rejected as misplaced.",
+    "change": "Discover the terminal from the complete prefix only before a supported incomplete control tail; defer that tail in the post-done loop until newline or strict EOF processing.",
+    "unchanged": [
+      "provider delta and boundary authentication",
+      "finalization receipts",
+      "completed control compaction",
+      "route and notice delivery state",
+      "both runtime read loops and EOF requirement",
+      "32 MiB stdout bound",
+      "large 16 MiB notice regression"
+    ]
+  },
+  "buddyDiagnosis": {
+    "rootCause": "Not yet established",
+    "observed": "Two real Buddy provider callbacks fail during bounded contained execution",
+    "change": "Test-only fixed error class, last already observed unit snapshot restricted to known state labels and numeric exit metadata, optional early systemd-run exit code/signal",
+    "preserved": [
+      "real CLI invocation",
+      "READY and service contract requirement",
+      "timeouts",
+      "stop and reap order",
+      "no fallback"
+    ]
+  },
+  "newUniversalGuiTests": [
+    "chat_subprocess_tests::split_post_done_feedback_preserves_terminal_and_compacts_exactly_once",
+    "chat_subprocess_tests::post_done_incomplete_or_invalid_controls_still_fail_closed"
+  ],
+  "newLinuxGuiTests": [
+    "chat_child_supervisor::tests::linux_test_activation_diagnostic_uses_only_fixed_failure_classes",
+    "chat_child_supervisor::tests::linux_test_activation_diagnostic_redacts_unrecognised_unit_text"
+  ],
+  "expectedFocusedGuiCases": 182,
+  "expectedUniversalGuiCases": 145,
+  "expectedLinuxAdditionalGuiCases": 37,
+  "independentReview": {
+    "parser": "/root/yaml_candidate_review",
+    "containedExecution": "/root/linux_ci_budget",
+    "scope": "Remote source and text proposal review; no execution proof"
+  },
+  "audioAccepted": {
+    "run": "38368061087",
+    "producer": "ea247fd1efe7d55eed56bcb2578a25bac123b36f",
+    "exactCases": 204,
+    "perPlatform": 68,
+    "archives": 3,
+    "entries": 12,
+    "sourceBindings": 13,
+    "proof": "work/gold-20260906/wave2570-full-integration/audio-admission/ROOT_AUDIO_ADMISSION.json",
+    "proofSha256": "6AC7850FD95802895A434F75C9C1E6BD6528C8A768610D9EB9C77EA7810D4501"
+  },
+  "localExecutableValidationRan": false,
+  "primaryImported": false,
+  "nativeDeviceAcceptance": false,
+  "releaseAcceptance": false,
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": "38381889282",
+    "producer": "d3437a35086c086789cf840e2a70c9a1b7e67966",
+    "artifact": "11804140862",
+    "zipSha256": "33E7582B4B04463A3298B84346CA4EEDA4D254881BC1475F88B6A208CCE1F0DF",
+    "patchSha256": "D1033A4B412F0977C5AF5E69B15A097669A8842AB3928B0ADEBC5B86F7819003",
+    "changedPath": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+    "freshPreflight": "pending"
+  },
+  "windowsAccepted": {
+    "run": "38368061087",
+    "producer": "ea247fd1efe7d55eed56bcb2578a25bac123b36f",
+    "job": "115197894870",
+    "passed": 19303,
+    "skipped": 34,
+    "proof": "work/gold-20260906/wave2570-full-integration/ROOT_WINDOWS_ACCEPTANCE.json",
+    "proofSha256": "F325801A407B892FC3BF922C33B8854260DB4278F4C4897EE0BACD4B67E96A24",
+    "evidenceBoundary": "Original archive custody plus job outcome and aggregate text summary; no local XML parsing or independent per-case admission"
+  },
+  "exactGuiSelectionRepair": {
+    "observed": "Focused workflow still required 143 universal plus 35 Linux while producer matrix requires 145 plus 37",
+    "changed": "Four exact workflow count literals; one static preflight regression checks matrix/workflow agreement and unique identities",
+    "expected": 182,
+    "runtimeVerification": "pending",
+    "localExecution": false
+  }
+}

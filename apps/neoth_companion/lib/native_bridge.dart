@@ -79,7 +79,9 @@ class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithC
         _chatStart = library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_chat_start'),
         _chatStartV2 = _lookupChatStartV2(library),
         _chatStartV3 = _lookupChatStartV3(library),
+        _chatStartV4 = _lookupChatStartV4(library),
         _conversationStart = _lookupConversationStart(library),
+        _conversationStartV2 = _lookupConversationStartV2(library),
         _inventoryStart = _lookupInventoryStart(library),
         _conversationPoll = _lookupConversationPoll(library),
         _poll = library.lookupFunction<_PollNative, _PollDart>('neoth_companion_operation_poll'),
@@ -103,7 +105,9 @@ class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithC
   final _ChatStartDart _chatStart;
   final _ChatStartV2Dart? _chatStartV2;
   final _ChatStartV2Dart? _chatStartV3;
+  final _ChatStartV2Dart? _chatStartV4;
   final _ChatStartDart? _conversationStart;
+  final _ChatStartDart? _conversationStartV2;
   final _ChatStartDart? _inventoryStart;
   final _PollDart? _conversationPoll;
   final _PollDart _poll;
@@ -174,7 +178,7 @@ class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithC
   @override
   Future<NativeBridgeResult> chatWithStream(String descriptorJson, String deviceId, String message,
       void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) {
-    final start = _chatStartV3; final poll = _pollV3;
+    final start = _chatStartV4 ?? _chatStartV3; final poll = _pollV3;
     if (start == null || poll == null) return chatWithActivity(descriptorJson, deviceId, message, onActivity);
     if (!isBoundedReconnectInput(descriptorJson, deviceId)) return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
     validateOrdinaryChatMessage(message);
@@ -184,12 +188,12 @@ class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithC
   }
 
   @override
-  bool get conversationSupported => _conversationStart != null && _conversationPoll != null;
+  bool get conversationSupported => (_conversationStartV2 != null || _conversationStart != null) && _conversationPoll != null;
 
   @override
   Future<NativeBridgeResult> conversation(String descriptorJson, String deviceId, String commandJson,
       void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) {
-    final start = _conversationStart; final poll = _conversationPoll;
+    final start = _conversationStartV2 ?? _conversationStart; final poll = _conversationPoll;
     // A selected conversation is never silently downgraded to one-off chat.
     if (start == null || poll == null || !isBoundedReconnectInput(descriptorJson, deviceId)
         || utf8.encode(commandJson).length > 4096) return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
@@ -328,7 +332,7 @@ class FfiNativeBridge implements NativeBridgeWithConversation, NativeBridgeWithC
           // hide the eventual terminal result.
           try {
             final decoded = jsonDecode(utf8.decode(output.asTypedList(delivered), allowMalformed: false));
-            if (decoded is Map<String, Object?>) onActivity(CompanionChatActivitySnapshot.fromBridgeJson(decoded));
+            if (decoded is Map<String, Object?>) onActivity(CompanionChatActivitySnapshot.fromBridgeObservation(decoded));
           } on Object {
             // Drop this side-channel observation; continue polling terminal.
           }
@@ -421,5 +425,14 @@ _PollV2Dart? _lookupPollV3(DynamicLibrary library) { try { return library.lookup
 
 _ChatStartDart? _lookupInventoryStart(DynamicLibrary library) {
   try { return library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_capability_inventory_start_v1'); }
+  on ArgumentError { return null; }
+}
+
+_ChatStartV2Dart? _lookupChatStartV4(DynamicLibrary library) {
+  try { return library.lookupFunction<_ChatStartV2Native, _ChatStartV2Dart>('neoth_companion_chat_start_v4'); }
+  on ArgumentError { return null; }
+}
+_ChatStartDart? _lookupConversationStartV2(DynamicLibrary library) {
+  try { return library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_conversation_start_v2'); }
   on ArgumentError { return null; }
 }

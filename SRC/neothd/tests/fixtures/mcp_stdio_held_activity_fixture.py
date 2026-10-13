@@ -24,10 +24,12 @@ def wait_for_release(release):
     raise RuntimeError("held activity fixture release deadline exhausted")
 
 def main():
-    if len(sys.argv) != 4:
-        raise RuntimeError("expected absolute counter, entered, and release paths")
-    counter, entered, release = (pathlib.Path(value) for value in sys.argv[1:])
-    if not all(path.is_absolute() for path in (counter, entered, release)):
+    if len(sys.argv) not in (4, 5):
+        raise RuntimeError("expected counter, entered, release, and optional error paths")
+    counter, entered, release = (pathlib.Path(value) for value in sys.argv[1:4])
+    error = pathlib.Path(sys.argv[4]) if len(sys.argv) == 5 else None
+    paths = (counter, entered, release) if error is None else (counter, entered, release, error)
+    if not all(path.is_absolute() for path in paths):
         raise RuntimeError("fixture paths must be absolute")
     for raw in sys.stdin:
         value = json.loads(raw)
@@ -40,7 +42,7 @@ def main():
             increment(counter)
             entered.write_text("entered\n")
             wait_for_release(release)
-            reply(request_id, {"content":[{"type":"text","text":"held fixture activity result"}],"isError":False})
+            reply(request_id, {"content":[{"type":"text","text":"held fixture activity result"}],"isError":error is not None and error.is_file()})
 
 if __name__ == "__main__":
     main()

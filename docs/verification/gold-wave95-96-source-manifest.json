@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T07:41:54.0913582Z",
-  "validationStatus": "Source repair; native hosted verification pending",
+  "capturedUtc": "2026-10-13T10:48:54.9843522Z",
+  "validationStatus": "Combined source candidate; full targeted hosted acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/scripts/mobile/build-host-interop-bridge.sh",
-      "bytes": 3233,
-      "sha256": "44C0BC5AE789C9F98F05AF7C3807229A9E8B1B761D034B571050F00C195E86B6"
+      "bytes": 3373,
+      "sha256": "F1122FB8594ABC1D11B222EBBA81AA506410FA7F9896E53EEBF20B1B33EF24F2"
     },
     {
       "path": ".github/scripts/mobile/build-ios-bridge.sh",
@@ -43,38 +43,38 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-conversation.py",
-      "bytes": 24296,
-      "sha256": "4739517C293A58D5CAECF86787BA58833AB091E812D71A70B654332EED46F667"
+      "bytes": 25159,
+      "sha256": "946B05AE0D5BA6510F18D931F5EB0AC5A936B63E11C3386CC2DCC23FBB9BF83E"
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 74844,
-      "sha256": "B2C462AEDE6BFB3CCA0457BA94CE1FEB59A2D3EDDDF9D03D829BE8D2D277253C"
+      "bytes": 89951,
+      "sha256": "8DFD83219F5D7CA54961443433257FB0CC037404789EB1244B7D33AE3597134D"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
-      "bytes": 19310,
-      "sha256": "B51BB42D592B447F8D1C054F1D747A11FD6A60742F04843CE72B29B9DE78981E"
+      "bytes": 19408,
+      "sha256": "B9B57CBEEBFAEBF899DA3CD9B76E79AD418750DDAA0787A2BFB9CC405D2FF157"
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 25990,
-      "sha256": "DCE3F905E9991C1366A2EFB3CACFAC9969C8EEF833F84B257955CC6F93E742BE"
+      "bytes": 27221,
+      "sha256": "FF3ECED8C459D219396D7EBBD1BA38EB96C993B0F10402AD43BAC530827E411E"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
-      "bytes": 7523,
-      "sha256": "18C52F468B5EDAD9EBAA526457840C860976D1A0F44CD66FAC7AC5A7F71FFFF4"
+      "bytes": 11311,
+      "sha256": "0B6AE3DA6AEB85A215FF51A0FADE19F07AF8740BC3EDDFFCE837D6009C0D9193"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 48880,
-      "sha256": "577FB71BF75B3AD87540F7C50E786364009AF11222759F5CA8B4B03A24267023"
+      "bytes": 55955,
+      "sha256": "800148DA13DE8210317662E276B6F40477C36EB86572B49623D8BFCD940197AD"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 11105,
-      "sha256": "29B7AB0C3BD0BAD4CB17174C4F8A0BC3811D568ED2DE348791F05C8FB93E79AC"
+      "bytes": 11356,
+      "sha256": "BE8A0285085F16E1EAAD84B3B4E42E526797471B52892827D35AC4D0722592B3"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -85,6 +85,11 @@
       "path": ".github/scripts/test_verify_rust_case.py",
       "bytes": 2873,
       "sha256": "6A796EC65349CD2D34BF8E65A7F23EB7D945160CED453775525D4EAA0799A168"
+    },
+    {
+      "path": ".github/scripts/test_yaml_dependency_candidate.py",
+      "bytes": 4623,
+      "sha256": "E12BCC8247B7A5CC627464148EC4329692BA9AA394EA86F328E795943234708E"
     },
     {
       "path": ".github/scripts/verify_rust_case.py",
@@ -100,6 +105,11 @@
       "path": ".github/scripts/whatsapp/hosted-product-journey.py",
       "bytes": 15943,
       "sha256": "94E946F2400E916EB24F0668151382F5C2990BDB0FE295F72AD195CA5566BA8D"
+    },
+    {
+      "path": ".github/scripts/yaml-dependency-candidate.py",
+      "bytes": 9506,
+      "sha256": "68CD8354549C4ABFF0A40CD7F89B35CB5B52229905B2C9E4AD85C7E28359F94A"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -154,7 +164,7 @@
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
       "bytes": 39349,
-      "sha256": "FF6549C81E92542E67704ABE41BC273D437F8BCF4A830D6DA2B2CE90CEDD1343"
+      "sha256": "0C74BF07C450993C84E7727B86F147229534E44D7F361A17999A6C4AC6FD9110"
     },
     {
       "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
@@ -268,8 +278,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 7736,
-      "sha256": "1DCC24EF33D33AF14D9340887BB031EE4300623DB7546E8DFA48A26FB3BAD1CE"
+      "bytes": 7804,
+      "sha256": "00846A186ACCE3EF6095A35F52A95CFAD8410830FD08DB2140733C5F0513B6EE"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -352,6 +362,11 @@
       "sha256": "7849A7940A6100C731CB22EB63A91230B64A3C08AB2E06E5D5090879E4B39AF0"
     },
     {
+      "path": ".github/workflows/yaml-dependency-candidate.yml",
+      "bytes": 8167,
+      "sha256": "94ACF55CFDCBF6502C63403F3D4A921D7DD6748DDF4C4879B7F2E6D30B696E81"
+    },
+    {
       "path": ".trivyignore",
       "bytes": 188,
       "sha256": "432BF36CBE71669440EC32AF122123F2C2C4E7DA42DC38783E191C72F0C10105"
@@ -403,8 +418,8 @@
     },
     {
       "path": "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
-      "bytes": 1629,
-      "sha256": "361383967797A72A9B542B08F5457269DCA72225ABE4783AD952B393C69BD1B3"
+      "bytes": 1713,
+      "sha256": "F25D32AF8EEA0E21EA675757937F5A0634B675E9C23F47D2B39122970F9C3C8D"
     },
     {
       "path": "apps/neoth_companion/ios/Frameworks/README.md",
@@ -433,8 +448,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/companion_activity_presentation.dart",
-      "bytes": 3318,
-      "sha256": "258A18E8248AD8A06A99E036DBEED4DFED2DCE9B858C2744CB4F48347363E5B3"
+      "bytes": 3663,
+      "sha256": "1B3475D458B830CA00549300183AE437F44DB4E2468C416861F215BC13DFFA0D"
     },
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
@@ -468,13 +483,13 @@
     },
     {
       "path": "apps/neoth_companion/lib/models.dart",
-      "bytes": 13399,
-      "sha256": "7C719429B095C0F303B7766D9325CE1F7B37AFD06A0B050EF347DC0F16E37B92"
+      "bytes": 15580,
+      "sha256": "156BB88668F82C9ACC4F30E20A67D5B5E93E805015A4100275FEDDA7BA71947A"
     },
     {
       "path": "apps/neoth_companion/lib/native_bridge.dart",
-      "bytes": 22918,
-      "sha256": "669814966047BC61535D90956F1D235DB2C604254CAF1F6172A2DDC0F675E13B"
+      "bytes": 23642,
+      "sha256": "407375FF44F8B9CC2591F306F009ABCE21FBDDB9AE7E936ED2CED6DB1CDB8302"
     },
     {
       "path": "apps/neoth_companion/lib/notification_preview_controller.dart",
@@ -503,8 +518,13 @@
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "bytes": 7034,
-      "sha256": "C065DA22B0EED74297EB7044EBDD2CB2C9B46A057BCB38C0758394D1734FF28E"
+      "bytes": 7454,
+      "sha256": "CD0A9C68C9293E7F42AD28773FE955CA65F35A4181CC6C02C0CB5DA764837807"
+    },
+    {
+      "path": "apps/neoth_companion/test/activity_reason_test.dart",
+      "bytes": 3962,
+      "sha256": "E16D6013412AA8B41186D60E2038153445454D9D3943BEF2A8B2CA374DB6892E"
     },
     {
       "path": "apps/neoth_companion/test/bridge_input_test.dart",
@@ -548,8 +568,8 @@
     },
     {
       "path": "bridges/companion-native/ABI_CONTRACT.md",
-      "bytes": 5945,
-      "sha256": "DF04BB43383B86B1EC5509BA6FFA6A2E052BEE7B7A8D287BEEF534B0419246AC"
+      "bytes": 7417,
+      "sha256": "DA36800ED0626B286606B78378E08BADAC7FF2D56A200A1ACCB98C2BE70031F8"
     },
     {
       "path": "bridges/companion-native/Cargo.lock",
@@ -563,18 +583,18 @@
     },
     {
       "path": "bridges/companion-native/include/neoth_companion_bridge.h",
-      "bytes": 7424,
-      "sha256": "0490A1C113BAA7F3D114A7AFB63500377D130E52D6212FC26ED471188227E6F0"
+      "bytes": 8369,
+      "sha256": "501472DD66531B4C43A63160A8C38A44174330AD687D220A9E50426A93FD87F0"
     },
     {
       "path": "bridges/companion-native/README.md",
-      "bytes": 2041,
-      "sha256": "D097045B694D4D5C7B1477DF1D861695A28DB58C8061AF0F784C20FD6DE17050"
+      "bytes": 2097,
+      "sha256": "9320F0FBE4F80E962F6BA75D13F2F20A516006722A0E505A94EE27B83AFB5627"
     },
     {
       "path": "bridges/companion-native/src/lib.rs",
-      "bytes": 104860,
-      "sha256": "BB599F7D1C1AC649CDED1D0BE951D0A3E73D4B5E988060E976E4D29D5A44C254"
+      "bytes": 114399,
+      "sha256": "947AFB2E394F3F52C69963DEACEB2916219B0B2191232DDA5D556B1E3079B52A"
     },
     {
       "path": "bridges/companion-native/TEST_PLAN.md",
@@ -4367,9 +4387,24 @@
       "sha256": "655DA41555A755A73131D967161DAF3E2AC47BB386B46DE15BDC31C815F977B4"
     },
     {
+      "path": "docs/verification/gold-wave2568-yaml-candidate-lane.json",
+      "bytes": 3092,
+      "sha256": "45AEB696B11D731AD08068F4DDE2F1AE99350450FDA27892C8823B81206A36DC"
+    },
+    {
       "path": "docs/verification/gold-wave2569-mobile-analyzer-repair.json",
       "bytes": 1477,
       "sha256": "43823D8FB97CB14B3F65A67B661D9589AF5A018821BAB1E2ECE7F524155E45D5"
+    },
+    {
+      "path": "docs/verification/gold-wave2571-activity-reasons.json",
+      "bytes": 4969,
+      "sha256": "DCA2DD4E48A64A26BE5336531740914171F3EC506B89FF3AFC49C7002C221DBB"
+    },
+    {
+      "path": "docs/verification/gold-wave2572-gui-stream-boundary.json",
+      "bytes": 4454,
+      "sha256": "E5EC8039462D8E8EA9D051511C0029C0CCA2A319A7D5A1F4EE81F19731EB9198"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5212,6 +5247,16 @@
       "sha256": "AB6C977E3E3B955C24D825336B9BE5B7A6A4222180FC7D1F194F6BC974D280B6"
     },
     {
+      "path": "packaging/fixtures/yaml-compatibility/Cargo.toml",
+      "bytes": 328,
+      "sha256": "09B4A52FC358CAA0406DAB4F5CE8ED533B3685D8F787423317C069C2AFA029ED"
+    },
+    {
+      "path": "packaging/fixtures/yaml-compatibility/src/lib.rs",
+      "bytes": 7702,
+      "sha256": "8A3BD3C8B1119E6F105F61CF2002DCE58DA5982C9887C7A2916C0CFFD3E4B454"
+    },
+    {
       "path": "packaging/gchat_converted_relink_product_canary.py",
       "bytes": 37544,
       "sha256": "C156A951D178B2F79A80976CA1D33BE3651CF6F54940AF827F67D32851963488"
@@ -5338,8 +5383,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 64736,
-      "sha256": "3846FF945D760816D6FDCC7B66B9F521ED4BD7E50F84E178C2C0A5D45E0A0722"
+      "bytes": 66279,
+      "sha256": "E940A62182DC276697A387AD741FE5DDBFD40A11DC70669F9C74384DB1695232"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5528,8 +5573,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 59745,
-      "sha256": "371C75AE824884B7674B2D2C53C89E62F5987CDB7922DBD3D5B8DB36D6C77C71"
+      "bytes": 62746,
+      "sha256": "838E6B02986C20F906088147A9E6152063448B2CC926832ABE731D217357E960"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5538,8 +5583,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2597893,
-      "sha256": "475EE6B31BD041C11055384A5BCE426E96D46C84E999F2613226F57C7395ACF0"
+      "bytes": 2606299,
+      "sha256": "E83663550D3BD2C8889FC79F7B1A6EE387AD101CC63E2A6630A954E2EEEE30F1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5743,8 +5788,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 130240,
-      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04"
+      "bytes": 134686,
+      "sha256": "69F0E3750D254B557718ED72DBC443D2E945A3BD62974565F5C8F6F7EA64DFCA"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -5813,8 +5858,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2262415,
-      "sha256": "0B436B64053DDC67D9DF9E14B28189B1551FACBD222887A4BACA9C61CEB59E98"
+      "bytes": 2268290,
+      "sha256": "5256893E05D23D43B1EB36DE01E5CF66DCA7EE12F5EF508DE9755100868526A8"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6363,8 +6408,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "bytes": 70912,
-      "sha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD"
+      "bytes": 70938,
+      "sha256": "2015D82E8E7B69B0A96CE2F7A03115876672310FF6C02FA6D1379F0E344CE8D4"
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
@@ -7463,8 +7508,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 78717,
-      "sha256": "4ED93DA1BA8854187009B8F0C5DC6357EF349BA012D133DD6C3AF888DACCBF70"
+      "bytes": 91729,
+      "sha256": "86FCBC81529D6AD57D89342B7F89DE4E8250EB1A2505FC09A0A4E3332E655D92"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
@@ -7473,8 +7518,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 129064,
-      "sha256": "79942A48C22B10512C1BDD1B07E472E5B440242BE1E0F8973ECF92D946402266"
+      "bytes": 133102,
+      "sha256": "A1CC08D5E49DA616FCA01853F0293E9D04012BE53E15C8E9C79460AE4B50B8AE"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_stream.rs",
@@ -8153,8 +8198,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/client.rs",
-      "bytes": 57138,
-      "sha256": "A8EF23AC352B97A9FFAD7036C99833C7B905E0DA337012C4762D5C21E6FDC727"
+      "bytes": 59029,
+      "sha256": "B1CDF8F163F6F0B534AAD935F3D60A33807BE135745961A2847A285795500D55"
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
@@ -8168,8 +8213,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 328008,
-      "sha256": "710C682874633F4E95507F716BCA926FFE5C1494353CC214EEBC2E46B93067E9"
+      "bytes": 328692,
+      "sha256": "CE273FEE5443DBED3505CA870E4DA4C9DD736D2C16D49EEFC15C18892CEBF27B"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
@@ -9363,8 +9408,8 @@
     },
     {
       "path": "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py",
-      "bytes": 1795,
-      "sha256": "0AFF0B28F45C275033DDB44DDAD34135C918AFF7ACA95C1E31EB1D176B55289D"
+      "bytes": 1989,
+      "sha256": "18CE6758C36619CE9E3CC3EB60326037FF46E75EC58DC9526CA64595EA049DB0"
     },
     {
       "path": "SRC/neothd/tests/fixtures/nct_baseline/nct_live_recipe_v1.json",

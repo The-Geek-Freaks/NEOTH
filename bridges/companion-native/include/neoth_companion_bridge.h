@@ -125,6 +125,19 @@ neoth_companion_operation *neoth_companion_conversation_start_v1(
 int32_t neoth_companion_conversation_poll_v1(neoth_companion_operation *operation,
     uint8_t *out, size_t out_len, size_t *required_len);
 
+/* Optional activity-reason entrypoints. Old starts remain on activity-v1.
+ * These negotiate activity-v2 before the one signed request; absent daemon
+ * support preserves V1. poll_v3/conversation_poll_v1 still deliver code 6,
+ * now with chat_activity_snapshot_v2/schema 2 when explicitly negotiated.
+ * Only Failed may carry reason=peer_reported_error. Never retry a sent request. */
+neoth_companion_operation *neoth_companion_chat_start_v4(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *message, size_t message_len, uint8_t request_tool_activity);
+neoth_companion_operation *neoth_companion_conversation_start_v2(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *command_json, size_t command_json_len);
 #ifdef __cplusplus
 }
 #endif

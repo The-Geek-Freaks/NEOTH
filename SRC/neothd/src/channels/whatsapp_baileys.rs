@@ -1776,6 +1776,7 @@ mod tests {
             phase: ToolActivityPhase::Started,
             label: "Read file".into(),
             detail: None,
+            reason: None,
         };
         let failed = ToolActivity {
             phase: ToolActivityPhase::Failed,

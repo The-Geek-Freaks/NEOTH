@@ -27,11 +27,12 @@ use zeroize::Zeroize;
 use companion_protocol::{
     decode_chat_challenge_with_capability_inventory_advertisement, decode_status_challenge_with_capability_inventory_advertisement,
     CompanionCapabilityInventory, CompanionCapabilityInventoryRequest,
-    decode_chat_challenge_with_conversation_advertisement, decode_server_frame, encode_frame,
+    decode_chat_challenge_with_activity_v2_advertisement, decode_server_frame, encode_frame,
     CompanionConversationAdmission, CompanionConversationHistory, CompanionConversationReadRequest,
     CompanionConversationReadSelection, CompanionConversationSelection, CompanionHistoryState,
     CompanionChatStreamSnapshot,
-    CompanionChatActivitySnapshot, CompanionChatOutcome, CompanionChatRecordKind,
+    CompanionChatActivitySnapshot, CompanionChatActivitySnapshotV2, CompanionToolActivityReason,
+    CompanionChatOutcome, CompanionChatRecordKind,
     CompanionChatRequest, CompanionChatTerminal, CompanionDeniedCode, CompanionReadiness, CompanionScope,
     CompanionStatusSnapshot, EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
     COMPANION_V3_SCHEMA_VERSION,
@@ -263,6 +264,19 @@ struct PublicActivityEvent {
     ordinal: u32,
     phase: &'static str,
     label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChatActivityWire { None, V1, V2 }
+
+/// Choose before the single signed request; never retry after a write.
+fn select_chat_activity_wire(request: bool, request_v2: bool, offered_v1: bool, offered_v2: bool) -> ChatActivityWire {
+    if !request { ChatActivityWire::None }
+    else if request_v2 && offered_v1 && offered_v2 { ChatActivityWire::V2 }
+    else if offered_v1 { ChatActivityWire::V1 }
+    else { ChatActivityWire::None }
 }
 
 enum PollV2 {
@@ -385,18 +399,26 @@ impl Bridge {
     }
 
     fn start_chat_with_stream(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String, request_activity: bool, request_stream: bool) -> Operation {
+        self.start_chat_with_stream_version(descriptor, device_id, message, request_activity, request_stream, false)
+    }
+
+    fn start_chat_with_stream_version(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String, request_activity: bool, request_stream: bool, request_activity_v2: bool) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
         Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
-            chat(device_secret, descriptor, device_id, message, request_activity, request_stream, None, activity, cancel_rx).await
+            chat(device_secret, descriptor, device_id, message, request_activity, request_stream, request_activity_v2, None, activity, cancel_rx).await
         })
     }
 
     fn start_conversation(&self, descriptor: ReconnectDescriptor, device_id: Uuid, command: ConversationCommand) -> Operation {
+        self.start_conversation_version(descriptor, device_id, command, false)
+    }
+
+    fn start_conversation_version(&self, descriptor: ReconnectDescriptor, device_id: Uuid, command: ConversationCommand, request_activity_v2: bool) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
         Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
-            chat(device_secret, descriptor, device_id, command.message(), true, true, Some(command), activity, cancel_rx).await
+            chat(device_secret, descriptor, device_id, command.message(), true, true, request_activity_v2, Some(command), activity, cancel_rx).await
         })
     }
 }
@@ -903,6 +925,7 @@ async fn chat(
     message: String,
     request_activity: bool,
     request_stream: bool,
+    request_activity_v2: bool,
     conversation: Option<ConversationCommand>,
     activity: ActivitySlot,
     mut cancel: watch::Receiver<bool>,
@@ -912,7 +935,7 @@ async fn chat(
     let signing_key = match derive_signing_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
     let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1; config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS)).await { Ok(value) => value, Err(result) => return result };
-    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, request_stream, conversation, &activity, &signing_key, &mut cancel).await;
+    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, request_stream, request_activity_v2, conversation, &activity, &signing_key, &mut cancel).await;
     // Cancellation must not detach a rendezvous worker. Destroy the carrier
     // and await the sole worker before publishing this terminal result.
     let _ = swarm.destroy().await;
@@ -928,6 +951,7 @@ async fn chat_on_swarm(
     message: String,
     request_activity: bool,
     request_stream: bool,
+    request_activity_v2: bool,
     conversation: Option<ConversationCommand>,
     activity: &ActivitySlot,
     signing_key: &SigningKey,
@@ -937,8 +961,8 @@ async fn chat_on_swarm(
     if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
     let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await { Wait::Value(Some(value)) => value, Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" }, Wait::Expired => return PublicResult::Failed { code: "chat_connect_timeout" }, Wait::Cancelled => return PublicResult::Cancelled };
     if conn.remote_public_key() != &descriptor.daemon_noise_public_key { return PublicResult::Denied { code: "daemon_key_mismatch" }; }
-    let (challenge, activity_advertised, stream_advertised, conversation_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
-        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_conversation_advertisement(&frame) {
+    let (challenge, activity_advertised, stream_advertised, conversation_advertised, activity_v2_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_activity_v2_advertisement(&frame) {
             Ok(value) => value,
             Err(_) => match decode_server_frame(&frame) {
                 Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
@@ -954,6 +978,7 @@ async fn chat_on_swarm(
             return PublicResult::Denied { code: "stale_conversation_revision" };
         }
     }
+    let activity_wire = select_chat_activity_wire(request_activity, request_activity_v2, activity_advertised, activity_v2_advertised);
     let request_id = conversation.as_ref().map_or_else(Uuid::now_v7, |command| command.request_id);
     // The v2 caller merely asks for activity. The authenticated server's
     // top-level challenge advertisement is the only authority that enables it.
@@ -964,11 +989,22 @@ async fn chat_on_swarm(
         if let Some(selection) = command.read_selection() {
             CompanionConversationReadRequest::signed(&challenge, request_id, selection, signing_key).and_then(|request| encode_frame(&request))
         } else if let Some(selection) = command.chat_selection() {
-            CompanionChatRequest::signed_with_conversation_v1(&challenge, request_id, message, selection,
-                request_activity && activity_advertised, signing_key).and_then(|request| encode_frame(&request))
+            let request = if activity_wire == ChatActivityWire::V2 {
+                CompanionChatRequest::signed_with_conversation_v2(&challenge, request_id, message, selection, true, signing_key)
+            } else {
+                CompanionChatRequest::signed_with_conversation_v1(&challenge, request_id, message, selection,
+                    activity_wire == ChatActivityWire::V1, signing_key)
+            };
+            request.and_then(|request| encode_frame(&request))
         } else { return PublicResult::Failed { code: "invalid_conversation_command" }; }
     } else {
-    let request = if request_stream && stream_advertised {
+    let request = if activity_wire == ChatActivityWire::V2 {
+        if request_stream && stream_advertised {
+            CompanionChatRequest::signed_with_chat_stream_v2(&challenge, request_id, message, true, signing_key)
+        } else {
+            CompanionChatRequest::signed_with_tool_activity_v2(&challenge, request_id, message, signing_key)
+        }
+    } else if request_stream && stream_advertised {
         CompanionChatRequest::signed_with_chat_stream_v1(&challenge, request_id, message, request_activity && activity_advertised, signing_key)
     } else if request_activity && activity_advertised {
         CompanionChatRequest::signed_with_tool_activity_v1(&challenge, request_id, message, signing_key)
@@ -1022,7 +1058,17 @@ async fn chat_on_swarm(
                     state.preview = Some(PublicStreamSnapshot { kind: "chat_stream_snapshot", snapshot });
                     continue;
                 }
-                Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if request_activity && activity_advertised
+                Ok(ServerFrame::ChatActivitySnapshotV2(snapshot)) if activity_wire == ChatActivityWire::V2
+                    && !conversation.as_ref().is_some_and(|command| command.read_selection().is_some()) => {
+                    if let Some(snapshot) = public_activity_snapshot_v2(snapshot, request_id) {
+                        let (lock, _) = &**activity;
+                        let mut state = lock_unpoison(lock);
+                        if should_replace_activity(state.activity.as_ref(), &snapshot) { state.activity = Some(snapshot); }
+                        continue;
+                    }
+                    break public_indeterminate(request_id);
+                }
+                Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if activity_wire == ChatActivityWire::V1
                     && !conversation.as_ref().is_some_and(|command| command.read_selection().is_some()) => {
                     if let Some(snapshot) = public_activity_snapshot(snapshot, request_id) {
                         let (lock, _) = &**activity;
@@ -1168,6 +1214,7 @@ fn public_activity_snapshot(
             companion_protocol::CompanionToolActivityPhase::Unknown => "unknown",
         },
         label: event.label,
+        reason: None,
     }).collect();
     Some(PublicActivitySnapshot {
         kind: "chat_activity_snapshot",
@@ -1179,6 +1226,25 @@ fn public_activity_snapshot(
     })
 }
 
+fn public_activity_snapshot_v2(snapshot: CompanionChatActivitySnapshotV2, expected_request_id: Uuid) -> Option<PublicActivitySnapshot> {
+    if snapshot.validate().is_err() || snapshot.request_id != expected_request_id { return None; }
+    let reasons: Vec<_> = snapshot.events.iter().map(|event| match event.reason {
+        Some(CompanionToolActivityReason::PeerReportedError) => Some("peer_reported_error"),
+        None => None,
+    }).collect();
+    let legacy = CompanionChatActivitySnapshot {
+        activity_schema_version: 1, request_id: snapshot.request_id,
+        max_event_seq: snapshot.max_event_seq, incomplete: snapshot.incomplete,
+        events: snapshot.events.into_iter().map(|event| companion_protocol::CompanionToolActivityEvent {
+            event_seq: event.event_seq, ordinal: event.ordinal, phase: event.phase, label: event.label,
+        }).collect(),
+    };
+    let mut result = public_activity_snapshot(legacy, expected_request_id)?;
+    result.kind = "chat_activity_snapshot_v2";
+    result.activity_schema_version = 2;
+    for (event, reason) in result.events.iter_mut().zip(reasons) { event.reason = reason; }
+    Some(result)
+}
 fn public_status(snapshot: CompanionStatusSnapshot, expected_device_id: Uuid) -> PublicResult {
     if snapshot.validate().is_err() || snapshot.device_id.0 != expected_device_id {
         return PublicResult::Denied { code: "invalid_status_snapshot" };
@@ -1377,6 +1443,23 @@ pub extern "C" fn neoth_companion_conversation_start_v1(
     Box::into_raw(Box::new(neoth_companion_operation { inner: bridge.inner.start_conversation(descriptor, device_id, command) }))
 }) }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_conversation_start_v2(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8, descriptor_json_len: usize,
+    device_id: *const u8, device_id_len: usize,
+    command_json: *const u8, command_json_len: usize,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(command_json) = input(command_json, command_json_len, MAX_CONVERSATION_COMMAND_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()).filter(|id| !id.is_nil()) else { return ptr::null_mut() };
+    let Ok(command) = conversation_command_from(command_json) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation { inner: bridge.inner.start_conversation_version(descriptor, device_id, command, true) }))
+}) }
+
 /// Same lifecycle/progress codes as poll_v3; only this new API admits the
 /// explicitly bounded combined terminal plus canonical history payload.
 #[unsafe(no_mangle)]
@@ -1532,6 +1615,30 @@ pub extern "C" fn neoth_companion_chat_start_v3(
     let Ok(message) = chat_message_from(message) else { return ptr::null_mut() };
     Box::into_raw(Box::new(neoth_companion_operation {
         inner: bridge.inner.start_chat_with_stream(descriptor, device_id, message, request_tool_activity == 1, true),
+    }))
+}) }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_chat_start_v4(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8,
+    descriptor_json_len: usize,
+    device_id: *const u8,
+    device_id_len: usize,
+    message: *const u8,
+    message_len: usize,
+    request_tool_activity: u8,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    if request_tool_activity > 1 { return ptr::null_mut(); }
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(message) = input(message, message_len, MAX_CHAT_MESSAGE_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()) else { return ptr::null_mut() };
+    let Ok(message) = chat_message_from(message) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation {
+        inner: bridge.inner.start_chat_with_stream_version(descriptor, device_id, message, request_tool_activity == 1, true, true),
     }))
 }) }
 
@@ -1926,6 +2033,7 @@ mod tests {
                 ordinal: sequence as u32,
                 phase: "started",
                 label: "Tool call".to_owned(),
+                reason: None,
             }).collect(),
         }
     }
@@ -2029,6 +2137,53 @@ mod tests {
         assert!(should_replace_activity(Some(&current), &activity(10, false)));
     }
 
+    #[test]
+    fn activity_wire_selection_keeps_opt_out_and_legacy_fallback() {
+        assert_eq!(select_chat_activity_wire(false, false, true, true), ChatActivityWire::None);
+        assert_eq!(select_chat_activity_wire(false, true, true, true), ChatActivityWire::None);
+        assert_eq!(select_chat_activity_wire(true, false, true, true), ChatActivityWire::V1);
+        assert_eq!(select_chat_activity_wire(true, true, true, false), ChatActivityWire::V1);
+        assert_eq!(select_chat_activity_wire(true, true, false, true), ChatActivityWire::None);
+        assert_eq!(select_chat_activity_wire(true, true, true, true), ChatActivityWire::V2);
+        assert_eq!(select_chat_activity_wire(true, true, false, false), ChatActivityWire::None);
+    }
+
+    #[test]
+    fn native_boundary_v2_binds_fixed_reason_to_failed_event_and_request() {
+        let expected = Uuid::from_u128(2);
+        let mut snapshot = CompanionChatActivitySnapshotV2 {
+            activity_schema_version: 2, request_id: expected, max_event_seq: 1, incomplete: false,
+            events: vec![companion_protocol::CompanionToolActivityEventV2 {
+                event_seq: 1, ordinal: 1, phase: companion_protocol::CompanionToolActivityPhase::Failed,
+                label: "Tool call".to_owned(), reason: Some(CompanionToolActivityReason::PeerReportedError),
+            }],
+        };
+        let projected = public_activity_snapshot_v2(snapshot.clone(), expected).unwrap();
+        assert_eq!(projected.kind, "chat_activity_snapshot_v2");
+        assert_eq!(projected.activity_schema_version, 2);
+        assert_eq!(projected.events[0].reason, Some("peer_reported_error"));
+        let encoded = serde_json::to_value(projected).unwrap();
+        assert_eq!(encoded["events"][0]["reason"], "peer_reported_error");
+        assert!(public_activity_snapshot_v2(snapshot.clone(), Uuid::from_u128(3)).is_none());
+        snapshot.events[0].phase = companion_protocol::CompanionToolActivityPhase::Unknown;
+        assert!(public_activity_snapshot_v2(snapshot.clone(), expected).is_none());
+        snapshot.events[0].reason = None;
+        snapshot.incomplete = true;
+        let unknown = public_activity_snapshot_v2(snapshot, expected).unwrap();
+        assert!(unknown.incomplete);
+        assert_eq!(unknown.events[0].phase, "unknown");
+        assert!(serde_json::to_value(unknown).unwrap()["events"][0].get("reason").is_none());
+        let legacy = larger_activity();
+        assert!(serde_json::to_value(legacy).unwrap()["events"][0].get("reason").is_none());
+    }
+
+    #[test]
+    fn activity_v2_invalid_starts_do_not_allocate_operations() {
+        assert!(neoth_companion_chat_start_v4(ptr::null_mut(), ptr::null(), 0,
+            ptr::null(), 0, ptr::null(), 0, 2).is_null());
+        assert!(neoth_companion_conversation_start_v2(ptr::null_mut(), ptr::null(), 0,
+            ptr::null(), 0, ptr::null(), 0).is_null());
+    }
     #[test]
     fn native_boundary_rejects_cross_request_and_invalid_activity_frames() {
         let expected = Uuid::parse_str("00000000-0000-7000-8000-000000000002").unwrap();

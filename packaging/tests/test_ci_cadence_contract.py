@@ -25,6 +25,9 @@ PREFLIGHT_TEXT = (WORKFLOWS / "preflight.yml").read_text(encoding="utf-8")
 RELEASE_TEXT = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 SECURITY_TEXT = (WORKFLOWS / "security.yml").read_text(encoding="utf-8")
 LIVE_AUDIO_TEXT = (WORKFLOWS / "live-audio.yml").read_text(encoding="utf-8")
+GUI_LINUX_FIXTURES_TEXT = (WORKFLOWS / "gui-linux-fixtures.yml").read_text(
+    encoding="utf-8"
+)
 PREVIEW_WINDOWS_TEXT = (WORKFLOWS / "preview-windows.yml").read_text(encoding="utf-8")
 GUI_MAIN_TEXT = (ROOT / "SRC" / "neothd-gui" / "src" / "main.rs").read_text(
     encoding="utf-8"
@@ -204,6 +207,37 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_linux_gui_fixture_workflow_cardinality_matches_matrix(self) -> None:
+        matrix = json.loads(
+            (ROOT / "docs/verification/gold-wave95-96-test-matrix.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        universal = matrix["requiredGuiTests"]
+        linux = matrix["requiredGuiTestsByPlatform"]["Linux"]
+        self.assertEqual(len(universal), 145)
+        self.assertEqual(len(linux), 37)
+        self.assertEqual(len(universal) + len(linux), 182)
+        self.assertEqual(len(universal), len(set(universal)))
+        self.assertEqual(len(linux), len(set(linux)))
+        self.assertEqual(set(universal).intersection(linux), set())
+        self.assertIn(
+            'universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 145)',
+            GUI_LINUX_FIXTURES_TEXT,
+        )
+        self.assertIn(
+            'linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 37)',
+            GUI_LINUX_FIXTURES_TEXT,
+        )
+        self.assertIn(
+            'if len(selected) != 182 or len(selected) != len(set(selected)):',
+            GUI_LINUX_FIXTURES_TEXT,
+        )
+        self.assertIn(
+            'GUI fixture selection must contain exactly 182 unique identities (145 universal + 37 Linux)',
+            GUI_LINUX_FIXTURES_TEXT,
+        )
+
     def test_live_audio_catalog_matches_checked_out_sources(self) -> None:
         # Catch stale pins on every push, before the costly platform builds.
         catalog = json.loads(
@@ -420,6 +454,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 "\n".join(
                     [
                         "python3 .github/scripts/test_verify_rust_case.py",
+                        "python3 .github/scripts/test_yaml_dependency_candidate.py",
                         "python3 .github/scripts/mobile/test_mobile_interop_selection.py",
                         "python3 packaging/tests/test_ci_cadence_contract.py",
                         "python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py",

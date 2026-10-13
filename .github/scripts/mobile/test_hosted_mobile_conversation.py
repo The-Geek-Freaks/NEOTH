@@ -131,5 +131,61 @@ class ConversationObserverTests(unittest.TestCase):
             bridge.lib.neoth_companion_operation_free.assert_called_once_with(2)
 
 
+    def test_start_v2_selects_v2_once_and_default_keeps_v1_once(self) -> None:
+        bridge = object.__new__(M.ConversationBridge)
+        bridge.handle = 1
+        bridge.lib = mock.Mock()
+        bridge.lib.neoth_companion_conversation_start_v2.return_value = 21
+        bridge.lib.neoth_companion_conversation_start_v1.return_value = 22
+        terminal = json.dumps({"kind": "chat", "request_id": REQUEST}).encode()
+        bridge._conversation_poll = mock.Mock(side_effect=[(M.H.OK, terminal), (M.H.OK, terminal)])
+        action = {"operation": "new", "message": "m", "incognito": False}
+        self.assertEqual(bridge.conversation({}, "device", 2, REQUEST, action, 5, start_v2=True), json.loads(terminal))
+        self.assertEqual(bridge.conversation({}, "device", 2, REQUEST, action, 5), json.loads(terminal))
+        bridge.lib.neoth_companion_conversation_start_v2.assert_called_once()
+        bridge.lib.neoth_companion_conversation_start_v1.assert_called_once()
+        bridge.lib.neoth_companion_operation_cancel.assert_not_called()
+        self.assertEqual(bridge.lib.neoth_companion_operation_free.call_args_list, [mock.call(21), mock.call(22)])
+
+    def test_v2_rejects_legacy_or_invalid_activity_without_resending(self) -> None:
+        for activity in (
+            {"kind": "chat_activity_snapshot", "request_id": REQUEST},
+            {"kind": "chat_activity_snapshot_v2", "activity_schema_version": True, "request_id": REQUEST},
+            {"kind": "chat_activity_snapshot_v2", "activity_schema_version": 1, "request_id": REQUEST},
+            {"kind": "chat_activity_snapshot_v2", "activity_schema_version": 2, "request_id": FOREIGN},
+        ):
+            bridge = object.__new__(M.ConversationBridge)
+            bridge.handle = 1
+            bridge.lib = mock.Mock()
+            bridge.lib.neoth_companion_conversation_start_v2.return_value = 23
+            bridge._conversation_poll = mock.Mock(side_effect=[
+                (M.H.ACTIVITY, json.dumps(activity).encode()), (M.H.OK, b'{}')])
+            with self.assertRaises(RuntimeError):
+                bridge.conversation({}, "device", 2, REQUEST,
+                    {"operation": "new", "message": "m", "incognito": False}, 5, start_v2=True)
+            bridge.lib.neoth_companion_conversation_start_v2.assert_called_once()
+            bridge.lib.neoth_companion_conversation_start_v1.assert_not_called()
+            bridge.lib.neoth_companion_operation_cancel.assert_called_once_with(23)
+            bridge.lib.neoth_companion_operation_free.assert_called_once_with(23)
+
+    def test_v2_accepts_v2_activity_before_terminal(self) -> None:
+        bridge = object.__new__(M.ConversationBridge)
+        bridge.handle = 1
+        bridge.lib = mock.Mock()
+        bridge.lib.neoth_companion_conversation_start_v2.return_value = 24
+        activity = {"kind": "chat_activity_snapshot_v2", "activity_schema_version": 2,
+                    "request_id": REQUEST, "max_event_seq": 1, "incomplete": False,
+                    "events": [{"event_seq": 1, "ordinal": 1, "phase": "started", "label": "Tool call"}]}
+        terminal = {"kind": "chat", "request_id": REQUEST}
+        bridge._conversation_poll = mock.Mock(side_effect=[
+            (M.H.ACTIVITY, json.dumps(activity).encode()), (M.H.OK, json.dumps(terminal).encode())])
+        self.assertEqual(bridge.conversation({}, "device", 2, REQUEST,
+            {"operation": "new", "message": "m", "incognito": False}, 5, start_v2=True), terminal)
+        bridge.lib.neoth_companion_conversation_start_v2.assert_called_once()
+        bridge.lib.neoth_companion_conversation_start_v1.assert_not_called()
+        bridge.lib.neoth_companion_operation_cancel.assert_not_called()
+        bridge.lib.neoth_companion_operation_free.assert_called_once_with(24)
+
+
 if __name__ == "__main__":
     unittest.main()

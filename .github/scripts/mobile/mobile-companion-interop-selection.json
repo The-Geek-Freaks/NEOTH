@@ -164,7 +164,12 @@
         "daemon::companion_protocol::capability_inventory_tests::inventory_wire_rejects_malformed_scope_version_and_nil_identity",
         "daemon::companion_authority::capability_inventory_tests::inventory_reports_only_granted_scope_and_consumes_one_challenge",
         "daemon::companion_authority::capability_inventory_tests::inventory_rejects_expired_stale_and_revoked_requests_before_marker",
-        "daemon::companion_authority::capability_inventory_tests::inventory_revoke_waits_for_delivery_drain_and_blocks_late_serialization"
+        "daemon::companion_authority::capability_inventory_tests::inventory_revoke_waits_for_delivery_drain_and_blocks_late_serialization",
+        "mcp::client::tests::tool_activity_reason_requires_a_confirmed_peer_error_after_write",
+        "daemon::companion_runtime::tests::jm_ex_05_activity_projection_requires_v2_and_preserves_unknown",
+        "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_signed_choices_preserve_legacy",
+        "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_offer_preserves_inventory_and_legacy_decoders",
+        "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows"
       ]
     },
     "no_cluster": {
@@ -199,7 +204,10 @@
         "companion_protocol::capability_inventory_tests::inventory_wire_rejects_malformed_scope_version_and_nil_identity",
         "capability_inventory_tests::inventory_command_requires_bounded_explicit_scope_and_revision",
         "capability_inventory_tests::inventory_production_prewrite_gate_rejects_legacy_or_wrong_grant_on_both_routes",
-        "capability_inventory_tests::inventory_public_result_rejects_every_foreign_binding_and_keeps_terminal_poll_contract"
+        "capability_inventory_tests::inventory_public_result_rejects_every_foreign_binding_and_keeps_terminal_poll_contract",
+        "tests::activity_wire_selection_keeps_opt_out_and_legacy_fallback",
+        "tests::native_boundary_v2_binds_fixed_reason_to_failed_event_and_request",
+        "tests::activity_v2_invalid_starts_do_not_allocate_operations"
       ]
     }
   },
@@ -235,7 +243,10 @@
       "test_v3_live_snapshot_releases_provider_and_uses_actual_read_length",
       "test_v3_stale_foreign_and_invalid_snapshots_cancel_and_free_once",
       "test_v3_final_only_or_foreign_terminal_cannot_satisfy_live_proof",
-      "test_v3_resize_keeps_deadline_and_cancels_drains_frees_once"
+      "test_v3_resize_keeps_deadline_and_cancels_drains_frees_once",
+      "test_v4_reason_live_observation_allows_preview_before_activity_and_waits_for_fixture",
+      "test_v4_reason_invalid_rows_cancel_and_free_before_any_success",
+      "test_v4_reason_resize_keeps_work_deadline_and_drains_once"
     ]
   },
   "sourcePaths": [
@@ -319,7 +330,10 @@
     "apps/neoth_companion/test/conversation_presentation_test.dart",
     ".github/scripts/mobile/hosted-mobile-conversation.py",
     ".github/scripts/mobile/test_hosted_mobile_conversation.py",
-    "apps/neoth_companion/test/secure_store_conversation_test.dart"
+    "apps/neoth_companion/test/secure_store_conversation_test.dart",
+    "apps/neoth_companion/test/activity_reason_test.dart",
+    "apps/neoth_companion/lib/companion_activity_presentation.dart",
+    "SRC/neothd/src/channels/whatsapp_baileys.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",
