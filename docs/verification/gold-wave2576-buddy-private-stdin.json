@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2576",
+  "status": "SOURCE_REPAIR_HOSTED_RUNTIME_PENDING",
+  "base": "31adfb7a47a269af6d765f59376efe9576581f12",
+  "priorGuiRun": {
+    "id": "38390205916",
+    "producer": "5d60b630a405028663c46fff4e40d4db6f0f9b41",
+    "passed": 180,
+    "failed": 2,
+    "ignored": 0,
+    "unstarted": 0,
+    "coverageComplete": true,
+    "accepted": false
+  },
+  "partialProof": {
+    "path": "work/gold-20260906/wave2572-gui-ci-repair/gui182-validation/ROOT_GUI_PARTIAL_OUTCOME.json",
+    "sha256": "A20D31415C3BD8D387AFC13E2114E709F1981444DB784EFBC2D5C9AFDB757794",
+    "originalArchives": 3,
+    "producerSourceBindings": 35
+  },
+  "rootCause": "Buddy set stdin to null before Linux activation required the private launch pipe. The failure occurs before the READY polling loop, independently of provider configuration.",
+  "repair": [
+    "Linux Buddy stdin is piped for the private launch frame.",
+    "The parent stdin handle is dropped immediately after activation; no interactive provider input is sent.",
+    "Windows null stdin, service READY, namespace/cgroup checks, request identity, deadlines and complete-tree reaping are retained."
+  ],
+  "regression": {
+    "test": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+    "strengthened": "A real contained shell waits for EOF, rejects any input bytes and returns a fixed marker before the existing real-CLI callback journey.",
+    "selection": 182,
+    "universal": 145,
+    "linux": 37,
+    "newTestIdentity": false
+  },
+  "independentReview": {
+    "agent": "/root/yaml_candidate_review",
+    "result": "Concrete cause and Linux-only pipe/drop repair confirmed; no containment weakening.",
+    "runtimeProof": false
+  },
+  "paperlessIntegration": {
+    "candidate": "31adfb7a47a269af6d765f59376efe9576581f12",
+    "preflight": "38393382416",
+    "result": "success",
+    "runtime26AndCanary": "pending"
+  },
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}

@@ -232,6 +232,23 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     let _serial = GUI_CALLBACK_ENV_LOCK
         .lock()
         .expect("serialize real GUI environment");
+    #[cfg(target_os = "linux")]
+    {
+        // The private supervisor frame must be consumed before the provider
+        // starts; its input then closes without an interactive response.
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            r#"if IFS= read -r value || [ -n "$value" ]; then exit 41; fi; printf '%s\n' 'buddy-stdin-eof'"#,
+        ]);
+        let output = run_contained_buddy_provider_command(&mut command, Duration::from_secs(10))
+            .expect("contained Buddy command must deliver stdin EOF after activation");
+        assert!(
+            output.status.success(),
+            "private launch bytes must not reach provider stdin"
+        );
+        assert_eq!(output.stdout, b"buddy-stdin-eof\n");
+    }
     let fixture = TempDir::new().expect("create real CLI fixture");
     write_real_cli_home(fixture.path(), false);
     let _path = install_real_cli_path();

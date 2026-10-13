@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2575 isolated static-reviewed formatted Paperless outcome candidate; hosted pending",
+  "status": "W2576_SOURCE_REPAIR_HOSTED_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 423448,
-    "sha256": "90AF542702EDF39832A2F593B5EC536D84A4AD5BCC51B79317D11B2F0CB6B437"
+    "bytes": 423597,
+    "sha256": "F146A277D7925C1A51E533FCAC99A62E868CF69609508AA5CE466AD7EFA6CFA9"
   },
-  "sourceInputs": 2309,
+  "sourceInputs": 2310,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -18256,8 +18256,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2268290,
-      "sha256": "5256893E05D23D43B1EB36DE01E5CF66DCA7EE12F5EF508DE9755100868526A8"
+      "bytes": 2268647,
+      "sha256": "038165C902481BF0EDFC252EA99BE5BFF6A618B067C2F6A414B8D71468F4F3E3"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -18351,8 +18351,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 18979,
-      "sha256": "5AA3010EF79B7FEB78D2418DDA23CFA5D315EB893B1143C7D6B0D6758538E0A3"
+      "bytes": 19774,
+      "sha256": "E0FE139E9FB236BB29A4768235AE70525127014E4F8DF5DC182F27B60F773D16"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -83233,6 +83233,38 @@
       }
     ],
     "note": "Original hosted formatter patch verified. Existing Paperless lane preserves25 cases and adds1; exact26 source-bound; no new heavy lane.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2576BuddyPrivateStdin": {
+    "base": "31adfb7a47a269af6d765f59376efe9576581f12",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2576-buddy-private-stdin.json",
+        "bytes": 2015,
+        "sha256": "51FDE6749250B74A072A09CC017F259A7CD1178DB6CC924EE0352B86D2B6CB2C",
+        "blob": "1191c64bac6270dcca3c29614238c8fbba2da63f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2611978,
+        "sha256": "38258761B5749FF15AA1A20627D98F638142B11C3A46D68480BB14A725B7B1EA",
+        "blob": "907aae6d7ff4a4b3b31672cc842d353269ed2cb4"
+      },
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+        "bytes": 19774,
+        "sha256": "E0FE139E9FB236BB29A4768235AE70525127014E4F8DF5DC182F27B60F773D16",
+        "blob": "91919abb613708797bfb05b6dc41ea8b4fcb3cf2"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2268647,
+        "sha256": "038165C902481BF0EDFC252EA99BE5BFF6A618B067C2F6A414B8D71468F4F3E3",
+        "blob": "da68497e9cd718c4805d5f305bbe5efcf5b8dd4d"
+      }
+    ],
+    "note": "Correct Linux private launch stdin then provider EOF; retain182 GUI identities. Prior producer180/182 only. W2575 integrated,26recovery runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

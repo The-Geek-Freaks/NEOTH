@@ -22442,8 +22442,9 @@ fn next_buddy_provider_child_request_id() -> ChatStreamRequestId {
 /// platform-specific process-tree owner.  A provider test may launch a local
 /// adapter or a CLI descendant which inherits its pipes; direct-child `kill`
 /// plus reader joins would then hang.  The supervisor proves the tree empty
-/// before the bounded reader handoff.  stdin is deliberately null: GUI
-/// configuration never grants an implicit interactive consent response.
+/// before the bounded reader handoff.  The Linux supervisor first needs a
+/// private launch pipe; closing it after activation gives the provider EOF.
+/// GUI configuration never grants an implicit interactive consent response.
 #[cfg(not(target_os = "macos"))]
 fn run_contained_buddy_provider_command(
     command: &mut std::process::Command,
@@ -22458,12 +22459,16 @@ fn run_contained_buddy_provider_command(
     let deadline = started
         .checked_add(timeout)
         .ok_or("Buddy provider command deadline is invalid")?;
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    command.stdin(Stdio::piped());
+    #[cfg(not(target_os = "linux"))]
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = OwnedChatChild::spawn(next_buddy_provider_child_request_id(), command)
         .map_err(|_| "Buddy provider command could not start safely")?;
+    // Activation has consumed the private launch frame and verified READY.
+    // No provider input follows it, including implicit interactive consent.
+    drop(child.take_stdin());
     let stdout = match child.take_stdout() {
         Some(pipe) => pipe,
         None => {
