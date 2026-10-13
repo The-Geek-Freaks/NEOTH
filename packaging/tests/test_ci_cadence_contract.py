@@ -772,7 +772,7 @@ class CiCadenceContractTests(unittest.TestCase):
             "|| steps.doctests.outcome == 'failure') }}",
             prerequisites,
         )
-        self.assertIn("timeout-minutes: 50", prerequisites)
+        self.assertIn("timeout-minutes: 60", prerequisites)
         self.assertEqual(
             step_run_command(prerequisites),
             "\n".join(

@@ -175,9 +175,9 @@ impl PaperlessPostIntentDescriptor {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PaperlessPostIntentOutcome {
-    ExistingExact,
-    AppendedExact,
-    CompletedExact(u64),
+    Existing,
+    Appended,
+    Completed(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

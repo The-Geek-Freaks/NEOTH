@@ -180,12 +180,12 @@ where
         .append_paperless_post_receipt_once(home, descriptor)
         .await
     {
-        Ok(PaperlessPostIntentOutcome::AppendedExact) => match send().await {
+        Ok(PaperlessPostIntentOutcome::Appended) => match send().await {
             Ok(status) => PaperlessUploadOutcome::ResponseObserved(status),
             Err(_) => PaperlessUploadOutcome::TransportUncertain,
         },
-        Ok(PaperlessPostIntentOutcome::ExistingExact) => PaperlessUploadOutcome::ExistingIntent,
-        Ok(PaperlessPostIntentOutcome::CompletedExact(document_id)) => {
+        Ok(PaperlessPostIntentOutcome::Existing) => PaperlessUploadOutcome::ExistingIntent,
+        Ok(PaperlessPostIntentOutcome::Completed(document_id)) => {
             PaperlessUploadOutcome::DocumentConfirmed(document_id)
         }
         Err(_) => PaperlessUploadOutcome::AdmissionBlocked,
@@ -222,8 +222,8 @@ pub(crate) async fn reconcile_or_upload_paperless(
             .append_paperless_post_receipt_once(home, descriptor.clone())
             .await
         {
-            Ok(Receipt::CompletedExact(_)) => return Ok(true),
-            Ok(Receipt::AppendedExact | Receipt::ExistingExact) => observed_before,
+            Ok(Receipt::Completed(_)) => return Ok(true),
+            Ok(Receipt::Appended | Receipt::Existing) => observed_before,
             Err(_) => return Ok(false),
         }
     } else {
@@ -254,7 +254,7 @@ pub(crate) async fn reconcile_or_upload_paperless(
         writer
             .append_paperless_post_receipt_once(home, completed)
             .await,
-        Ok(Receipt::AppendedExact | Receipt::ExistingExact)
+        Ok(Receipt::Appended | Receipt::Existing)
     ))
 }
 

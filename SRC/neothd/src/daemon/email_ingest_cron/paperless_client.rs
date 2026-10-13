@@ -43,6 +43,7 @@ impl PaperlessClient {
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(10))
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self {

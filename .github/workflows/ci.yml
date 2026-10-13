@@ -159,9 +159,9 @@ jobs:
   linux-quality:
     name: Linux quality / Rust 1.91
     runs-on: ubuntu-24.04
-    # The measured cold path is about 46 minutes of lint/docs plus about 44
-    # minutes of authentic GUI preparation before runtime. It leaves the full
-    # 50-minute execution window within this unchanged 150-minute job budget.
+    # Run 38274002341 used about 24 minutes before GUI preparation. Its
+    # 60-minute preparation cap plus the full 50-minute execution window leaves
+    # about 16 minutes for cache/cleanup within the unchanged 150-minute budget.
     timeout-minutes: 150
     env:
       # FullCI954's original Linux job and its targeted retry both received a
@@ -282,13 +282,13 @@ jobs:
         working-directory: SRC
         run: cargo test --workspace --doc --locked
 
-      # The native GUI callback prerequisites can cold-compile for nearly 44 minutes.
-      # Keep that authenticated product preparation outside the existing 50-minute
-      # runtime window so the complete workspace suite retains its execution budget.
+      # The measured cold preparation reached its final compile at 50m07s.
+      # Allow profile/environment setup to finish after compile, while preserving
+      # the separate full 50-minute runtime window and all containment checks.
       - name: Prepare Linux GUI callback runtime prerequisites
         id: gui-runtime-prerequisites
         if: ${{ !cancelled() && (steps.doctests.outcome == 'success' || steps.doctests.outcome == 'failure') }}
-        timeout-minutes: 50
+        timeout-minutes: 60
         working-directory: SRC
         env:
           CARGO_BUILD_JOBS: 1

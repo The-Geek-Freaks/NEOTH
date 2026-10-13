@@ -123,6 +123,7 @@
 //!                                    explicitly enables `allow_cloud_api`, and
 //!                                    requires a dedicated `omi_dev_*` key.
 //!   - `src/daemon/email_ingest_cron.rs`
+//!   - `src/daemon/email_ingest_cron/paperless_client.rs` (exact reviewed HTTP client)
 //!                                  — GOLD-ADAPT-JV-PAPERLESS-01 default-OFF
 //!                                    email → Paperless NGX cron. IMAP is
 //!                                    feature-gated and credential-gated; the
@@ -292,6 +293,9 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // timeout, and refuses redirects. This is an explicit integration push,
     // explicit operator-configured integration.
     "src/daemon/email_ingest_cron.rs",
+    // Paperless's nested, operator-configured client binds upload/recovery to
+    // its admitted WAL descriptor; redirects and ambient proxies are disabled.
+    "src/daemon/email_ingest_cron/paperless_client.rs",
     "src/security/osv_check.rs",
     "src/sources/hackernews.rs",
     // GOLD-ADOPT-26 RSS feed poller — fetches operator-configured feed URLs
@@ -4591,6 +4595,11 @@ fn production() {
 
 #[test]
 fn reviewed_boundaries_do_not_grant_network_authority_to_new_descendants() {
+    assert!(is_allowed("src/daemon/email_ingest_cron/paperless_client.rs"));
+    assert!(!is_allowed("src/daemon/email_ingest_cron/unreviewed.rs"));
+    assert!(!is_allowed(
+        "src/daemon/email_ingest_cron/paperless_client.rs_rogue.rs"
+    ));
     assert!(
         is_allowed("src/providers/anthropic_api.rs"),
         "the reviewed concrete boundary remains allowed"

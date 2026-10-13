@@ -6413,7 +6413,7 @@ async fn run_writer(
             .await
             {
                 Ok(Ok(Lookup::CompletedExact(document_id))) => {
-                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::CompletedExact(document_id)));
+                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Completed(document_id)));
                     drop(authority);
                     continue;
                 }
@@ -6423,7 +6423,7 @@ async fn run_writer(
                     continue;
                 }
                 Ok(Ok(Lookup::Exact)) => {
-                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::ExistingExact));
+                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Existing));
                     drop(authority);
                     continue;
                 }
@@ -6627,7 +6627,7 @@ async fn run_writer(
                 drop(companion_mutation_receipt_authority);
                 if let Some(once) = req.paperless_post_intent_once.take() {
                     once.finish(Ok(
-                        crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::AppendedExact,
+                        crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Appended,
                     ));
                 }
                 drop(paperless_post_intent_authority);
@@ -12209,19 +12209,19 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), descriptor.clone())
                 .await,
-            Ok(Outcome::AppendedExact)
+            Ok(Outcome::Appended)
         );
         assert_eq!(
             writer
                 .append_paperless_post_receipt_once(home.path(), completed.clone())
                 .await,
-            Ok(Outcome::AppendedExact)
+            Ok(Outcome::Appended)
         );
         assert_eq!(
             writer
                 .append_paperless_post_receipt_once(home.path(), completed.clone())
                 .await,
-            Ok(Outcome::ExistingExact)
+            Ok(Outcome::Existing)
         );
         let conflict = descriptor
             .with_verified_document(8, &descriptor.body_sha256)
@@ -12245,7 +12245,7 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), descriptor)
                 .await,
-            Ok(Outcome::CompletedExact(7))
+            Ok(Outcome::Completed(7))
         );
         drop(writer);
         join.await.unwrap();
@@ -12275,7 +12275,7 @@ mod tests {
                         paperless_descriptor(&format!("mail-{index}"))
                     )
                     .await,
-                Ok(Outcome::AppendedExact)
+                Ok(Outcome::Appended)
             );
         }
         assert_eq!(
@@ -12289,20 +12289,20 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), first.clone())
                 .await,
-            Ok(Outcome::ExistingExact)
+            Ok(Outcome::Existing)
         );
         let completed = first.with_verified_document(7, &first.body_sha256).unwrap();
         assert_eq!(
             writer
                 .append_paperless_post_receipt_once(home.path(), completed)
                 .await,
-            Ok(Outcome::AppendedExact)
+            Ok(Outcome::Appended)
         );
         assert_eq!(
             writer
                 .append_paperless_post_receipt_once(home.path(), paperless_descriptor("over-cap"))
                 .await,
-            Ok(Outcome::AppendedExact)
+            Ok(Outcome::Appended)
         );
         drop(writer);
         join.await.unwrap();
@@ -12421,7 +12421,7 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), descriptor.clone())
                 .await,
-            Ok(Outcome::CompletedExact(71))
+            Ok(Outcome::Completed(71))
         );
         assert!(
             reconcile_or_upload_paperless(
@@ -12505,7 +12505,7 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), descriptor)
                 .await,
-            Ok(Outcome::AppendedExact)
+            Ok(Outcome::Appended)
         );
         let descriptor = PaperlessPostIntentDescriptor::from_mail(
             "mail.example",
@@ -12552,7 +12552,7 @@ mod tests {
             writer
                 .append_paperless_post_receipt_once(home.path(), descriptor)
                 .await,
-            Ok(Outcome::ExistingExact)
+            Ok(Outcome::Existing)
         );
         drop(writer);
         join.await.unwrap();
