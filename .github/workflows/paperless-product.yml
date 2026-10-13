@@ -65,7 +65,7 @@ jobs:
           catalog_path = root / "docs/verification/gold-wave2557-email-paperless-recovery-tests.json"
           catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
           cases = catalog["requiredTests"]
-          assert len(cases) == 25 and len({case["test"] for case in cases}) == 25
+          assert len(cases) == 26 and len({case["test"] for case in cases}) == 26
           bindings = {}
           for case in cases:
               assert not any(char.isspace() for char in case["test"])
@@ -99,7 +99,7 @@ jobs:
               exit 1
             fi
           done < "$W2557_ROOT/cases.txt"
-          test "$ordinal" -eq 25
+          test "$ordinal" -eq 26
 
       - name: Upload exact email recovery evidence
         if: always()

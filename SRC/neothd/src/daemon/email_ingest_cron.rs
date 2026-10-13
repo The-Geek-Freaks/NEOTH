@@ -219,8 +219,8 @@ pub(crate) async fn reconcile_or_upload_paperless(
     title: &str,
     body: &str,
 ) -> Result<PaperlessReconcileOutcome> {
-    use PaperlessReconcileOutcome::{AdmissionBlocked, Completed, UnknownOutcome};
     use crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome as Receipt;
+    use PaperlessReconcileOutcome::{AdmissionBlocked, Completed, UnknownOutcome};
     use paperless_client::{MAX_ORIGINAL_BYTES, PaperlessClient};
     anyhow::ensure!(
         body.len() <= MAX_ORIGINAL_BYTES && !descriptor.is_completion(),
@@ -268,13 +268,15 @@ pub(crate) async fn reconcile_or_upload_paperless(
         return Ok(UnknownOutcome);
     };
     let completed = descriptor.with_verified_document(document.id, &document.original_sha256)?;
-    Ok(match writer
-        .append_paperless_post_receipt_once(home, completed)
-        .await
-    {
-        Ok(Receipt::Appended | Receipt::Existing) => Completed,
-        Ok(Receipt::Completed(_)) | Err(_) => UnknownOutcome,
-    })
+    Ok(
+        match writer
+            .append_paperless_post_receipt_once(home, completed)
+            .await
+        {
+            Ok(Receipt::Appended | Receipt::Existing) => Completed,
+            Ok(Receipt::Completed(_)) | Err(_) => UnknownOutcome,
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------

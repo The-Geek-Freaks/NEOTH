@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T11:47:06.1455265Z",
-  "validationStatus": "W2575 isolated Paperless outcome candidate; hosted pending; no local runtime",
+  "capturedUtc": "2026-10-13T11:50:54.5790854Z",
+  "validationStatus": "W2575 isolated static-reviewed formatted Paperless outcome candidate; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -264,7 +264,7 @@
     {
       "path": ".github/workflows/paperless-product.yml",
       "bytes": 6836,
-      "sha256": "88057405582D7E5B1D24600F9C2660117CA686960FE39B2481E9F5FA63692AB0"
+      "sha256": "F7737E7DC39778AA2BB9E3E354A14A2AFDA4E37DFC532918F6F363ACB8C0B424"
     },
     {
       "path": ".github/workflows/paperless-provenance.yml",
@@ -4338,8 +4338,8 @@
     },
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
-      "bytes": 9453,
-      "sha256": "9FDF0621F76A97C4161AF3AFAF9FF27AA1D4062E73DBA630DDA56D42D940B8C3"
+      "bytes": 9756,
+      "sha256": "A7D6C029B22A42E52C2266644B0300242D9D1786EDEA57250A6291D704970640"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4413,8 +4413,8 @@
     },
     {
       "path": "docs/verification/gold-wave2575-paperless-outcomes.json",
-      "bytes": 1919,
-      "sha256": "E4E3DADA500533DF2BCBB593D6750D43BBCA51BA486D9E4D6FFACD268EC93308"
+      "bytes": 3392,
+      "sha256": "3C0724E424336FF8384B403D611A02B2182A28209D509040D01F9EB6A0FFC9A9"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5593,8 +5593,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2610049,
-      "sha256": "03D97E19B0602B13A56842604F71AA22590AC004C998F00278AF584FCEE5B32B"
+      "bytes": 2610398,
+      "sha256": "4D8AA88AFAD802AD2C079E98FEF97AA0E840879CB756C896FF9182FCA6127895"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7608,8 +7608,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 38631,
-      "sha256": "8D5364A4175FA5FC125E02F3AF80DA6A0CAD45FF1B9D823973E0B1350F7D304D"
+      "bytes": 38670,
+      "sha256": "B88166467A7204CA64D72CBC7AAA5500005F73615C0943159655DE5EAC6C6E7A"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
@@ -9348,8 +9348,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 523402,
-      "sha256": "5329A87C2DDBDFD53D22F78B6EB9B4A2F65043F3E24C336B79D655D58C9B7237"
+      "bytes": 523406,
+      "sha256": "3D9F39BC4FD3DD3C8C8F1C6FCF98AAFF045CEE09AB03DDAF408D6DFE81C5003A"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

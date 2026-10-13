@@ -12572,7 +12572,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paperless_blocked_invocation_and_existing_intent_have_distinct_outcomes_without_post() {
+    async fn paperless_blocked_invocation_and_existing_intent_have_distinct_outcomes_without_post()
+    {
         use crate::daemon::email_ingest_cron::{
             PaperlessReconcileOutcome, reconcile_or_upload_paperless,
         };

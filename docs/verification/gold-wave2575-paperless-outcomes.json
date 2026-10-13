@@ -30,5 +30,50 @@
   "localExecutableValidationRan": false,
   "runtimeAccepted": false,
   "primaryImported": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedSelection": {
+    "workflow": "paperless-product.yml",
+    "catalog": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+    "priorCasesRetained": 25,
+    "newCases": 1,
+    "exactCases": 26,
+    "imapFetchFeature": true,
+    "execution": "pending"
+  },
+  "hostedFormat": {
+    "run": "38392970482",
+    "producer": "b7915a020c981d5316bdf42b54da7ea27f4b36bd",
+    "artifact": 11809622712,
+    "zipSha256": "1E53994CFF7A5E93EA1090071FC6502EE58C298B1593D91AF5A56200318EFC7A",
+    "members": [
+      {
+        "path": "SHA256SUMS",
+        "bytes": 162,
+        "sha256": "8D1E1F8FC1FDD293950AC3F9286618DB23F72FC7853F39F9D971E50E652FCBBB"
+      },
+      {
+        "path": "rustfmt.patch",
+        "bytes": 2327,
+        "sha256": "6F6C0D69F451DEABA2224C4AC9C6E9389403BD974810273386C6EFEA711E8A5C"
+      },
+      {
+        "path": "source-head.txt",
+        "bytes": 41,
+        "sha256": "02955B1B4322659E5A4ABC2D05B9060EEB75D3D47112FA29EE9B5D33E6729485"
+      }
+    ]
+  },
+  "independentStaticReview": {
+    "producer": "b7915a020c981d5316bdf42b54da7ea27f4b36bd",
+    "base": "5d60b630a405028663c46fff4e40d4db6f0f9b41",
+    "reviewer": "/root/yaml_candidate_review",
+    "result": "No concrete blocker",
+    "scope": [
+      "Typed return caller compatibility",
+      "Original WAL/POST/reconciliation order",
+      "AdmissionBlocked current invocation semantics only",
+      "Real HTTP regression3GET0POST"
+    ],
+    "runtimeProof": false
+  }
 }
