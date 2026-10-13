@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T14:39:34.3251111Z",
-  "validationStatus": "static_yaml_lock_transaction_hosted_pending",
+  "capturedUtc": "2026-10-13T14:47:01.5561386Z",
+  "validationStatus": "static_graphify_navigation_hosted_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5633,8 +5633,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2619799,
-      "sha256": "41237A0220D6CE870585D274FC4FB5AFD43EEB4FFBBFCD2CE8A51810B272B054"
+      "bytes": 2620246,
+      "sha256": "FC1333C23241983A6AC4450908E40E3EAC5449B25FB72A06B1C82E09C9A2EE22"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5663,8 +5663,8 @@
     },
     {
       "path": "scripts/build_graphify_navigation.py",
-      "bytes": 8463,
-      "sha256": "4EAD579899AFEB899677AE2CFAF6AB3ACFFE971C0952D178F390C4AFF48B98AE"
+      "bytes": 10125,
+      "sha256": "2915D3A85FDEEEFC78D2F3D7F1542E57DDF47D694D770BB3DA9382C68B1409EE"
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",

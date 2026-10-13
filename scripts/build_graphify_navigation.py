@@ -125,6 +125,40 @@ def build(repo, producer, output):
         require(source_inputs(repo, producer) == records, "source changed during extraction")
         graph.update({"directed": True, "source_head": producer, "purpose": "developer_navigation"})
         save(output / "graph.json", graph)
+        # A small file-level index permits bounded JSON reads under the local
+        # runtime hold. It is navigation only: detailed evidence stays in graph.json.
+        known_paths = {item["path"] for item in supported}
+        node_files = {}
+        for node in graph["nodes"]:
+            source = node.get("source_file")
+            if not isinstance(source, str):
+                continue
+            source_path = Path(source)
+            if source_path.is_absolute():
+                try:
+                    source = source_path.relative_to(repo).as_posix()
+                except ValueError:
+                    continue
+            if source in known_paths and isinstance(node.get("id"), str):
+                node_files[node["id"]] = source
+        outgoing = {path: Counter() for path in known_paths}
+        incoming = {path: Counter() for path in known_paths}
+        unmapped = 0
+        for edge in graph["edges"]:
+            source = node_files.get(edge.get("source"))
+            target = node_files.get(edge.get("target"))
+            if source is None or target is None:
+                unmapped += 1
+            elif source != target:
+                outgoing[source][target] += 1
+                incoming[target][source] += 1
+        save(output / "file-navigation.json", {
+            "producer": producer, "purpose": "file_level_navigation_only",
+            "edgesWithoutTwoMappedFileEndpoints": unmapped,
+            "files": [{"path": path, "outgoing": dict(sorted(outgoing[path].items())),
+                       "incoming": dict(sorted(incoming[path].items()))}
+                      for path in sorted(known_paths)],
+        })
     except Exception as error:
         failure = f"{type(error).__name__}: {error}"
     finally:
