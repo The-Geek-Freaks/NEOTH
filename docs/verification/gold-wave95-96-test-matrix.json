@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Provider native tool guard hosted-formatted; runtime pending",
+  "status": "Combined source candidate with exact provider runtime selection; hosted runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 423234,
-    "sha256": "F6D5C75E6F8C2BD1382230D83BAD302849C358B2EB922C2497AB175D59833754"
+    "bytes": 423261,
+    "sha256": "8C02A6DB0701D60F1151316DE5985B40E75F8BDA859E88D54D2C80985CC8186A"
   },
   "sourceInputs": 2308,
   "requiredNativeTests": [
@@ -83151,6 +83151,38 @@
       }
     ],
     "note": "Original one-file format patch from38387571908; independent static review passed, no local compiler/formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2574InteropSelection": {
+    "base": "0091893923ee5241e79f9fc562334574160f946b",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 27511,
+        "sha256": "4CF5316F6DFFFDE5FAED6EB5959A4C4B1946BC08EDA640CDAAB741BA3021C355",
+        "blob": "b89105ec84340b9514c1f4b40149fdad6cea8a47"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 11356,
+        "sha256": "F9F4B44BD12D8BF2AA06FAF323C2960CD73785CD0CAF78FC22C99A4419D92F1C",
+        "blob": "583de480736021bc8845e5f663e060511862d455"
+      },
+      {
+        "path": "docs/verification/gold-wave2574-provider-native-tools.json",
+        "bytes": 3024,
+        "sha256": "CB9DA80C4909F50403C340719638A59428CE04E65C83BFB8C6F59B186950E3A4",
+        "blob": "9a2674d37bd90cb1959c6a118e1b3ca834ef71eb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2608653,
+        "sha256": "7F418EF6AC9E32E74AA1D7AE5BA94232398D6D974D87F3539AEF784B8893243D",
+        "blob": "f8a992d03c1ddab183f5e919b11a7105dc70bf81"
+      }
+    ],
+    "note": "Reuse existing source-bound companion interop for three new provider regressions: 182 Rust cases, no separate heavy workflow",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

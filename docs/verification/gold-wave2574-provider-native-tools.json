@@ -56,5 +56,20 @@
     "reviewer": "/root/yaml_candidate_review",
     "result": "No concrete Rust or behavioral blocker",
     "runtimeProof": false
+  },
+  "hostedRuntimeSelection": {
+    "workflow": "mobile-companion-interop.yml",
+    "reason": "Existing companion runtime uses the same real OpenAiAdapter and already binds openai_api.rs",
+    "addedExactCases": [
+      "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
+      "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
+      "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses"
+    ],
+    "coreCases": 111,
+    "totalRustCases": 182,
+    "collectorCases": 32,
+    "sourceBindings": 84,
+    "newWorkflow": false,
+    "execution": "pending"
   }
 }

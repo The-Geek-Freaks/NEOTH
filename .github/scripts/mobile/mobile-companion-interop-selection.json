@@ -169,7 +169,10 @@
         "daemon::companion_runtime::tests::jm_ex_05_activity_projection_requires_v2_and_preserves_unknown",
         "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_signed_choices_preserve_legacy",
         "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_offer_preserves_inventory_and_legacy_decoders",
-        "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows"
+        "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows",
+        "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
+        "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
+        "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses"
       ]
     },
     "no_cluster": {

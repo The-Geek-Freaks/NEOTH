@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T11:04:15.2876350Z",
-  "validationStatus": "Provider native tool guard hosted-formatted; runtime pending",
+  "capturedUtc": "2026-10-13T11:19:22.1266559Z",
+  "validationStatus": "Combined source candidate with exact provider runtime selection; hosted runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 27221,
-      "sha256": "FF3ECED8C459D219396D7EBBD1BA38EB96C993B0F10402AD43BAC530827E411E"
+      "bytes": 27511,
+      "sha256": "4CF5316F6DFFFDE5FAED6EB5959A4C4B1946BC08EDA640CDAAB741BA3021C355"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
@@ -74,7 +74,7 @@
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
       "bytes": 11356,
-      "sha256": "BE8A0285085F16E1EAAD84B3B4E42E526797471B52892827D35AC4D0722592B3"
+      "sha256": "F9F4B44BD12D8BF2AA06FAF323C2960CD73785CD0CAF78FC22C99A4419D92F1C"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -4408,8 +4408,8 @@
     },
     {
       "path": "docs/verification/gold-wave2574-provider-native-tools.json",
-      "bytes": 2363,
-      "sha256": "F01974971E92345C75AFE785858038261A1BE2FB4F61EF19C470F9D3B94AE560"
+      "bytes": 3024,
+      "sha256": "CB9DA80C4909F50403C340719638A59428CE04E65C83BFB8C6F59B186950E3A4"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5588,8 +5588,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2608189,
-      "sha256": "D1AE7971CA094FBA141BAE8A1F7C84456329415AA5A2CF2E6D79A3F9BA27E82D"
+      "bytes": 2608653,
+      "sha256": "7F418EF6AC9E32E74AA1D7AE5BA94232398D6D974D87F3539AEF784B8893243D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
