@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           proof="$RUNNER_TEMP/yaml-dependency-candidate"
-          cargo metadata --manifest-path SRC/Cargo.toml --all-features --format-version 1 > "$proof/cargo-metadata.json" 2> "$proof/cargo-metadata.stderr"
+          cargo metadata --locked --manifest-path SRC/Cargo.toml --all-features --format-version 1 > "$proof/cargo-metadata.json" 2> "$proof/cargo-metadata.stderr"
           python3 .github/scripts/yaml-dependency-candidate.py validate --proof "$proof" --metadata "$proof/cargo-metadata.json"
       - name: Run isolated baseline-versus-candidate YAML fixture
         id: differential

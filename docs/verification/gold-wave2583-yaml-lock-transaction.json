@@ -1,0 +1,23 @@
+{
+  "schema": "neoth.w2583.yaml-lock-transaction.v1",
+  "base": "dba63565e23a0862d030c55fa60d9bd14a828df1",
+  "status": "STATIC_HOSTED_EXECUTION_PENDING",
+  "failedRun": 38412710346,
+  "failedProducer": "8e9db3b32cf96e0d65e4cfdfcf09fc5b8e9e427b",
+  "failure": "Unconstrained cargo metadata changed unrelated dependency edges, including colored/windows-sys, data-encoding/syn and hyper-util/socket2",
+  "originalArtifact": 11823167859,
+  "originalApiZipDigestVerified": true,
+  "fix": [
+    "Validate all manifest and lock transformations before any product write",
+    "Preserve foreign raw lock blocks and all unrelated retained package fields and edges",
+    "Replace only two pinned legacy YAML blocks and four direct owner edges",
+    "Pin libyaml-rs0.3.0 checksum and exact yaml_serde dependencies",
+    "Use cargo metadata --locked; resolver cannot rewrite candidate"
+  ],
+  "newHostedGuards": 5,
+  "totalHostedGuards": 14,
+  "actualProductLockChanged": false,
+  "localRuntimeExecuted": false,
+  "runtimeAccepted": false,
+  "goldAccepted": false
+}

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static_graphify_navigation_hosted_pending",
+  "status": "static_yaml_lock_transaction_hosted_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 425062,
-    "sha256": "B8DFF63E1C4929996FC174FC7CB2F3699ABC00259EB529D1E95F19975B0544CB"
+    "bytes": 425258,
+    "sha256": "FD20A6540F32784520B3A2D3D01CE44F500956021F106D7DCB2B346E8EFAA6E5"
   },
-  "sourceInputs": 2318,
+  "sourceInputs": 2319,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -83417,6 +83417,44 @@
       }
     ],
     "note": "Fresh serial structural developer map; parser omissions explicit; no local runtime and no Gold acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2583YamlLockTransaction": {
+    "base": "dba63565e23a0862d030c55fa60d9bd14a828df1",
+    "sources": [
+      {
+        "path": ".github/scripts/test_yaml_dependency_candidate.py",
+        "bytes": 9437,
+        "sha256": "6E6E0A754A68F57E5218BC4192AEFB32472FF724C8DAEDFF6289524D20F2E749",
+        "blob": "f6729c352de34d47bbdc038293967ab57b76828b"
+      },
+      {
+        "path": ".github/scripts/yaml-dependency-candidate.py",
+        "bytes": 13153,
+        "sha256": "BCF3EF96EDF23B5E6CB174C1CE4A32231D7CBE3A546F27F625D908B0C646257F",
+        "blob": "1aa4a8b1e3383781967f2d037b78c5b782930899"
+      },
+      {
+        "path": ".github/workflows/yaml-dependency-candidate.yml",
+        "bytes": 8839,
+        "sha256": "B6350D6948ECA06A263E66473046AE741D020A66B70722C1AD84981C179746A7",
+        "blob": "b146a1856cf4f5cdfdd849eb9ca291489d3c4fd8"
+      },
+      {
+        "path": "docs/verification/gold-wave2583-yaml-lock-transaction.json",
+        "bytes": 1054,
+        "sha256": "90B65615A81722E034A2DF00B732E9C9B1A1C995251412DFD7305538A70FEE23",
+        "blob": "64ef9854ca7f40c6094c399d8094ce832bbe9c8b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2619799,
+        "sha256": "41237A0220D6CE870585D274FC4FB5AFD43EEB4FFBBFCD2CE8A51810B272B054",
+        "blob": "b53951f2d1e702dce15d02f01b6410994ddfe657"
+      }
+    ],
+    "note": "Pinned raw lock transaction; no resolver writes; 14 hosted guards pending; physical user lock preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

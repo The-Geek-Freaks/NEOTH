@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T14:30:42.5808574Z",
-  "validationStatus": "static_graphify_navigation_hosted_pending",
+  "capturedUtc": "2026-10-13T14:39:34.3251111Z",
+  "validationStatus": "static_yaml_lock_transaction_hosted_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -88,8 +88,8 @@
     },
     {
       "path": ".github/scripts/test_yaml_dependency_candidate.py",
-      "bytes": 4623,
-      "sha256": "E12BCC8247B7A5CC627464148EC4329692BA9AA394EA86F328E795943234708E"
+      "bytes": 9437,
+      "sha256": "6E6E0A754A68F57E5218BC4192AEFB32472FF724C8DAEDFF6289524D20F2E749"
     },
     {
       "path": ".github/scripts/verify_rust_case.py",
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/scripts/yaml-dependency-candidate.py",
-      "bytes": 9506,
-      "sha256": "68CD8354549C4ABFF0A40CD7F89B35CB5B52229905B2C9E4AD85C7E28359F94A"
+      "bytes": 13153,
+      "sha256": "BCF3EF96EDF23B5E6CB174C1CE4A32231D7CBE3A546F27F625D908B0C646257F"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -368,8 +368,8 @@
     },
     {
       "path": ".github/workflows/yaml-dependency-candidate.yml",
-      "bytes": 8830,
-      "sha256": "381FBB746C3A2CDF8693721242CAD1A30575C074FAEBA5E3C0A171282F4E97F1"
+      "bytes": 8839,
+      "sha256": "B6350D6948ECA06A263E66473046AE741D020A66B70722C1AD84981C179746A7"
     },
     {
       "path": ".trivyignore",
@@ -4452,6 +4452,11 @@
       "sha256": "924735DBF090810EB1425D1F636EF0E247BAF021AC1B90D5F5F11109C6673B6C"
     },
     {
+      "path": "docs/verification/gold-wave2583-yaml-lock-transaction.json",
+      "bytes": 1054,
+      "sha256": "90B65615A81722E034A2DF00B732E9C9B1A1C995251412DFD7305538A70FEE23"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5628,8 +5633,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2618615,
-      "sha256": "B9BB0F655070F5BF7765CCD68D1C3099D39B8B27EF086D445E42D6B2F50DD047"
+      "bytes": 2619799,
+      "sha256": "41237A0220D6CE870585D274FC4FB5AFD43EEB4FFBBFCD2CE8A51810B272B054"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

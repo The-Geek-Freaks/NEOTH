@@ -33,6 +33,15 @@ BOUND = [
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 CHECKSUM = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
 REQUEST = '{ package = "yaml_serde", version = "=0.10.7" }'
+OLD_SERDE = ("serde_yaml", "0.9.34+deprecated", REGISTRY)
+OLD_UNSAFE = ("unsafe-libyaml", "0.2.11", REGISTRY)
+NEW_YAML = ("yaml_serde", "0.10.7", REGISTRY)
+NEW_LIBYAML = ("libyaml-rs", "0.3.0", REGISTRY)
+OLD_SERDE_CHECKSUM = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+OLD_UNSAFE_CHECKSUM = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+LIBYAML_CHECKSUM = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+OLD_SERDE_DEPS = ["indexmap 2.14.0", "itoa", "ryu", "serde", "unsafe-libyaml"]
+NEW_YAML_DEPS = ["indexmap 2.14.0", "itoa", "libyaml-rs", "ryu", "serde"]
 
 
 def require(condition: bool, message: str) -> None:
@@ -82,19 +91,71 @@ def candidate_manifest(data: bytes) -> bytes:
 
 
 def package_index(path: Path) -> dict:
+    return package_index_data(path.read_bytes())
+
+
+def package_index_data(data: bytes) -> dict:
     result = {}
-    for package in tomllib.loads(path.read_text(encoding="utf-8"))["package"]:
+    for package in tomllib.loads(data.decode("utf-8"))["package"]:
         key = (package["name"], package["version"], package.get("source", ""))
         require(key not in result, f"duplicate package identity: {key}")
         result[key] = package
     return result
 
 
+def candidate_lock(data: bytes) -> bytes:
+    """Replace six reviewed blocks/edges; preserve every unrelated lock byte."""
+    before = package_index_data(data)
+    require(before.get(OLD_SERDE, {}).get("checksum") == OLD_SERDE_CHECKSUM,
+            "unexpected base serde_yaml checksum")
+    require(before[OLD_SERDE].get("dependencies") == OLD_SERDE_DEPS,
+            "unexpected base serde_yaml dependencies")
+    require(before.get(OLD_UNSAFE, {}).get("checksum") == OLD_UNSAFE_CHECKSUM
+            and not before[OLD_UNSAFE].get("dependencies"),
+            "unexpected base unsafe-libyaml package")
+    require(not ({"yaml_serde", "libyaml-rs"} & {key[0] for key in before}),
+            "candidate packages already present")
+    nl = b"\r\n" if b"\r\n" in data else b"\n"
+    parts = re.split(rb"(?m)(?=^\[\[package\]\]\r?$)", data)
+    require(len(parts) > 1, "lock has no package blocks")
+    edited = set()
+    for index in range(1, len(parts)):
+        block = parts[index]
+        parsed = package_index_data(block)
+        require(len(parsed) == 1, "ambiguous raw package block")
+        key, package = next(iter(parsed.items()))
+        if key in {OLD_SERDE, OLD_UNSAFE}:
+            name, release, checksum, deps = (
+                ("yaml_serde", "0.10.7", CHECKSUM, NEW_YAML_DEPS) if key == OLD_SERDE else
+                ("libyaml-rs", "0.3.0", LIBYAML_CHECKSUM, [])
+            )
+            lines = ["[[package]]", f'name = "{name}"', f'version = "{release}"',
+                     f'source = "{REGISTRY}"', f'checksum = "{checksum}"']
+            if deps:
+                lines += ["dependencies = [", *[f' "{edge}",' for edge in deps], "]"]
+            parts[index] = nl.join(line.encode() for line in lines) + nl + nl
+            edited.add(key)
+        elif key[0] in OWNERS and key[2] == "":
+            require(package.get("dependencies", []).count("serde_yaml") == 1,
+                    f"unexpected base owner edge: {key}")
+            changed, count = re.subn(
+                rb'(?m)^([ \t]*)"serde_yaml",([ \t]*\r?)$',
+                lambda match: match[1] + b'"yaml_serde",' + match[2], block,
+            )
+            require(count == 1, f"unexpected raw owner edge: {key}")
+            parts[index] = changed
+            edited.add(key)
+    require(len(edited) == 6 and {OLD_SERDE, OLD_UNSAFE}.issubset(edited),
+            "expected two package blocks and four owner edges")
+    candidate = b"".join(parts)
+    validate_packages(before, package_index_data(candidate))
+    return candidate
+
 def validate_packages(before: dict, after: dict) -> dict:
     added, removed = set(after) - set(before), set(before) - set(after)
-    require(len(added) == 2 and {k[0] for k in added} == {"yaml_serde", "libyaml-rs"},
+    require(added == {NEW_YAML, NEW_LIBYAML},
             f"unexpected added identities: {sorted(added)}")
-    require(len(removed) == 2 and {k[0] for k in removed} == {"serde_yaml", "unsafe-libyaml"},
+    require(removed == {OLD_SERDE, OLD_UNSAFE},
             f"unexpected removed identities: {sorted(removed)}")
     require(not ({"serde_yaml", "unsafe-libyaml"} & {k[0] for k in after}),
             "deprecated YAML packages remain")
@@ -106,8 +167,10 @@ def validate_packages(before: dict, after: dict) -> dict:
     libyaml = [k for k in added if k[0] == "libyaml-rs"]
     require(len(libyaml) == 1 and libyaml[0][1].startswith("0.3.") and libyaml[0][2] == REGISTRY,
             "unexpected libyaml-rs identity")
-    require(re.fullmatch(r"[0-9a-f]{64}", after[libyaml[0]].get("checksum", "")) is not None,
-            "libyaml-rs checksum missing")
+    require(after[NEW_LIBYAML].get("checksum") == LIBYAML_CHECKSUM
+            and not after[NEW_LIBYAML].get("dependencies"),
+            "libyaml-rs checksum or dependencies differ")
+    require(yaml.get("dependencies") == NEW_YAML_DEPS, "candidate YAML dependencies differ")
     changed_owners = set()
     for key in set(before) & set(after):
         old, new = before[key], after[key]
@@ -145,11 +208,17 @@ def custody(proof: Path) -> None:
 
 def prepare(proof: Path) -> None:
     assert_changed(set())
-    for path in PRODUCT:
-        copy_into(proof / "base", path)
-    for path in MANIFESTS:
-        (ROOT / path).write_bytes(candidate_manifest(raw(path)))
-    assert_changed(set(MANIFESTS))
+    base = {path: raw(path) for path in PRODUCT}
+    candidate = {path: candidate_manifest(base[path]) for path in MANIFESTS}
+    candidate["SRC/Cargo.lock"] = candidate_lock(base["SRC/Cargo.lock"])
+    # All transformations are validated before any product byte is changed.
+    for path, data in base.items():
+        target = proof / "base" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    for path, data in candidate.items():
+        (ROOT / path).write_bytes(data)
+    assert_changed(set(PRODUCT))
 
 
 def validate(proof: Path, metadata: Path) -> None:
