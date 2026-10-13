@@ -793,14 +793,13 @@ void conversationRegressionCases() {
 }
 
 class _InventoryBridge extends _FakeBridge implements NativeBridgeWithCapabilityInventory {
-  _InventoryBridge({this.inventoryResult, this.inventoryFuture, this.supported = true, Future<NativeBridgeResult>? heldChat}) : super(chatFuture: heldChat);
+  _InventoryBridge({this.inventoryResult, this.inventoryFuture, Future<NativeBridgeResult>? heldChat}) : super(chatFuture: heldChat);
   final NativeBridgeResult? inventoryResult;
   Future<NativeBridgeResult>? inventoryFuture;
-  final bool supported;
   int inventoryCalls = 0;
   Map<String, Object?>? command;
   @override
-  bool get capabilityInventorySupported => supported;
+  bool get capabilityInventorySupported => true;
   @override
   Future<NativeBridgeResult> capabilityInventory(String descriptorJson, String deviceId, String commandJson) async {
     inventoryCalls++;

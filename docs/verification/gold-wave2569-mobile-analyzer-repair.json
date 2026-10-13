@@ -1,0 +1,35 @@
+{
+  "schema": "neoth.gold-wave2569.v1",
+  "date": "2026-10-13",
+  "base": "19c568caddb1ae04e5216bf9c3302eb071ad2528",
+  "status": "Flutter test-double analyzer repair; fresh native execution pending",
+  "interop": {
+    "run": "38359443004",
+    "producer": "19c568caddb1ae04e5216bf9c3302eb071ad2528",
+    "exactRust": 171,
+    "collector": 29,
+    "conversationObserver": 6,
+    "ffiSymbols": 15,
+    "sourceBindings": 81,
+    "actualInventoryOperations": 2,
+    "proofSha256": "C7E01AFED4F93D487114FF922272D55BFD5FCAAF5D2003C6007119457A3DBD89",
+    "proof": "work/gold-20260906/wave2567-companion-inventory-acceptance/admission/ROOT_INTEROP_ADMISSION.json",
+    "actualChatRevokeDrain": true,
+    "actualEncryptedConversationRestart": true
+  },
+  "failedNative": {
+    "run": "38363650010",
+    "producer": "19c568caddb1ae04e5216bf9c3302eb071ad2528",
+    "job": "115183519429",
+    "diagnostic": "unused_element: optional _InventoryBridge.supported constructor parameter never supplied, companion_controller_test.dart:796:70",
+    "flutterTestsRan": false,
+    "nativeBuildsRan": false
+  },
+  "repair": "Remove unused constructor parameter and stored field; capable test double returns true exactly as before. Existing missing-ABI case uses _FakeBridge and remains intact.",
+  "expectedFlutterCases": 74,
+  "productionCodeChanged": false,
+  "localExecutableValidationRan": false,
+  "nativeDeviceAcceptance": false,
+  "releaseAcceptance": false,
+  "goldCheckboxesClosed": 0
+}

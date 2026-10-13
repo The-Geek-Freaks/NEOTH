@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2566 verified hosted format applied; fresh Preflight and runtime pending",
+  "status": "Source repair; native hosted verification pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 421193,
-    "sha256": "A3884855C7874EAA306D3098F167635E719880942672512738BD9E2E40E4A8CF"
+    "bytes": 421363,
+    "sha256": "2169D02DF0850BDA7EF1A5EC44CF4A415215961B7D728D092E3AC5762ED16E75"
   },
-  "sourceInputs": 2297,
+  "sourceInputs": 2298,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -82361,6 +82361,38 @@
       }
     ],
     "note": "Original two-path rustfmt patch from run38358954908; API/ZIP/member/source-head verified. No local formatter or executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2569MobileAnalyzerRepair": {
+    "base": "19c568caddb1ae04e5216bf9c3302eb071ad2528",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 47164,
+        "sha256": "C089571956376AD6C47DE1603934FB31890FF0835691349179D44886CB5737B3",
+        "blob": "d812db59529e5e753843ab196cc25a4d59471057"
+      },
+      {
+        "path": "docs/verification/gold-wave2569-mobile-analyzer-repair.json",
+        "bytes": 1477,
+        "sha256": "43823D8FB97CB14B3F65A67B661D9589AF5A018821BAB1E2ECE7F524155E45D5",
+        "blob": "285b8db720d931ed4d38eed5e065db89d6271aea"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 59745,
+        "sha256": "371C75AE824884B7674B2D2C53C89E62F5987CDB7922DBD3D5B8DB36D6C77C71",
+        "blob": "925fa0dd78704cbf44b0c56dd408e570442d8cc7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2597893,
+        "sha256": "475EE6B31BD041C11055384A5BCE426E96D46C84E999F2613226F57C7395ACF0",
+        "blob": "bb1546cbaec590dc7e0de182df5041db941e1b60"
+      }
+    ],
+    "note": "Interop38359443004@19c568 admitted171Rust29collector6observer and2inventory effects. Native38363650010 stopped before tests on unused supported fixture parameter; parameter removed without production changes. Native74Flutter and platform artifacts remain pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
