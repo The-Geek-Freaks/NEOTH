@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2576_SOURCE_REPAIR_HOSTED_RUNTIME_PENDING",
+  "status": "W2578_FIXTURE_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 423597,
-    "sha256": "F146A277D7925C1A51E533FCAC99A62E868CF69609508AA5CE466AD7EFA6CFA9"
+    "bytes": 423782,
+    "sha256": "79796C68F97209CC4EF0A44851DD3601FC0CC987A37E06602E39BD161E0F019D"
   },
-  "sourceInputs": 2310,
+  "sourceInputs": 2311,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -18256,8 +18256,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2268647,
-      "sha256": "038165C902481BF0EDFC252EA99BE5BFF6A618B067C2F6A414B8D71468F4F3E3"
+      "bytes": 2270191,
+      "sha256": "12418C61847EAC4C70B3EA381ECBCB619FF54E1B4B483C20C8EDDF6C4A7302DD"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -18351,8 +18351,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 19774,
-      "sha256": "E0FE139E9FB236BB29A4768235AE70525127014E4F8DF5DC182F27B60F773D16"
+      "bytes": 20213,
+      "sha256": "E6EDE56D96BCABA2EC453974E089B95C509A58F82D5CF5F945C88527ACEB047C"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -83265,6 +83265,38 @@
       }
     ],
     "note": "Correct Linux private launch stdin then provider EOF; retain182 GUI identities. Prior producer180/182 only. W2575 integrated,26recovery runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2578GuiFixtureOrdering": {
+    "base": "9693f89a0f7a5bc0b05d23a782a481aef629bef9",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2578-gui-fixture-ordering.json",
+        "bytes": 2252,
+        "sha256": "D81692757F5720E89CAF258DE346B84DE9D881DF4C963877E2B123108201942A",
+        "blob": "f0a30501ba8d9b35497d670e2081b343d14d3978"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2613643,
+        "sha256": "A66A8D3C2C6C3E990713511D42351A1EA6D720D6BB680FCA1457B0DE7DDC6687",
+        "blob": "60e9a5565d388764ef0de4c5cb90eb7d95c697f4"
+      },
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+        "bytes": 20213,
+        "sha256": "E6EDE56D96BCABA2EC453974E089B95C509A58F82D5CF5F945C88527ACEB047C",
+        "blob": "6720a3665980f7a7d3fd19485b8cab9504a6c3a7"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2270191,
+        "sha256": "12418C61847EAC4C70B3EA381ECBCB619FF54E1B4B483C20C8EDDF6C4A7302DD",
+        "blob": "17b9db40668d4390418a6dc41a9113cb74bba4cf"
+      }
+    ],
+    "note": "Prior GUI 180/182 with original archives and 35 raw source bindings. Owned Buddy EOF script and forged W153 terminal observation; no production/parser/timeout change; exact 182 GUI identities retained.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

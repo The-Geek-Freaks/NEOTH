@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2578",
+  "status": "FIXTURE_REPAIR_HOSTED_RUNTIME_PENDING",
+  "base": "9693f89a0f7a5bc0b05d23a782a481aef629bef9",
+  "priorGuiRun": {
+    "id": "38397335262",
+    "producer": "9693f89a0f7a5bc0b05d23a782a481aef629bef9",
+    "passed": 180,
+    "failed": 2,
+    "ignored": 0,
+    "unstarted": 0,
+    "coverageComplete": true,
+    "accepted": false
+  },
+  "partialProof": {
+    "path": "work/gold-20260906/wave2576-buddy-private-stdin/gui182-validation/ROOT_GUI_PARTIAL_OUTCOME.json",
+    "sha256": "2558515450D5B92CAF057AB842D8EC3276412E09DE758ADC68F5294CB56AD5B2",
+    "originalArchives": 3,
+    "producerSourceBindings": 35
+  },
+  "buddy": {
+    "cause": "The new EOF fixture launched /bin/sh, canonicalized to /usr/bin/dash. Host-root ownership is unmapped inside the runner private user namespace and is correctly rejected.",
+    "repair": "Use a runner-owned TempDir script with mode 0700, no arguments and the same exact EOF/status/output assertions.",
+    "productionValidationUnchanged": true,
+    "priorRealCliCallback": "The separate preserve_legacy_and_last_good callback journey passed on the prior producer."
+  },
+  "w153": {
+    "cause": "The deliberately forged request id is rejected before the child reliably writes its later started marker. Waiting for that marker races correct process-tree termination.",
+    "repair": "The forged case waits for the existing failed control-error row plus settled in-flight state. It never writes a start marker or receives a release marker; existing child cleanup and custody assertions remain.",
+    "strengthened": "Exactly one invocation and sealed envelope, no private projections/history, no successful reply, no start-marker dependency, complete child cleanup.",
+    "parserUnchanged": true,
+    "timeoutsUnchanged": true
+  },
+  "selection": {
+    "total": 182,
+    "universal": 145,
+    "linux": 37,
+    "newTestIdentity": false
+  },
+  "independentReview": {
+    "buddy": "/root/yaml_candidate_review: no concrete issue with owned mode-0700 fixed script",
+    "w153": "/root/linux_ci_budget: fixture observation race; separate terminal predicate and preserve cleanup",
+    "runtimeProof": false
+  },
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}

@@ -48790,7 +48790,9 @@ printf '\036NEOTH/1 {"neoth_stream":"skill_route","protocol_version":3,"request_
 printf '%s\n' 'route-written' > "$base/w153-stage"
 printf '\036NEOTH/1 {"neoth_stream":"reasoning_delta","protocol_version":3,"request_id":"%s","control_token":"%s","sequence":1,"delta":"%s"}\n' "$request" "$token" "$reasoning"
 printf '%s\n' 'reasoning-written' > "$base/w153-stage"
-: > "$base/started"
+# A rejected child may be killed before a start marker can be written.
+# Keep the forged case marker-free even when the writer wins the race.
+if [ "$mode" != forged ]; then : > "$base/started"; fi
 while [ ! -f "$base/release" ]; do /bin/sleep 0.01; done
 if [ "$mode" = success ]; then
   visible='W153 visible reply'
@@ -49479,25 +49481,42 @@ exit 0
                     );
                 }
             }
-            w153_wait_for_child_start(&window, &fixture, {
-                let started = fixture.path().join("started");
-                let overlay = overlay.as_weak();
-                move |window| {
-                    started.exists()
-                        && (if forged {
-                            true
-                        } else if display {
-                            match surface {
-                                ChatStreamSurface::Main => window.get_chat_reasoning_active(),
-                                ChatStreamSurface::Buddy => overlay
-                                    .upgrade()
-                                    .is_some_and(|overlay| overlay.get_reasoning_active()),
-                            }
-                        } else {
-                            !window.get_chat_skill_route_status().is_empty()
+            if forged {
+                // Rejection can reap the child before it writes any later
+                // marker. Observe the product's failed terminal instead.
+                w153_pump_until(&window, "forged child rejection", |window| {
+                    !window.get_chat_send_in_flight()
+                        && window.get_chat_live_messages().iter().any(|row| {
+                            row.role.as_str() == "error"
+                                && row.stream_phase.as_str() == "failed"
+                                && row.text.contains(
+                                    "chat stream emitted invalid or duplicate authenticated control frames",
+                                )
                         })
-                }
-            });
+                });
+                assert!(
+                    !fixture.path().join("started").exists(),
+                    "forged rejection must not depend on a child start marker"
+                );
+            } else {
+                w153_wait_for_child_start(&window, &fixture, {
+                    let started = fixture.path().join("started");
+                    let overlay = overlay.as_weak();
+                    move |window| {
+                        started.exists()
+                            && (if display {
+                                match surface {
+                                    ChatStreamSurface::Main => window.get_chat_reasoning_active(),
+                                    ChatStreamSurface::Buddy => overlay
+                                        .upgrade()
+                                        .is_some_and(|overlay| overlay.get_reasoning_active()),
+                                }
+                            } else {
+                                !window.get_chat_skill_route_status().is_empty()
+                            })
+                    }
+                });
+            }
             assert_eq!(
                 w116_call_lines(&fixture.path().join("calls")).len(),
                 1,
@@ -49564,7 +49583,7 @@ exit 0
                 assert!(!window.get_chat_reasoning_active());
                 assert!(overlay.get_reasoning_text().is_empty());
                 assert!(!overlay.get_reasoning_active());
-            } else {
+            } else if !forged {
                 std::fs::write(fixture.path().join("release"), b"")
                     .expect("release W153 successful child");
             }
@@ -49572,6 +49591,8 @@ exit 0
                 &window,
                 if stop {
                     "cancelled child settlement"
+                } else if forged {
+                    "rejected child settlement"
                 } else {
                     "successful child settlement"
                 },
@@ -49645,6 +49666,13 @@ exit 0
                 );
             }
             if forged {
+                assert!(
+                    !window
+                        .get_chat_live_messages()
+                        .iter()
+                        .any(|row| row.text.contains("W153 visible reply")),
+                    "rejected child must not publish a successful reply"
+                );
                 assert!(
                     !window
                         .get_chat_live_messages()

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T12:21:16.3531710Z",
-  "validationStatus": "W2576_SOURCE_REPAIR_HOSTED_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-13T13:23:27.9764077Z",
+  "validationStatus": "W2578_FIXTURE_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4422,6 +4422,11 @@
       "sha256": "51FDE6749250B74A072A09CC017F259A7CD1178DB6CC924EE0352B86D2B6CB2C"
     },
     {
+      "path": "docs/verification/gold-wave2578-gui-fixture-ordering.json",
+      "bytes": 2252,
+      "sha256": "D81692757F5720E89CAF258DE346B84DE9D881DF4C963877E2B123108201942A"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5598,8 +5603,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2611978,
-      "sha256": "38258761B5749FF15AA1A20627D98F638142B11C3A46D68480BB14A725B7B1EA"
+      "bytes": 2613643,
+      "sha256": "A66A8D3C2C6C3E990713511D42351A1EA6D720D6BB680FCA1457B0DE7DDC6687"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5793,8 +5798,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 19774,
-      "sha256": "E0FE139E9FB236BB29A4768235AE70525127014E4F8DF5DC182F27B60F773D16"
+      "bytes": 20213,
+      "sha256": "E6EDE56D96BCABA2EC453974E089B95C509A58F82D5CF5F945C88527ACEB047C"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
@@ -5873,8 +5878,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2268647,
-      "sha256": "038165C902481BF0EDFC252EA99BE5BFF6A618B067C2F6A414B8D71468F4F3E3"
+      "bytes": 2270191,
+      "sha256": "12418C61847EAC4C70B3EA381ECBCB619FF54E1B4B483C20C8EDDF6C4A7302DD"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

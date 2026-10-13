@@ -236,11 +236,18 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     {
         // The private supervisor frame must be consumed before the provider
         // starts; its input then closes without an interactive response.
-        let mut command = std::process::Command::new("/bin/sh");
-        command.args([
-            "-c",
-            r#"if IFS= read -r value || [ -n "$value" ]; then exit 41; fi; printf '%s\n' 'buddy-stdin-eof'"#,
-        ]);
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let eof_fixture = TempDir::new().expect("create owned EOF provider fixture");
+        let eof_program = eof_fixture.path().join("buddy-stdin-eof");
+        std::fs::write(
+            &eof_program,
+            b"#!/bin/sh\nif IFS= read -r value || [ -n \"$value\" ]; then exit 41; fi\nprintf '%s\\n' 'buddy-stdin-eof'\n",
+        )
+        .expect("write owned EOF provider fixture");
+        std::fs::set_permissions(&eof_program, std::fs::Permissions::from_mode(0o700))
+            .expect("restrict EOF provider fixture permissions");
+        let mut command = std::process::Command::new(&eof_program);
         let output = run_contained_buddy_provider_command(&mut command, Duration::from_secs(10))
             .expect("contained Buddy command must deliver stdin EOF after activation");
         assert!(
