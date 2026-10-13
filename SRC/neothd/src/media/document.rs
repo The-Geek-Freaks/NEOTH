@@ -834,8 +834,8 @@ fn handle_rtf_control(
 
 fn apply_rtf_word(word: &str, param: &str, out: &mut String) {
     match word {
-        "par" | "line" | "sect" => out.push('\n'),
-        "tab" => out.push('\t'),
+        "par" | "line" | "sect" | "row" => out.push('\n'),
+        "tab" | "cell" => out.push('\t'),
         "u" => {
             if let Ok(code) = param.parse::<i32>() {
                 let code = if code < 0 {
@@ -1134,6 +1134,30 @@ mod tests {
     fn rtf_strips_control_words_and_metadata() {
         let rtf = r"{\rtf1\ansi\deff0 {\fonttbl{\f0\fnil Arial;}}\f0 Hello\par World\par}";
         assert_eq!(rtf_to_text(rtf.as_bytes()), "Hello\nWorld");
+    }
+
+    #[tokio::test]
+    async fn rtf_preserves_table_cell_and_row_boundaries() {
+        let rtf = concat!(
+            r"{\rtf1\ansi Before\par",
+            r"\trowd\cellx2000\cellx4000\intbl Item\cell Count\cell\row",
+            r"\trowd\cellx2000\cellx4000\intbl {\b Alpha} & \u937?\cell 42\cell\row",
+            r"\trowd\cellx2000\cellx4000\intbl Beta\cell 7\cell\row",
+            r"\pard After}"
+        );
+        let out = DocumentExtractor
+            .extract(&doc_asset("application/rtf", rtf.as_bytes().to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(out.text, "Before\nItem\tCount\nAlpha & Ω\t42\nBeta\t7\nAfter");
+        assert_eq!(out.metadata["format"], "rtf");
+        assert_eq!(out.metadata["truncated"], false);
+    }
+
+    #[test]
+    fn rtf_table_controls_keep_metadata_and_escaped_literals_isolated() {
+        let rtf = r"{\rtf1 A{\info{\title hidden\cell secret\row}}B\par literal \\cell and \\row}";
+        assert_eq!(rtf_to_text(rtf.as_bytes()), "AB\nliteral \\cell and \\row");
     }
 
     #[test]

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2585",
+  "base": "f60956bacf822fc6e03794aeffc0b30a51de64f8",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "RTF_TABLE_BOUNDARY_SOURCE_CANDIDATE_RUNTIME_PENDING",
+  "problem": "RTF cell and row control words were ignored, joining adjacent cell and row text.",
+  "repair": "Map existing parsed cell to tab and row to newline without changing metadata skipping, escaped literals or parser ownership.",
+  "regressions": [
+    "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
+    "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated"
+  ],
+  "staticReview": "Independent Rust review approved",
+  "reference": {
+    "url": "https://latex2rtf.sourceforge.net/RTF-Spec-1.7.pdf",
+    "pages": [
+      71,
+      72
+    ],
+    "scope": "Microsoft-authored RTF1.7 example identifies cell and row endings"
+  },
+  "graphUse": "Admitted compact map selected document.rs; direct source verifies CLI ingest and skills registrations omitted by compact links.",
+  "nonclaims": [
+    "nested tables",
+    "merged or empty cell geometry",
+    "full structured document representation",
+    "source ranges",
+    "full A03 or Gold acceptance"
+  ],
+  "localRuntimeExecuted": false,
+  "runtimeAccepted": false
+}
