@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T11:19:22.1266559Z",
-  "validationStatus": "Combined source candidate with exact provider runtime selection; hosted runtime pending",
+  "capturedUtc": "2026-10-13T11:47:06.1455265Z",
+  "validationStatus": "W2575 isolated Paperless outcome candidate; hosted pending; no local runtime",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4412,6 +4412,11 @@
       "sha256": "CB9DA80C4909F50403C340719638A59428CE04E65C83BFB8C6F59B186950E3A4"
     },
     {
+      "path": "docs/verification/gold-wave2575-paperless-outcomes.json",
+      "bytes": 1919,
+      "sha256": "E4E3DADA500533DF2BCBB593D6750D43BBCA51BA486D9E4D6FFACD268EC93308"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5588,8 +5593,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2608653,
-      "sha256": "7F418EF6AC9E32E74AA1D7AE5BA94232398D6D974D87F3539AEF784B8893243D"
+      "bytes": 2610049,
+      "sha256": "03D97E19B0602B13A56842604F71AA22590AC004C998F00278AF584FCEE5B32B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7603,8 +7608,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 37131,
-      "sha256": "19317ACB015DE5CE933B31C4E86BB6BBF02504292A3359C53390B63D2C3CE56B"
+      "bytes": 38631,
+      "sha256": "8D5364A4175FA5FC125E02F3AF80DA6A0CAD45FF1B9D823973E0B1350F7D304D"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
@@ -9343,8 +9348,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 519709,
-      "sha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C"
+      "bytes": 523402,
+      "sha256": "5329A87C2DDBDFD53D22F78B6EB9B4A2F65043F3E24C336B79D655D58C9B7237"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

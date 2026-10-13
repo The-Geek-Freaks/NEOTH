@@ -159,6 +159,17 @@ pub(crate) enum PaperlessUploadOutcome {
     DocumentConfirmed(u64),
 }
 
+/// Observed progress, not retry authority. AdmissionBlocked means this invocation
+/// did not call POST; it does not prove that a historical intent/effect is absent.
+/// Only an authenticated exact-original receipt can complete the local mail unit.
+#[cfg(any(test, feature = "imap_fetch"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PaperlessReconcileOutcome {
+    Completed,
+    AdmissionBlocked,
+    UnknownOutcome,
+}
+
 /// The production send closure can run only after this exact writer transaction
 /// appends a durable authenticated claim. An existing claim never grants send.
 #[cfg(any(test, feature = "imap_fetch"))]
@@ -207,7 +218,8 @@ pub(crate) async fn reconcile_or_upload_paperless(
     token: &str,
     title: &str,
     body: &str,
-) -> Result<bool> {
+) -> Result<PaperlessReconcileOutcome> {
+    use PaperlessReconcileOutcome::{AdmissionBlocked, Completed, UnknownOutcome};
     use crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome as Receipt;
     use paperless_client::{MAX_ORIGINAL_BYTES, PaperlessClient};
     anyhow::ensure!(
@@ -222,9 +234,9 @@ pub(crate) async fn reconcile_or_upload_paperless(
             .append_paperless_post_receipt_once(home, descriptor.clone())
             .await
         {
-            Ok(Receipt::Completed(_)) => return Ok(true),
+            Ok(Receipt::Completed(_)) => return Ok(Completed),
             Ok(Receipt::Appended | Receipt::Existing) => observed_before,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(UnknownOutcome),
         }
     } else {
         match upload_paperless_once(home, writer, descriptor.clone(), || {
@@ -232,8 +244,14 @@ pub(crate) async fn reconcile_or_upload_paperless(
         })
         .await
         {
-            PaperlessUploadOutcome::DocumentConfirmed(document_id) => return Ok(document_id > 0),
-            PaperlessUploadOutcome::AdmissionBlocked => return Ok(false),
+            PaperlessUploadOutcome::DocumentConfirmed(document_id) => {
+                return Ok(if document_id > 0 {
+                    Completed
+                } else {
+                    UnknownOutcome
+                });
+            }
+            PaperlessUploadOutcome::AdmissionBlocked => return Ok(AdmissionBlocked),
             PaperlessUploadOutcome::ResponseObserved(status) => {
                 tracing::debug!(
                     status,
@@ -247,15 +265,16 @@ pub(crate) async fn reconcile_or_upload_paperless(
         }
     };
     let Some(document) = observed else {
-        return Ok(false);
+        return Ok(UnknownOutcome);
     };
     let completed = descriptor.with_verified_document(document.id, &document.original_sha256)?;
-    Ok(matches!(
-        writer
-            .append_paperless_post_receipt_once(home, completed)
-            .await,
-        Ok(Receipt::Appended | Receipt::Existing)
-    ))
+    Ok(match writer
+        .append_paperless_post_receipt_once(home, completed)
+        .await
+    {
+        Ok(Receipt::Appended | Receipt::Existing) => Completed,
+        Ok(Receipt::Completed(_)) | Err(_) => UnknownOutcome,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +424,8 @@ pub async fn run_email_ingest_tick(
     let mut quarantined = 0usize;
     let mut review_queued = 0usize;
     let mut paperless_completed = 0usize;
-    let mut paperless_pending = 0usize;
+    let mut paperless_admission_blocked = 0usize;
+    let mut paperless_unknown = 0usize;
     let mut vault_written = 0usize;
 
     for email in &emails {
@@ -587,19 +607,29 @@ pub async fn run_email_ingest_tick(
                     ),
                 )
                 .await;
-                if matches!(result, Ok(Ok(true))) {
-                    all_configured_sinks_succeeded = true;
-                    paperless_completed += 1;
-                    info!(
-                        email_key_len,
-                        "email_ingest_cron: authenticated Paperless document completion observed"
-                    );
-                } else {
-                    paperless_pending += 1;
-                    warn!(
-                        email_key_len,
-                        "email_ingest_cron: Paperless unit pending; no retry of an existing upload intent"
-                    );
+                match result {
+                    Ok(Ok(PaperlessReconcileOutcome::Completed)) => {
+                        all_configured_sinks_succeeded = true;
+                        paperless_completed += 1;
+                        info!(
+                            email_key_len,
+                            "email_ingest_cron: authenticated Paperless document completion observed"
+                        );
+                    }
+                    Ok(Ok(PaperlessReconcileOutcome::AdmissionBlocked)) => {
+                        paperless_admission_blocked += 1;
+                        warn!(
+                            email_key_len,
+                            "email_ingest_cron: Paperless admission blocked; this invocation did not POST; prior outcome remains unproven"
+                        );
+                    }
+                    Ok(Ok(PaperlessReconcileOutcome::UnknownOutcome)) | Ok(Err(_)) | Err(_) => {
+                        paperless_unknown += 1;
+                        warn!(
+                            email_key_len,
+                            "email_ingest_cron: Paperless outcome unknown; only exact reconciliation can complete an existing intent"
+                        );
+                    }
                 }
             }
         }
@@ -617,7 +647,8 @@ pub async fn run_email_ingest_tick(
         quarantined,
         review_queued,
         paperless_completed,
-        paperless_pending,
+        paperless_admission_blocked,
+        paperless_unknown,
         vault_written,
         "email_ingest_cron: tick complete"
     );

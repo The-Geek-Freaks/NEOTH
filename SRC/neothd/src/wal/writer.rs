@@ -12316,7 +12316,9 @@ mod tests {
 
     #[tokio::test]
     async fn paperless_real_http_cancellation_reconciles_original_without_second_post() {
-        use crate::daemon::email_ingest_cron::reconcile_or_upload_paperless;
+        use crate::daemon::email_ingest_cron::{
+            PaperlessReconcileOutcome, reconcile_or_upload_paperless,
+        };
         use crate::wal::paperless_post_receipts::{
             PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome,
         };
@@ -12410,7 +12412,7 @@ mod tests {
             CompressionPolicy::None,
         )
         .unwrap();
-        assert!(
+        assert_eq!(
             reconcile_or_upload_paperless(
                 home.path(),
                 &writer,
@@ -12421,7 +12423,8 @@ mod tests {
                 "invoice body"
             )
             .await
-            .unwrap()
+            .unwrap(),
+            PaperlessReconcileOutcome::Completed
         );
         assert_eq!(
             writer
@@ -12429,7 +12432,7 @@ mod tests {
                 .await,
             Ok(Outcome::Completed(71))
         );
-        assert!(
+        assert_eq!(
             reconcile_or_upload_paperless(
                 home.path(),
                 &writer,
@@ -12440,7 +12443,8 @@ mod tests {
                 "invoice body"
             )
             .await
-            .unwrap()
+            .unwrap(),
+            PaperlessReconcileOutcome::Completed
         );
         let requests = server.received_requests().await.unwrap();
         assert_eq!(
@@ -12457,7 +12461,9 @@ mod tests {
     #[tokio::test]
     async fn paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim()
      {
-        use crate::daemon::email_ingest_cron::reconcile_or_upload_paperless;
+        use crate::daemon::email_ingest_cron::{
+            PaperlessReconcileOutcome, reconcile_or_upload_paperless,
+        };
         use crate::wal::paperless_post_receipts::{
             PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome,
         };
@@ -12540,8 +12546,8 @@ mod tests {
             .mount(&server)
             .await;
         for _ in 0..2 {
-            assert!(
-                !reconcile_or_upload_paperless(
+            assert_eq!(
+                reconcile_or_upload_paperless(
                     home.path(),
                     &writer,
                     descriptor.clone(),
@@ -12551,7 +12557,8 @@ mod tests {
                     "invoice body"
                 )
                 .await
-                .unwrap()
+                .unwrap(),
+                PaperlessReconcileOutcome::UnknownOutcome
             );
         }
         assert_eq!(
@@ -12559,6 +12566,107 @@ mod tests {
                 .append_paperless_post_receipt_once(home.path(), descriptor)
                 .await,
             Ok(Outcome::Existing)
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn paperless_blocked_invocation_and_existing_intent_have_distinct_outcomes_without_post() {
+        use crate::daemon::email_ingest_cron::{
+            PaperlessReconcileOutcome, reconcile_or_upload_paperless,
+        };
+        use crate::wal::paperless_post_receipts::{
+            PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome,
+        };
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let endpoint = format!("{}/api/documents/post_document/", server.uri());
+        let descriptor = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example",
+            993,
+            "fixture-user",
+            "blocked-real",
+            "invoice body",
+            "invoice",
+            &endpoint,
+        );
+        Mock::given(method("GET"))
+            .and(path("/api/documents/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Version", "3.2.1")
+                    .insert_header("X-Api-Version", "10")
+                    .set_body_json(json!({"count":0,"next":null,"previous":null,"results":[]})),
+            )
+            .expect(3)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let home = tempdir().unwrap();
+        let other_home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("paperless-blocked-outcome-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            reconcile_or_upload_paperless(
+                other_home.path(),
+                &writer,
+                descriptor.clone(),
+                &endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body",
+            )
+            .await
+            .unwrap(),
+            PaperlessReconcileOutcome::AdmissionBlocked
+        );
+        // The actual writer proves the refused invocation did not create a claim.
+        // A later admitted claim changes the observation, never the send authority.
+        assert_eq!(
+            writer
+                .append_paperless_post_receipt_once(home.path(), descriptor.clone())
+                .await,
+            Ok(PaperlessPostIntentOutcome::Appended)
+        );
+        assert_eq!(
+            reconcile_or_upload_paperless(
+                home.path(),
+                &writer,
+                descriptor,
+                &endpoint,
+                "fixture-token",
+                "invoice",
+                "invoice body",
+            )
+            .await
+            .unwrap(),
+            PaperlessReconcileOutcome::UnknownOutcome
+        );
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|request| request.method.as_str() == "POST")
+                .count(),
+            0
         );
         drop(writer);
         join.await.unwrap();
