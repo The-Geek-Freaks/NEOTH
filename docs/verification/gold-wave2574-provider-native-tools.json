@@ -1,0 +1,29 @@
+{
+  "schema": "neoth.gold-wave2574.v1",
+  "date": "2026-10-13",
+  "base": "ba81d47832bfc2091d0d7c5fe896afa0b2a47a1c",
+  "roadmap": "ADOPT-20261012-A08",
+  "status": "Isolated adapter and regression candidate; hosted runtime pending",
+  "source": "SRC/neothd/src/providers/openai_api.rs",
+  "cause": "Chat and SSE native tool fields were ignored and a tool finish could be reported as successful text",
+  "change": [
+    "Decode modern tool_calls and legacy function_call in chat and SSE",
+    "Reject nonempty or malformed tool payloads and tool finish reasons before content/termination handling",
+    "Keep absent/null/empty-array fields compatible without tool finish",
+    "Emit fixed argument-free errors; preserve only earlier partial stream output"
+  ],
+  "regressions": [
+    "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
+    "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
+    "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses"
+  ],
+  "normalResponseCases": 10,
+  "streamResponseCases": 20,
+  "portableRequiredTests": 2929,
+  "requestApiChanged": false,
+  "nativeToolsExecuted": false,
+  "localExecutableValidationRan": false,
+  "runtimeAccepted": false,
+  "primaryImported": false,
+  "goldCheckboxesClosed": 0
+}

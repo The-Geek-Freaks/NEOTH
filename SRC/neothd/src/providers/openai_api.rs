@@ -645,7 +645,18 @@ impl Provider for OpenAiAdapter {
             {
                 merge_openrouter_error_provider(&mut observed_upstream, error)?;
             }
-            let ChatChoiceMessage { content, refusal } = choice.message;
+            let ChatChoiceMessage {
+                content,
+                refusal,
+                tool_calls,
+                function_call,
+            } = choice.message;
+            reject_unsupported_native_tools(
+                finish_reason.as_deref(),
+                tool_calls.as_ref(),
+                function_call.as_ref(),
+                self.name,
+            )?;
             let parsed_content = content
                 .map(|content| content.into_text_and_refusal(self.name))
                 .transpose()?
@@ -1130,6 +1141,10 @@ struct ChatChoiceMessage {
     content: Option<ChatChoiceContent>,
     #[serde(default)]
     refusal: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    function_call: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1418,7 +1433,18 @@ impl SseChoice {
             finish_reason,
             error,
         } = self;
-        let SseDelta { content, refusal } = delta;
+        let SseDelta {
+            content,
+            refusal,
+            tool_calls,
+            function_call,
+        } = delta;
+        reject_unsupported_native_tools(
+            finish_reason.as_deref(),
+            tool_calls.as_ref(),
+            function_call.as_ref(),
+            adapter_name,
+        )?;
         let refusal_present = refusal.is_some();
         let refusal_fragment = refusal.filter(|message| !message.is_empty());
         let policy_error = error
@@ -1501,6 +1527,27 @@ impl SseChoice {
     }
 }
 
+fn reject_unsupported_native_tools(
+    finish_reason: Option<&str>,
+    tool_calls: Option<&serde_json::Value>,
+    function_call: Option<&serde_json::Value>,
+    adapter_name: &str,
+) -> Result<()> {
+    let has_tool_payload = [tool_calls, function_call]
+        .into_iter()
+        .flatten()
+        .any(|value| match value {
+            serde_json::Value::Null => false,
+            serde_json::Value::Array(calls) => !calls.is_empty(),
+            _ => true,
+        });
+    if matches!(finish_reason, Some("tool_calls" | "function_call")) || has_tool_payload
+    {
+        anyhow::bail!("{adapter_name} returned an unsupported native tool call");
+    }
+    Ok(())
+}
+
 fn bound_refusal_message(message: String, adapter_name: &str) -> Result<String> {
     let mut bounded = String::with_capacity(message.len().min(MAX_PROVIDER_REFUSAL_MESSAGE_BYTES));
     append_bounded_refusal(&mut bounded, &message, adapter_name)?;
@@ -1533,6 +1580,10 @@ struct SseDelta {
     content: Option<String>,
     #[serde(default)]
     refusal: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    function_call: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -2397,6 +2448,187 @@ mod tests {
             item.expect("ungated SSE body succeeds");
         }
         server.await.expect("bounded ungated fixture joins");
+    }
+
+    fn unsupported_native_tool_choices() -> Vec<serde_json::Value> {
+        let mut choices = Vec::new();
+        for (field, reason, payload) in [
+            (
+                "tool_calls",
+                "tool_calls",
+                serde_json::json!([{
+                    "id": "private-tool-id",
+                    "type": "function",
+                    "function": {
+                        "name": "private-tool-name",
+                        "arguments": "secret-tool-argument"
+                    }
+                }]),
+            ),
+            (
+                "function_call",
+                "function_call",
+                serde_json::json!({
+                    "name": "private-tool-name",
+                    "arguments": "secret-tool-argument"
+                }),
+            ),
+        ] {
+            for (value, finish_reason) in [
+                (Some(payload), "stop"),
+                (None, reason),
+                (Some(serde_json::Value::Null), reason),
+                (Some(serde_json::json!([])), reason),
+                (Some(serde_json::json!({})), "stop"),
+            ] {
+                let mut message = serde_json::json!({"content": "must-not-be-returned"});
+                if let Some(value) = value {
+                    message[field] = value;
+                }
+                choices.push(serde_json::json!({
+                    "message": message,
+                    "finish_reason": finish_reason
+                }));
+            }
+        }
+        choices
+    }
+
+    #[tokio::test]
+    async fn mock_200_native_tool_calls_cannot_become_text_success() {
+        for choice in unsupported_native_tool_choices() {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"choices": [choice]})),
+                )
+                .expect(1)
+                .mount(&mock)
+                .await;
+
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "unsupported native tool fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect_err("unsupported native calls must never become text success");
+            assert_eq!(
+                error.to_string(),
+                "openai_api returned an unsupported native tool call"
+            );
+            let full_error = format!("{error:#}");
+            for private_value in [
+                "private-tool-id",
+                "private-tool-name",
+                "secret-tool-argument",
+                "must-not-be-returned",
+            ] {
+                assert!(!full_error.contains(private_value));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_sse_native_tool_calls_error_without_success_terminal() {
+        use futures_util::StreamExt;
+
+        for choice in unsupported_native_tool_choices() {
+            for prefix in ["", "data: {\"choices\":[{\"delta\":{\"content\":\"partial-safe\"}}]}\n\n"] {
+                let sse_body = format!(
+                    "{prefix}data: {}\n\ndata: [DONE]\n\n",
+                    serde_json::json!({"choices": [{
+                        "delta": choice["message"],
+                        "finish_reason": choice["finish_reason"]
+                    }]})
+                );
+                let mock = MockServer::start().await;
+                Mock::given(method("POST"))
+                    .and(path("/chat/completions"))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"),
+                    )
+                    .expect(1)
+                    .mount(&mock)
+                    .await;
+                let mut stream = build_adapter_against(&mock.uri())
+                    .stream(Request {
+                        prompt: "unsupported native tool stream fixture".into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("HTTP stream opens before the unsupported event is decoded");
+                if !prefix.is_empty() {
+                    let partial = stream
+                        .next()
+                        .await
+                        .expect("earlier valid partial exists")
+                        .expect("earlier valid partial is preserved");
+                    assert_eq!(partial.delta, "partial-safe");
+                    assert!(!partial.done);
+                }
+                let error = stream
+                    .next()
+                    .await
+                    .expect("the first unsupported event produces an error")
+                    .expect_err("offending content cannot be emitted as a successful chunk");
+                assert_eq!(
+                    error.to_string(),
+                    "openai_api returned an unsupported native tool call"
+                );
+                let full_error = format!("{error:#}");
+                for private_value in [
+                    "private-tool-id",
+                    "private-tool-name",
+                    "secret-tool-argument",
+                    "must-not-be-returned",
+                ] {
+                    assert!(!full_error.contains(private_value));
+                }
+                assert!(stream.next().await.is_none(), "no success terminal after failure");
+            }
+        }
+    }
+
+    #[test]
+    fn empty_native_tool_fields_preserve_plain_text_responses() {
+        for field in [serde_json::Value::Null, serde_json::json!([])] {
+            let message: ChatChoiceMessage = serde_json::from_value(serde_json::json!({
+                "content": "ordinary text",
+                "tool_calls": field,
+                "function_call": field
+            }))
+            .expect("empty native fields decode");
+            reject_unsupported_native_tools(
+                None,
+                message.tool_calls.as_ref(),
+                message.function_call.as_ref(),
+                "fixture",
+            )
+            .expect("empty fields without a tool finish remain compatible");
+            assert_eq!(
+                message.content.unwrap().into_text_and_refusal("fixture").unwrap().text.as_deref(),
+                Some("ordinary text")
+            );
+
+            let choice: SseChoice = serde_json::from_value(serde_json::json!({
+                "delta": {
+                    "content": "ordinary text",
+                    "tool_calls": field,
+                    "function_call": field
+                },
+                "finish_reason": "stop"
+            }))
+            .expect("empty native stream fields decode");
+            let mut termination = ProviderTermination::default();
+            assert_eq!(
+                choice.into_delta(&mut termination, "fixture").unwrap(),
+                "ordinary text"
+            );
+            assert_eq!(termination.finish_reason.as_deref(), Some("stop"));
+        }
     }
 
     #[tokio::test]
