@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Provider tool-call fail-closed source candidate; hosted pending",
+  "status": "Provider native tool guard hosted-formatted; runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 423237,
-    "sha256": "703E5DDA15AAD12DDF58232E42E31F97C24BAFB337D6787682B256D72803F510"
+    "bytes": 423234,
+    "sha256": "F6D5C75E6F8C2BD1382230D83BAD302849C358B2EB922C2497AB175D59833754"
   },
   "sourceInputs": 2308,
   "requiredNativeTests": [
@@ -6054,7 +6054,7 @@
     {
       "test": "providers::openai_api::tests::mock_401_auth_fail_returns_descriptive_error",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     },
     {
@@ -9162,13 +9162,13 @@
     {
       "test": "providers::openai_api::tests::custom_openai_endpoint_has_a_distinct_unknown_pricing_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::only_the_exact_official_openai_origin_and_v1_path_keep_official_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     },
     {
@@ -17587,19 +17587,19 @@
     {
       "test": "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "AF1B4962734153670E7DC5AA34EA75B24848902AB618FB0B724C9E65C0F9335B",
+      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
       "junitClass": "neoth"
     }
   ],
@@ -83125,6 +83125,32 @@
       }
     ],
     "note": "Three portable regressions guard normal and streamed native tool signals without leaking arguments; preserve old API and all prior identities",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2574HostedFormat": {
+    "base": "325a213416ef8543b39cb3511b878cfe1b71457c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2574-provider-native-tools.json",
+        "bytes": 2363,
+        "sha256": "F01974971E92345C75AFE785858038261A1BE2FB4F61EF19C470F9D3B94AE560",
+        "blob": "cf4cacea5673ecbce380c069a6d3f647cc18f08e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2608189,
+        "sha256": "D1AE7971CA094FBA141BAE8A1F7C84456329415AA5A2CF2E6D79A3F9BA27E82D",
+        "blob": "7cdc372423b627c4a057fa23fb40af7d7a36c97f"
+      },
+      {
+        "path": "SRC/neothd/src/providers/openai_api.rs",
+        "bytes": 165892,
+        "sha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+        "blob": "b519f74c4b3e83d75fa78304ec03718c197f19a0"
+      }
+    ],
+    "note": "Original one-file format patch from38387571908; independent static review passed, no local compiler/formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1533,16 +1533,16 @@ fn reject_unsupported_native_tools(
     function_call: Option<&serde_json::Value>,
     adapter_name: &str,
 ) -> Result<()> {
-    let has_tool_payload = [tool_calls, function_call]
-        .into_iter()
-        .flatten()
-        .any(|value| match value {
-            serde_json::Value::Null => false,
-            serde_json::Value::Array(calls) => !calls.is_empty(),
-            _ => true,
-        });
-    if matches!(finish_reason, Some("tool_calls" | "function_call")) || has_tool_payload
-    {
+    let has_tool_payload =
+        [tool_calls, function_call]
+            .into_iter()
+            .flatten()
+            .any(|value| match value {
+                serde_json::Value::Null => false,
+                serde_json::Value::Array(calls) => !calls.is_empty(),
+                _ => true,
+            });
+    if matches!(finish_reason, Some("tool_calls" | "function_call")) || has_tool_payload {
         anyhow::bail!("{adapter_name} returned an unsupported native tool call");
     }
     Ok(())
@@ -2536,7 +2536,10 @@ mod tests {
         use futures_util::StreamExt;
 
         for choice in unsupported_native_tool_choices() {
-            for prefix in ["", "data: {\"choices\":[{\"delta\":{\"content\":\"partial-safe\"}}]}\n\n"] {
+            for prefix in [
+                "",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"partial-safe\"}}]}\n\n",
+            ] {
                 let sse_body = format!(
                     "{prefix}data: {}\n\ndata: [DONE]\n\n",
                     serde_json::json!({"choices": [{
@@ -2587,7 +2590,10 @@ mod tests {
                 ] {
                     assert!(!full_error.contains(private_value));
                 }
-                assert!(stream.next().await.is_none(), "no success terminal after failure");
+                assert!(
+                    stream.next().await.is_none(),
+                    "no success terminal after failure"
+                );
             }
         }
     }
@@ -2609,7 +2615,13 @@ mod tests {
             )
             .expect("empty fields without a tool finish remain compatible");
             assert_eq!(
-                message.content.unwrap().into_text_and_refusal("fixture").unwrap().text.as_deref(),
+                message
+                    .content
+                    .unwrap()
+                    .into_text_and_refusal("fixture")
+                    .unwrap()
+                    .text
+                    .as_deref(),
                 Some("ordinary text")
             );
 

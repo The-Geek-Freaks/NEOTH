@@ -25,5 +25,36 @@
   "localExecutableValidationRan": false,
   "runtimeAccepted": false,
   "primaryImported": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": 38387571908,
+    "producer": "325a213416ef8543b39cb3511b878cfe1b71457c",
+    "artifact": 11807042340,
+    "zipSha256": "F0084CFB9B72CD69B5E21C6F0118BDC0EA44FED9C81DA24BB673F0CA9B53A7FD",
+    "members": [
+      {
+        "path": "SHA256SUMS",
+        "bytes": 162,
+        "sha256": "3703CE48959D8BFAD092318A3807DC7346C766C1798C2923E17FB341F7AE9DF1"
+      },
+      {
+        "path": "rustfmt.patch",
+        "bytes": 2849,
+        "sha256": "46998744BEE14F2C67D6E2C8803A4F3D96609AEBC84BA1FBBFB0C9259790BB4D"
+      },
+      {
+        "path": "source-head.txt",
+        "bytes": 41,
+        "sha256": "977EABEF899A9391B5A7504A15EB94C30C747E978CCCFFF7BFEBBC2F20FCC0AA"
+      }
+    ],
+    "patchPath": "SRC/neothd/src/providers/openai_api.rs",
+    "verified": true
+  },
+  "independentStaticReview": {
+    "producer": "325a213416ef8543b39cb3511b878cfe1b71457c",
+    "reviewer": "/root/yaml_candidate_review",
+    "result": "No concrete Rust or behavioral blocker",
+    "runtimeProof": false
+  }
 }
