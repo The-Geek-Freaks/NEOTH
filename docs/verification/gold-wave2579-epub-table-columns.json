@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2579",
+  "adoption": "ADOPT-20261012-A03",
+  "base": "406bb1ec11c5c25984d40ba767a9e5fd3f6abf77",
+  "status": "ISOLATED_SOURCE_CANDIDATE_RUNTIME_PENDING",
+  "cause": "HTML_BREAKS preserved rows but no table header/data cell boundary, merging Alpha and 42 into Alpha42",
+  "repair": "Existing XHTML extraction maps closing td/th to tabs before stripping markup; existing row and whitespace behavior retained",
+  "regression": "media::document::tests::epub_preserves_table_header_and_data_cell_boundaries",
+  "regressionScope": [
+    "actual EPUB ZIP and DocumentExtractor surface",
+    "header and multiple data rows",
+    "inline markup, XML entity, Unicode",
+    "exact text, format and nontruncated metadata"
+  ],
+  "unchanged": [
+    "archive limits",
+    "output text cap and visible truncation marker",
+    "existing extractor and dependencies"
+  ],
+  "nonclaims": [
+    "full structured table representation",
+    "source ranges",
+    "empty/merged/nested cell layout fidelity",
+    "A03 completion",
+    "Gold acceptance"
+  ],
+  "localRuntimeExecuted": false,
+  "runtimeAccepted": false
+}

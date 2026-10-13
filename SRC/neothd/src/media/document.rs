@@ -565,6 +565,8 @@ const HTML_BREAKS: Breaks = &[
     ("<br>", "\n"),
     ("</div>", "\n"),
     ("</li>", "\n"),
+    ("</td>", "\t"),
+    ("</th>", "\t"),
     ("</tr>", "\n"),
     ("</h1>", "\n"),
     ("</h2>", "\n"),
@@ -1107,6 +1109,25 @@ mod tests {
         assert_eq!(out.text, "Chapter one\n\nChapter two");
     }
 
+    #[tokio::test]
+    async fn epub_preserves_table_header_and_data_cell_boundaries() {
+        let chapter = "<html><body><table>\
+            <tr><th>Item</th><th>Count</th></tr>\
+            <tr><td><em>Alpha</em> &amp; Ω</td><td>42</td></tr>\
+            <tr><td>Beta</td><td>7</td></tr>\
+            </table></body></html>";
+        let zip = make_zip(&[
+            ("mimetype", "application/epub+zip"),
+            ("OEBPS/table.xhtml", chapter),
+        ]);
+        let out = DocumentExtractor
+            .extract(&doc_asset(EPUB_MIME, zip))
+            .await
+            .unwrap();
+        assert_eq!(out.text, "Item\tCount\nAlpha & Ω\t42\nBeta\t7");
+        assert_eq!(out.metadata["format"], "epub");
+        assert_eq!(out.metadata["truncated"], false);
+    }
     // ── rtf ───────────────────────────────────────────────────────────
 
     #[test]

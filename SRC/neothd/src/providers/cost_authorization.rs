@@ -832,13 +832,18 @@ impl ProviderCallAuditTicket {
             ProviderCallAuditSink::Disabled => None,
         };
         let usage_event = self.usage_event(&terminal);
+        // Direct completions additionally require explicitly provider-reported
+        // measurements; legacy raw token fields cannot release their reserve.
         // Only a protocol-complete success is authoritative enough to release
         // the worst-case Council reservation down to reported actual cost.
         // Failure, cancellation, stream drop, and truncation may already have
         // incurred unreported provider-side work, so they retain the full
         // bound even when partial token counters were observed.
         let settlement_cost_usd = match &terminal {
-            ProviderCallTerminal::Success { .. } => usage_event.cost_usd,
+            ProviderCallTerminal::Success { settlement, .. } => match settlement {
+                ProviderCallSettlement::CompletionMeasurements(cost) => *cost,
+                ProviderCallSettlement::StreamCounters => usage_event.cost_usd,
+            },
             ProviderCallTerminal::Failure { .. } => None,
         };
         let mut payload = self.base_payload();
@@ -854,6 +859,7 @@ impl ProviderCallAuditTicket {
                 cache_creation_tokens,
                 cache_read_tokens,
                 terminal_kind,
+                settlement: _,
             } => {
                 payload.insert("ok".into(), true.into());
                 payload.insert("terminal_kind".into(), terminal_kind.into());
@@ -1068,6 +1074,31 @@ impl ProviderCallFailureKind {
     }
 }
 
+/// Direct completions use explicitly sourced measurements. Stream counters
+/// retain their existing contract until streams carry usage provenance.
+enum ProviderCallSettlement {
+    CompletionMeasurements(Option<f64>),
+    StreamCounters,
+}
+
+fn completion_settlement_cost(provider: &str, model: &str, completion: &Completion) -> Option<f64> {
+    let measurements = completion.usage_measurements.as_ref()?;
+    if measurements.provenance != super::ProviderUsageProvenance::ProviderReported {
+        return None;
+    }
+    // An unknown price remains unknown even when token counts are reported.
+    // The high fallback is an admission bound, never observed actual spend.
+    super::cost::lookup_price(provider, model)?;
+    Some(super::cost::actual_cost_usd_with_cache(
+        provider,
+        model,
+        measurements.input_tokens()?,
+        measurements.output_tokens()?,
+        measurements.cache_creation_tokens().unwrap_or_default(),
+        measurements.cache_read_tokens().unwrap_or_default(),
+    ))
+}
+
 enum ProviderCallTerminal {
     Success {
         response_hash_sha256: String,
@@ -1080,6 +1111,7 @@ enum ProviderCallTerminal {
         cache_creation_tokens: Option<u32>,
         cache_read_tokens: Option<u32>,
         terminal_kind: &'static str,
+        settlement: ProviderCallSettlement,
     },
     Failure {
         kind: ProviderCallFailureKind,
@@ -1522,6 +1554,11 @@ impl ProviderCallAuditGuard {
             cache_creation_tokens: completion.cache_creation_tokens,
             cache_read_tokens: completion.cache_read_tokens,
             terminal_kind: "complete",
+            settlement: ProviderCallSettlement::CompletionMeasurements(completion_settlement_cost(
+                ticket.provider,
+                &ticket.wire_model,
+                completion,
+            )),
         };
         self.finish(terminal).await?;
         if collect_babel_sample {
@@ -1587,6 +1624,7 @@ impl ProviderCallAuditGuard {
                                 cache_creation_tokens: audit.cache_creation_tokens,
                                 cache_read_tokens: audit.cache_read_tokens,
                                 terminal_kind: "stream_done",
+                                settlement: ProviderCallSettlement::StreamCounters,
                             };
                             audit.finish(terminal).await?;
                             if collect_babel_sample {
@@ -1673,6 +1711,7 @@ impl ProviderCallAuditGuard {
                                 cache_creation_tokens: audit.cache_creation_tokens,
                                 cache_read_tokens: audit.cache_read_tokens,
                                 terminal_kind: "stream_done",
+                                settlement: ProviderCallSettlement::StreamCounters,
                             };
                             audit.finish(terminal).await?;
                             if collect_babel_sample {
@@ -1783,6 +1822,7 @@ impl ProviderCallAuditGuard {
                                 cache_creation_tokens: audit.cache_creation_tokens,
                                 cache_read_tokens: audit.cache_read_tokens,
                                 terminal_kind: "stream_done",
+                                settlement: ProviderCallSettlement::StreamCounters,
                             };
                             audit.finish(terminal).await?;
                             if collect_babel_sample {
@@ -5898,9 +5938,197 @@ mod tests {
                 output_tokens: Some(50),
                 cache_creation_tokens: Some(20_000),
                 cache_read_tokens: Some(5_000),
+                usage_measurements: Some(
+                    crate::providers::CompletionUsageMeasurements::provider_reported(
+                        Some(100),
+                        Some(50),
+                        Some(20_000),
+                        Some(5_000),
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                ),
                 ..Completion::default()
             })
         }
+    }
+
+    struct UsageSettlementProvider {
+        calls: AtomicUsize,
+        measurements: Option<crate::providers::CompletionUsageMeasurements>,
+    }
+
+    #[async_trait]
+    impl Provider for UsageSettlementProvider {
+        fn name(&self) -> &'static str {
+            "anthropic_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("claude-sonnet-4-6")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "usage settlement fixture".into(),
+                model: "claude-sonnet-4-6".into(),
+                // Compatibility counters deliberately disagree with explicit
+                // measurements, so the ledger must not silently use these.
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                usage_measurements: self.measurements.clone(),
+                ..Completion::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn council_direct_settlement_retains_unverified_usage_reservation() {
+        use crate::providers::CompletionUsageMeasurements as Measurements;
+
+        let unverified = [
+            None,
+            Some(
+                Measurements::local_estimate(Some(100), Some(50), None, None, None, None).unwrap(),
+            ),
+            Some(Measurements::provider_reported(None, Some(50), None, None, None, None).unwrap()),
+            Some(Measurements::provider_reported(Some(100), None, None, None, None, None).unwrap()),
+            Some(Measurements::provider_reported(None, None, None, None, None, Some(0)).unwrap()),
+        ];
+        for measurements in unverified {
+            let home = tempfile::tempdir().unwrap();
+            let inner = UsageSettlementProvider {
+                calls: AtomicUsize::new(0),
+                measurements,
+            };
+            let req = Request {
+                model: Some("claude-sonnet-4-6".into()),
+                prompt: "bounded measured completion".into(),
+                ..Request::default()
+            };
+            let reserve = crate::providers::cost::authorization_bound_usd(
+                "anthropic_api",
+                "claude-sonnet-4-6",
+                &req,
+                crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+            )
+            .unwrap();
+            let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_council_daily_cap(home.path(), Some((reserve * 1.5) as f32))
+                .unwrap();
+            let provider = CostAuthorizingProvider::new(
+                &inner,
+                authorizer,
+                None,
+                "test.council_unverified_usage",
+            );
+            provider.complete(req.clone()).await.unwrap();
+            let error = provider.complete(req).await.unwrap_err();
+            assert!(error.to_string().contains("council daily USD cap exceeded"));
+            assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn council_direct_settlement_uses_reported_cache_measurements_for_next_admission() {
+        use crate::providers::CompletionUsageMeasurements as Measurements;
+
+        let actual = crate::providers::cost::actual_cost_usd_with_cache(
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            100,
+            50,
+            20_000,
+            5_000,
+        );
+        for (actual_headroom, allowed) in [(0.9, false), (1.1, true)] {
+            let home = tempfile::tempdir().unwrap();
+            let inner = UsageSettlementProvider {
+                calls: AtomicUsize::new(0),
+                measurements: Some(
+                    Measurements::provider_reported(
+                        Some(100),
+                        Some(50),
+                        Some(20_000),
+                        Some(5_000),
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                ),
+            };
+            let req = Request {
+                model: Some("claude-sonnet-4-6".into()),
+                prompt: "bounded cache settlement".into(),
+                system: Some("s".repeat(20_000)),
+                ..Request::default()
+            };
+            let reserve = crate::providers::cost::authorization_bound_usd(
+                "anthropic_api",
+                "claude-sonnet-4-6",
+                &req,
+                crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+            )
+            .unwrap();
+            assert!(actual * 1.1 < reserve);
+            let cap = reserve + actual * actual_headroom;
+            let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_council_daily_cap(home.path(), Some(cap as f32))
+                .unwrap();
+            let provider = CostAuthorizingProvider::new(
+                &inner,
+                authorizer,
+                None,
+                "test.council_reported_usage",
+            );
+            provider.complete(req.clone()).await.unwrap();
+            let next = provider.complete(req).await;
+            if allowed {
+                next.unwrap();
+                assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
+            } else {
+                assert!(
+                    next.unwrap_err()
+                        .to_string()
+                        .contains("council daily USD cap exceeded")
+                );
+                assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn direct_settlement_preserves_reported_zero_and_unknown_model_price() {
+        let completion = Completion {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            usage_measurements: Some(
+                crate::providers::CompletionUsageMeasurements::provider_reported(
+                    Some(0),
+                    Some(0),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ),
+            ..Completion::default()
+        };
+        assert_eq!(
+            completion_settlement_cost("anthropic_api", "claude-sonnet-4-6", &completion),
+            Some(0.0),
+        );
+        assert_eq!(
+            completion_settlement_cost("unpriced_fixture", "unpriced-fixture-model", &completion),
+            None,
+        );
     }
 
     struct ModelRestrictedProvider;

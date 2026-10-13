@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "wave": "W2577",
+  "base": "9693f89a0f7a5bc0b05d23a782a481aef629bef9",
+  "status": "ISOLATED_SOURCE_CANDIDATE",
+  "roadmapScope": "ADOPT-20261012-A02 direct completion usage provenance",
+  "problem": "Direct completion reserve settlement used compatibility token fields even when measurements were missing, local or partial.",
+  "change": "An explicit internal settlement variant requires complete provider-reported measurements and reviewed pricing for direct completion Council and cluster reserve release.",
+  "unchanged": [
+    "WAL intent/terminal order and raw usage projection",
+    "Single Council ledger and cluster claim owner",
+    "Existing stream counter settlement",
+    "Failure/cancellation reserve retention"
+  ],
+  "rawFixtureUpdate": "CachedAnthropicProvider now declares its report explicitly so the existing cache-pricing admission regression remains discriminating. A new raw-only case verifies full reservation retention.",
+  "cases": [
+    "council_direct_settlement_retains_unverified_usage_reservation",
+    "council_direct_settlement_uses_reported_cache_measurements_for_next_admission",
+    "direct_settlement_preserves_reported_zero_and_unknown_model_price"
+  ],
+  "portableRegistered": 2933,
+  "remaining": [
+    "Hosted format/static contracts",
+    "Actual new and existing cost-authorizer regressions",
+    "Cluster feature and streaming regressions",
+    "Full A02 cost category and pricing version attribution"
+  ],
+  "primaryImported": false,
+  "runtimeAccepted": false,
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}

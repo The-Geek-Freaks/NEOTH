@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T13:23:27.9764077Z",
-  "validationStatus": "W2578_FIXTURE_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-10-13T13:48:47.5916891Z",
+  "validationStatus": "W2580_COMBINED_CANDIDATE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4422,9 +4422,19 @@
       "sha256": "51FDE6749250B74A072A09CC017F259A7CD1178DB6CC924EE0352B86D2B6CB2C"
     },
     {
+      "path": "docs/verification/gold-wave2577-cost-provenance.json",
+      "bytes": 1592,
+      "sha256": "E112D0968D37D26C35224EF8BE91A63D1671BF2ADBFA9B9CF7E8A3A36A8F8A3B"
+    },
+    {
       "path": "docs/verification/gold-wave2578-gui-fixture-ordering.json",
       "bytes": 2252,
       "sha256": "D81692757F5720E89CAF258DE346B84DE9D881DF4C963877E2B123108201942A"
+    },
+    {
+      "path": "docs/verification/gold-wave2579-epub-table-columns.json",
+      "bytes": 1131,
+      "sha256": "B64CA92273800A3AF6470747C783D8A158639AB405C63597935AB6044CF25542"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5603,8 +5613,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2613643,
-      "sha256": "A66A8D3C2C6C3E990713511D42351A1EA6D720D6BB680FCA1457B0DE7DDC6687"
+      "bytes": 2616293,
+      "sha256": "A88E16698E55567BB679C03DD153C411AD39AC22CAD4D95681054F7A38346B8E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8287,6 +8297,11 @@
       "sha256": "7F0ED274CA70F68ED551EA65D9D74A2534F99622C42D1CAA81196A60EF840AB7"
     },
     {
+      "path": "SRC/neothd/src/media/document.rs",
+      "bytes": 46169,
+      "sha256": "5BCED46D144359E7C5DB8BCA1D1C52DCDC46333B8C210EFA108BE8A7B2D592BA"
+    },
+    {
       "path": "SRC/neothd/src/media/frame_decoder.rs",
       "bytes": 17136,
       "sha256": "A4D96D4BAF71D128EAF6857433E0A9C0A8339769A04EED8E4FAE8D84632243C6"
@@ -8768,8 +8783,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 361313,
-      "sha256": "7566170063982271BF96227FEE86BA410986A7AD3FB238D060D4D046619F5A8C"
+      "bytes": 370291,
+      "sha256": "CD21650DBF4A515D74DA58C2DC75A66F71526059BCE54F7BEE88639914C42667"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
