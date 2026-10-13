@@ -4595,7 +4595,9 @@ fn production() {
 
 #[test]
 fn reviewed_boundaries_do_not_grant_network_authority_to_new_descendants() {
-    assert!(is_allowed("src/daemon/email_ingest_cron/paperless_client.rs"));
+    assert!(is_allowed(
+        "src/daemon/email_ingest_cron/paperless_client.rs"
+    ));
     assert!(!is_allowed("src/daemon/email_ingest_cron/unreviewed.rs"));
     assert!(!is_allowed(
         "src/daemon/email_ingest_cron/paperless_client.rs_rogue.rs"

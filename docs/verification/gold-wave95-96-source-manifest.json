@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T06:46:28.5801160Z",
-  "validationStatus": "W2566 source repairs with 2921 unchanged portable registrations; hosted acceptance pending",
+  "capturedUtc": "2026-10-13T06:50:34.7271254Z",
+  "validationStatus": "W2566 verified hosted format applied; fresh Preflight and runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4319,7 +4319,7 @@
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
       "bytes": 9453,
-      "sha256": "B73BB939D24609F5D8F9969A938A416CB1116F7E94B0F13E18C954A0168E66E8"
+      "sha256": "9FDF0621F76A97C4161AF3AFAF9FF27AA1D4062E73DBA630DDA56D42D940B8C3"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4363,8 +4363,8 @@
     },
     {
       "path": "docs/verification/gold-wave2566-ci-repairs.json",
-      "bytes": 2844,
-      "sha256": "1DA987AF8EB894CB0841B37606107F91CFF9E652C8C8DE4D4008C477DFBB84C5"
+      "bytes": 3254,
+      "sha256": "655DA41555A755A73131D967161DAF3E2AC47BB386B46DE15BDC31C815F977B4"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5533,8 +5533,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2596370,
-      "sha256": "30A0A4B970B318716D1F6554168195D329F9CF26FD3730D0210C5337827E4D83"
+      "bytes": 2596832,
+      "sha256": "AC4B54B81E56EA10EDC5EF0D8D9D8DF7B17254651918516E9CB345F87F26B56E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9288,8 +9288,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 519560,
-      "sha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92"
+      "bytes": 519709,
+      "sha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",
@@ -9398,8 +9398,8 @@
     },
     {
       "path": "SRC/neothd/tests/no_outbound_network.rs",
-      "bytes": 193853,
-      "sha256": "12968FA1769368745A38A71398599D6EB173D8DB5A87AAEB809979DF493AD24F"
+      "bytes": 193867,
+      "sha256": "28E2F890B3F8113AE153BC415337EBE38351D050C604AEC6E7FD1212118CDD8C"
     },
     {
       "path": "SRC/neothd/tests/openclaw_pinned_inventory_contract.rs",

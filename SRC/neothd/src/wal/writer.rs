@@ -6413,7 +6413,11 @@ async fn run_writer(
             .await
             {
                 Ok(Ok(Lookup::CompletedExact(document_id))) => {
-                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Completed(document_id)));
+                    once.finish(Ok(
+                        crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Completed(
+                            document_id,
+                        ),
+                    ));
                     drop(authority);
                     continue;
                 }
@@ -6423,7 +6427,9 @@ async fn run_writer(
                     continue;
                 }
                 Ok(Ok(Lookup::Exact)) => {
-                    once.finish(Ok(crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Existing));
+                    once.finish(Ok(
+                        crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome::Existing,
+                    ));
                     drop(authority);
                     continue;
                 }

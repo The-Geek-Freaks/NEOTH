@@ -6,63 +6,63 @@
     {
       "test": "wal::writer::tests::paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_blocks_retry_after_cancellation_inside_transport",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_completion_requires_intent_and_remains_terminal_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_pending_bound_allows_completion_to_release_capacity",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_real_http_cancellation_reconciles_original_without_second_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -160,14 +160,14 @@
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": false,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "96AE64881ED8FED9788B367B679C01FD057037CDEAC2518251CC08F09D259D92",
+      "sourceSha256": "BE0BBF84D10A222D66EC7EF6FA919316708A8AD23EB45D447D6DA9A38684046C",
       "newCase": false,
       "requiresImapFeature": false
     },

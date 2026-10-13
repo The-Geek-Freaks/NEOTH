@@ -52,5 +52,17 @@
   "localExecutableValidationRan": false,
   "goldCheckboxesClosed": 0,
   "nativeDeviceAcceptance": false,
-  "releaseAcceptance": false
+  "releaseAcceptance": false,
+  "hostedFormatReceipt": {
+    "run": 38358954908,
+    "producer": "55425712367c3b91fe4b5480e71a483573137751",
+    "artifact": 11793708858,
+    "sha256": "d0a9b66ab918a507315c99fd7cf6305f346c395bec32f604dacf8a6998f363fe",
+    "paths": [
+      "SRC/neothd/src/wal/writer.rs",
+      "SRC/neothd/tests/no_outbound_network.rs"
+    ],
+    "apiAndAllMemberDigestsVerified": true,
+    "localFormatterRan": false
+  }
 }
