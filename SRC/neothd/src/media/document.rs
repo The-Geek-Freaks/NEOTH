@@ -1149,7 +1149,10 @@ mod tests {
             .extract(&doc_asset("application/rtf", rtf.as_bytes().to_vec()))
             .await
             .unwrap();
-        assert_eq!(out.text, "Before\nItem\tCount\nAlpha & Ω\t42\nBeta\t7\nAfter");
+        assert_eq!(
+            out.text,
+            "Before\nItem\tCount\nAlpha & Ω\t42\nBeta\t7\nAfter"
+        );
         assert_eq!(out.metadata["format"], "rtf");
         assert_eq!(out.metadata["truncated"], false);
     }

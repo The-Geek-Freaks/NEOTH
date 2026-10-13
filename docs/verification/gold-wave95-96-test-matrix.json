@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 425805,
-    "sha256": "4BB97B71C591E6EF3E0A05EFFDCD14AEF61601CC294F28CD56A0E67CCF3BA616"
+    "sha256": "18D8E060285CF81DA21062BC391464B0FD35FAB71B412740BBF5E2C13DC2ADF5"
   },
   "sourceInputs": 2322,
   "requiredNativeTests": [
@@ -17629,19 +17629,19 @@
     {
       "test": "media::document::tests::epub_preserves_table_header_and_data_cell_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "00D193E82F9DAD7FE2C8561F74CEDCAA6D020E7F5CF08375C529F492A502501A",
+      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "00D193E82F9DAD7FE2C8561F74CEDCAA6D020E7F5CF08375C529F492A502501A",
+      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "00D193E82F9DAD7FE2C8561F74CEDCAA6D020E7F5CF08375C529F492A502501A",
+      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
       "junitClass": "neoth"
     }
   ],
@@ -83572,7 +83572,7 @@
       "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
       "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated"
     ],
-    "sourceSha256": "00D193E82F9DAD7FE2C8561F74CEDCAA6D020E7F5CF08375C529F492A502501A",
+    "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
