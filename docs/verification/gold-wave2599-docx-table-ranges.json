@@ -34,7 +34,7 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "sha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F"
+      "sha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3"
     }
   ],
   "review": {
@@ -84,5 +84,17 @@
       "applied": true,
       "localFormatterExecuted": false
     }
+  },
+  "focusedBomRepair": {
+    "failedRun": "38773016856",
+    "failedProducer": "2771df2090cd073d9822aadd321a10f90b2d3987",
+    "job": "116553449051",
+    "diagnosis": "UTF-8 BOM excluded from reader positions caused source ranges three bytes before exact archive-member bytes",
+    "repair": "Explicitly parse a slice after one BOM, translate all event and limit offsets back to raw-member coordinates, reject a second BOM",
+    "regressions": "Existing exact table/cell/paragraph, malformed-tail and event-limit cases now cover BOM and no-BOM; existing malformed case rejects repeated BOM",
+    "reviewer": "/root/document_compile_repair",
+    "reviewMethod": "Prompt-only source and observed failure review",
+    "hostedRevalidation": "pending",
+    "localRuntimeExecuted": false
   }
 }

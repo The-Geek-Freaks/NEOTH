@@ -55,7 +55,7 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "sha256": "89E7E92D67AC4847A10D315598911524325E0D15567FF123CBFD5F51F0713D27"
+      "sha256": "1AC37A1B1DB8FE6CCA4EA2CC21AFD23386B8B1264145716DC69118BF34E5E0F2"
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
@@ -178,5 +178,13 @@
     "hostedRevalidation": "pending",
     "runtimeCasesExecutedInFailedRun": 0,
     "localRuntimeExecuted": false
+  },
+  "focusedFailureCollection": {
+    "change": "After one successful compile, collect exact discovery/runtime results for all33 selected identities before failing the final gate",
+    "finalGate": "visited=33 and failed_or_missing=0; original exact pass and one-test terminal checks remain required",
+    "failedVisitedMeaning": "Processed identities; missing discovery is counted as failure and never treated as execution",
+    "reviewer": "/root/interop_ci_budget_review",
+    "reviewMethod": "Prompt-only Bash pipefail/errexit and acceptance review",
+    "hostedRevalidation": "pending"
   }
 }

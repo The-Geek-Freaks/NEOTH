@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 429886,
-    "sha256": "0485EF1A7B5F75A727EA532E614C9A44BA59C80AFA5A3E0374F6D27EB073FF41"
+    "sha256": "AECC1A5E264647087C52C31065A0DF3839CFFBB8D46C9F508893AE3D3ACD4C9C"
   },
   "sourceInputs": 2344,
   "requiredNativeTests": [
@@ -17917,55 +17917,55 @@
     {
       "test": "media::docx_structure::tests::docx_ranges_bind_exact_member_bytes_and_preserve_cells_and_paragraphs",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_omit_merged_revised_and_offset_tables_whole",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_keep_omission_totals_after_diagnostic_cap",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_cap_actual_serialized_metadata_including_source_binding",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
       "junitClass": "neoth"
     },
     {
@@ -84855,6 +84855,44 @@
       }
     ],
     "note": "Imported exact083cb79f hosted rustfmt patch only; compiler-type fixes still require focused33 runtime proof.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2601BomAndCompleteFailureCollection": {
+    "base": "2771df2090cd073d9822aadd321a10f90b2d3987",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 42824,
+        "sha256": "1AC37A1B1DB8FE6CCA4EA2CC21AFD23386B8B1264145716DC69118BF34E5E0F2",
+        "blob": "464f4a66f528cd918289488f6bc63a1d052ce378"
+      },
+      {
+        "path": "docs/verification/gold-wave2599-docx-table-ranges.json",
+        "bytes": 5072,
+        "sha256": "B7BD9B99B5616537B4746E7803B8B6B51B1D0455B6D8A3EC94B64E5E16C276B5",
+        "blob": "e7850ce061f2ad130a10a53c7630ba08e7ce5e71"
+      },
+      {
+        "path": "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
+        "bytes": 9059,
+        "sha256": "D142D4DFC410BD4D71A4542CB7B7C520AD43D5263D8CFDBDD479219CB19D3AAB",
+        "blob": "8d2ba46683be73f3b15796a94f460c98ab4e64dd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2649345,
+        "sha256": "02C82D95E66F2147D42F5D3443D390845D0ABB5FFA01B1B400557EF13D89FAF1",
+        "blob": "12b98ab026711fb1e7c526cc37c50b3cf7d1b41b"
+      },
+      {
+        "path": "SRC/neothd/src/media/docx_structure.rs",
+        "bytes": 34834,
+        "sha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+        "blob": "c4852972ebecb47d0e83363a08f8416e4ce21890"
+      }
+    ],
+    "note": "Repair observed raw DOCX BOM offsets; retain all33 exact gates while collecting every runtime failure. Hosted validation pending; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

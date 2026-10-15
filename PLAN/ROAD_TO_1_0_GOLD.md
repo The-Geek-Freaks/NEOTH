@@ -19329,3 +19329,11 @@ The old main producer 0195f03613de812ac7a999fae415a212fdad07d6 full run 38742366
 The existing opt-in document regression lane now selects 33 exact identities: 28 new portable cases, four shared observed failures and this existing Unix-only case. Portable registrations remain 3006. Selection binds both portable and Linux-specific registrations, source digests and the four reports. The final producer still requires hosted focused, full platform, Mobile-Interop and native acceptance. No local executable validation and no Gold checkbox closure are claimed.
 
 Ergaenzung W2601 Kompilierungsabnahme: Der fruehe gehostete Core-Typecheck von Run38770620060 auf main4b0f994c beendete nach acht Diagnosen, bevor die33 Laufzeitfaelle gestartet wurden. Zwei XML-Zweige erhalten explizite Byte-Slice-Typen; der Schema-Vergleichstest erhaelt den konkreten verschachtelten Value-Vektortyp. Damit werden mehrdeutige AsRef-/Collect-Inferenzen behoben. Parserregeln, Entitaets-Whitelist, Whitespace-Pruefung, SQL und bestehende Assertions bleiben unveraendert. Die unabhaengige Rust-Quellpruefung bestaetigt den begrenzten Fix; der neue Producer verlangt erneut gehosteten Typecheck und Laufzeitnachweise. Keine lokale Runtime und kein Gold-Abschluss.
+
+### W2599/W2601 - beobachtete UTF-8-BOM-Korrektur und vollstaendige Vorabdiagnose (2026-10-15)
+
+Run 38773016856 auf 2771df20 bestand Core-Typecheck und Lib-Kompilierung sowie sechs exakte Faelle. Der siebte Fall fand um drei Bytes verschobene DOCX-Quellbereiche bei einem UTF-8-BOM; die restlichen 26 Faelle liefen wegen des bisherigen ersten Fehlerabbruchs nicht. Keine Abnahme des gesamten Batches.
+
+Der Parser erhaelt jetzt explizit den Inhalt nach genau einem BOM; alle Event-/Fehler-/Limit-Positionen werden auf die unveraenderten Originalbytes zurueckgerechnet. Member-Hash und Laenge bleiben roh. Die vorhandenen Regressionen pruefen BOM und Nicht-BOM, erhaltene Bereiche vor einem fehlerhaften Tail, Ereignisgrenzen und doppelte BOMs.
+
+Der bestehende 33-Faelle-Vorabtest sammelt nach erfolgreicher Kompilierung alle Fallbefunde und bleibt bei einem fehlenden/fehlgeschlagenen Fall rot. Dadurch werden weitere Fehler im selben Lauf sichtbar. Keine abgeschwaechte Akzeptanz, keine lokale Runtime, keine neuen Gold-Haken. Die erneute gehostete Pruefung ist offen.

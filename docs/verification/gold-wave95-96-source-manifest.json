@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T16:50:20.1244457Z",
+  "capturedUtc": "2026-10-15T17:16:34.3760656Z",
   "validationStatus": "W2599_W2602_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 42313,
-      "sha256": "89E7E92D67AC4847A10D315598911524325E0D15567FF123CBFD5F51F0713D27"
+      "bytes": 42824,
+      "sha256": "1AC37A1B1DB8FE6CCA4EA2CC21AFD23386B8B1264145716DC69118BF34E5E0F2"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4523,8 +4523,8 @@
     },
     {
       "path": "docs/verification/gold-wave2599-docx-table-ranges.json",
-      "bytes": 4286,
-      "sha256": "D2179E0BA20B13C96325BBDE2C71535680D052F9E8975D2D731C0F7EACDBAD82"
+      "bytes": 5072,
+      "sha256": "B7BD9B99B5616537B4746E7803B8B6B51B1D0455B6D8A3EC94B64E5E16C276B5"
     },
     {
       "path": "docs/verification/gold-wave2600-document-structure-persistence.json",
@@ -4533,8 +4533,8 @@
     },
     {
       "path": "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
-      "bytes": 8465,
-      "sha256": "0638CD3F7FD02C6B0F4FBEDDA15FD175514FFF7443F522F496B7A4C198B8CB52"
+      "bytes": 9059,
+      "sha256": "D142D4DFC410BD4D71A4542CB7B7C520AD43D5263D8CFDBDD479219CB19D3AAB"
     },
     {
       "path": "docs/verification/gold-wave2602-vault-note-recovery.json",
@@ -5718,8 +5718,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2648275,
-      "sha256": "98D780B5BB8CB049751D00F5B7A88C502CCADD1FE8B054354D0A6A52FD7BAC2C"
+      "bytes": 2649345,
+      "sha256": "02C82D95E66F2147D42F5D3443D390845D0ABB5FFA01B1B400557EF13D89FAF1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8433,8 +8433,8 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "bytes": 33420,
-      "sha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F"
+      "bytes": 34834,
+      "sha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3"
     },
     {
       "path": "SRC/neothd/src/media/frame_decoder.rs",

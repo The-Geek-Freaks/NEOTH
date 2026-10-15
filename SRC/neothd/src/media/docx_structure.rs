@@ -425,12 +425,20 @@ fn project_with_limits(
 }
 
 fn scan(xml: &str, state: &mut State) {
-    let mut reader = NsReader::from_str(xml);
+    // Reader positions exclude a leading UTF-8 BOM. Parse an explicit slice
+    // and translate every position back to the unchanged archive-member bytes.
+    let input = xml.strip_prefix('\u{feff}').unwrap_or(xml);
+    let origin = xml.len() - input.len();
+    if input.starts_with('\u{feff}') {
+        state.stop("text_outside_root", origin);
+        return;
+    }
+    let mut reader = NsReader::from_str(input);
     reader.config_mut().check_comments = true;
     reader.config_mut().check_end_names = true;
     reader.resolver_mut().set_max_declarations_per_element(64);
     for _ in 0..state.limits.events {
-        let start = reader.buffer_position() as usize;
+        let start = origin + reader.buffer_position() as usize;
         let (namespace, event) = match reader.read_resolved_event() {
             Ok(event) => event,
             Err(_) => {
@@ -443,7 +451,7 @@ fn scan(xml: &str, state: &mut State) {
             state.stop("unbound_namespace_prefix", start);
             return;
         }
-        let end = reader.buffer_position() as usize;
+        let end = origin + reader.buffer_position() as usize;
         let empty = matches!(&event, Event::Empty(_));
         let result = match event {
             Event::Start(element) | Event::Empty(element) => {
@@ -591,7 +599,7 @@ fn scan(xml: &str, state: &mut State) {
             return;
         }
     }
-    state.stop("event_limit", reader.buffer_position() as usize);
+    state.stop("event_limit", origin + reader.buffer_position() as usize);
 }
 
 #[cfg(test)]
@@ -634,32 +642,34 @@ mod tests {
         let p3 = paragraph("right");
         let row = format!("<w:tr><w:tc>{p1}{p2}</w:tc><w:tc>{p3}</w:tc></w:tr>");
         let tbl = format!("<w:tbl>{row}</w:tbl>");
-        let xml = format!(
-            "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n{}",
-            wrap(&tbl)
-        );
-        let out = view(&xml);
-        assert_eq!(out["complete"], true);
-        assert_eq!(out["scan_complete"], true);
-        assert_eq!(out["entry_bytes"], xml.len());
-        assert_eq!(
-            out["entry_sha256"],
-            hex::encode(Sha256::digest(xml.as_bytes()))
-        );
-        assert_eq!(out["source_document"]["sha256"], SOURCE);
-        assert_eq!(out["source_document"]["bytes"], 123);
-        let t = &out["tables"][0];
-        assert_eq!(slice(&xml, &t["source_range"]), tbl);
-        assert_eq!(slice(&xml, &t["rows"][0]["source_range"]), row);
-        let cells = t["rows"][0]["cells"].as_array().unwrap();
-        assert_eq!(cells.len(), 2);
-        assert_eq!(
-            slice(&xml, &cells[0]["source_range"]),
-            format!("<w:tc>{p1}{p2}</w:tc>")
-        );
-        assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][0]), p1);
-        assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][1]), p2);
-        assert_eq!(slice(&xml, &cells[1]["paragraph_source_ranges"][0]), p3);
+        for prefix in ["", "\u{feff}"] {
+            let xml = format!(
+                "{prefix}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n{}",
+                wrap(&tbl)
+            );
+            let out = view(&xml);
+            assert_eq!(out["complete"], true);
+            assert_eq!(out["scan_complete"], true);
+            assert_eq!(out["entry_bytes"], xml.len());
+            assert_eq!(
+                out["entry_sha256"],
+                hex::encode(Sha256::digest(xml.as_bytes()))
+            );
+            assert_eq!(out["source_document"]["sha256"], SOURCE);
+            assert_eq!(out["source_document"]["bytes"], 123);
+            let t = &out["tables"][0];
+            assert_eq!(slice(&xml, &t["source_range"]), tbl);
+            assert_eq!(slice(&xml, &t["rows"][0]["source_range"]), row);
+            let cells = t["rows"][0]["cells"].as_array().unwrap();
+            assert_eq!(cells.len(), 2);
+            assert_eq!(
+                slice(&xml, &cells[0]["source_range"]),
+                format!("<w:tc>{p1}{p2}</w:tc>")
+            );
+            assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][0]), p1);
+            assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][1]), p2);
+            assert_eq!(slice(&xml, &cells[1]["paragraph_source_ranges"][0]), p3);
+        }
     }
 
     #[test]
@@ -752,6 +762,7 @@ mod tests {
             format!("<?xml version=\"1.0\" encoding=\"UTF-16\"?>{}", wrap("")),
             "<w:document><w:body/></w:document>".into(),
             wrap("<w:tbl bad:attribute=\"x\"/>"),
+            format!("\u{feff}\u{feff}{}", wrap("")),
         ] {
             let out = view(&xml);
             assert_eq!(out["complete"], false, "{xml}");
@@ -802,17 +813,20 @@ mod tests {
         assert_eq!(opaque["complete"], true);
         assert_eq!(opaque["scan_complete"], true);
         let malformed = "<w:tbl><w:tr></w:tbl>";
-        let xml = wrap(&format!("{good}{malformed}{good}"));
-        let out = view(&xml);
-        assert_eq!(out["complete"], false);
-        assert_eq!(out["scan_complete"], false);
-        assert_eq!(out["tables"].as_array().unwrap().len(), 1);
-        assert_eq!(slice(&xml, &out["tables"][0]["source_range"]), good);
-        assert_eq!(out["omissions"][0]["scope"], "entry_tail");
-        assert_eq!(
-            out["omissions"][0]["source_range"][0],
-            xml.find(malformed).unwrap()
-        );
+        for prefix in ["", "\u{feff}"] {
+            let xml = format!("{prefix}{}", wrap(&format!("{good}{malformed}{good}")));
+            let out = view(&xml);
+            assert_eq!(out["complete"], false);
+            assert_eq!(out["scan_complete"], false);
+            assert_eq!(out["tables"].as_array().unwrap().len(), 1);
+            assert_eq!(slice(&xml, &out["tables"][0]["source_range"]), good);
+            assert_eq!(out["omissions"][0]["scope"], "entry_tail");
+            assert_eq!(
+                out["omissions"][0]["source_range"][0],
+                xml.find(malformed).unwrap()
+            );
+            assert_eq!(out["omissions"][0]["source_range"][1], xml.len());
+        }
     }
 
     #[test]
@@ -843,6 +857,24 @@ mod tests {
             assert_eq!(out["complete"], false);
             assert!(out["tables"].as_array().unwrap().is_empty());
             assert!(!out["omissions"].as_array().unwrap().is_empty());
+        }
+        for prefix in ["", "\u{feff}"] {
+            let xml = format!("{prefix}{xml}");
+            let out = project_with_limits(
+                &xml,
+                SOURCE,
+                123,
+                Limits {
+                    events: 1,
+                    ..LIMITS
+                },
+            );
+            assert_eq!(out["omissions"][0]["reason"], "event_limit");
+            assert_eq!(
+                out["omissions"][0]["source_range"][0],
+                xml.find("<w:body>").unwrap()
+            );
+            assert_eq!(out["omissions"][0]["source_range"][1], xml.len());
         }
     }
 

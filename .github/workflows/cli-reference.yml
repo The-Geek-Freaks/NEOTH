@@ -214,18 +214,31 @@ jobs:
           PY
           cargo test -p neoth --lib --locked --no-run 2>&1 | tee "$proof_dir/compile.log"
           visited=0
+          failed_or_missing=0
           while IFS= read -r identity; do
             test -n "$identity"
             number=$((visited + 1))
-            cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$proof_dir/$number.discovery.log"
-            test "$(grep -Fxc "$identity: test" "$proof_dir/$number.discovery.log")" -eq 1
-            cargo test -p neoth --lib --locked "$identity" -- --exact --test-threads=1 2>&1 | tee "$proof_dir/$number.test.log"
-            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$number.test.log")" -eq 1
-            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$number.test.log")" -eq 1
             visited=$number
+            if ! cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$proof_dir/$number.discovery.log"; then
+              failed_or_missing=$((failed_or_missing + 1))
+              continue
+            fi
+            if ! test "$(grep -Fxc "$identity: test" "$proof_dir/$number.discovery.log")" -eq 1; then
+              failed_or_missing=$((failed_or_missing + 1))
+              continue
+            fi
+            if cargo test -p neoth --lib --locked "$identity" -- --exact --test-threads=1 2>&1 | tee "$proof_dir/$number.test.log"; then
+              if ! test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$number.test.log")" -eq 1 ||
+                 ! test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$number.test.log")" -eq 1; then
+                failed_or_missing=$((failed_or_missing + 1))
+              fi
+            else
+              failed_or_missing=$((failed_or_missing + 1))
+            fi
           done < "$proof_dir/fixture-names.txt"
+          printf 'selected=33\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
           test "$visited" -eq 33
-          printf 'selected=33\nvisited=%s\nfailed_or_missing=0\n' "$visited" > "$proof_dir/final-counts.txt"
+          test "$failed_or_missing" -eq 0
 
       - name: Upload document regression evidence
         if: ${{ always() && inputs.document_regressions }}
