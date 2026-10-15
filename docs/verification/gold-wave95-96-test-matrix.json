@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 426372,
-    "sha256": "102E2DCFF0240373CF73C66B823ED33A54E8213079AF7CBADC750E6A61262B05"
+    "sha256": "4221455F02F1D4416F2A8B3ACF3E67CFFA91B3E6AB22FDB75E33E9B0A645046C"
   },
   "sourceInputs": 2325,
   "requiredNativeTests": [
@@ -83749,6 +83749,20 @@
       }
     ],
     "note": "Hosted Preflight38720718462 identified only wrapper line length; bind local breaker key to retain existing body layout without local rustfmt.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2588Selection": {
+    "base": "53cb0e5c21ae8d1c05e1c0c71d5089c91e1bf846",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 11554,
+        "sha256": "E9B45B4D4B97FD868304B74B80C2FB77E3019636D77420989256772B7EB7F92C",
+        "blob": "9eccb257164ceacb733ecd405761f12119ab730d"
+      }
+    ],
+    "note": "Synchronize exact selection contract from 117 to 118 core cases and assert the new breaker regression identity. Hosted38720981603 formatting passed; stale count failed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

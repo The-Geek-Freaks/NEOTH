@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T10:29:46.1313525Z",
+  "capturedUtc": "2026-10-15T10:32:06.9384654Z",
   "validationStatus": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 11356,
-      "sha256": "85A456528BB0452E6671E38C06C5F9E8C7971EEA6E07C325BFB85F5434C4B044"
+      "bytes": 11554,
+      "sha256": "E9B45B4D4B97FD868304B74B80C2FB77E3019636D77420989256772B7EB7F92C"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
