@@ -137,19 +137,32 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     // it must never recreate one after catalogue/budget work has started.
     let cli_resolver =
         compact_function_region(CHAT, "resolve_chat_turn_route", "dispatch_provider");
-    let cli_admission = cli_resolver
+    // Streaming returns before Council admission. Each exclusive branch owns
+    // one autoroute decision, rather than one textual call in the whole resolver.
+    let (streaming, ordinary) = cli_resolver
+        .split_once("letcouncil_force=")
+        .expect("streaming early return precedes ordinary Council policy");
+    assert!(streaming.contains("ifargs.stream&&!loop_trigger.is_active(){"));
+    assert!(streaming.contains("returnTurnRouteResolution{route:select_stream_dispatch_route("));
+    assert!(streaming.contains("streaming_mode_disables_council"));
+    assert_eq!(streaming.matches("autoroute_decision(").count(), 1);
+    assert_eq!(streaming.matches("select_stream_dispatch_route(").count(), 1);
+    assert!(!streaming.contains("select_turn_dispatch_route("));
+    assert!(!streaming.contains("try_admit_convene("));
+    assert!(!ordinary.contains("select_stream_dispatch_route("));
+    let cli_admission = ordinary
         .find("try_admit_convene(")
         .expect("CLI Council admission");
-    let cli_autoroute = cli_resolver
+    let cli_autoroute = ordinary
         .find("autoroute_decision(")
         .expect("CLI MCP autoroute resolution");
-    let cli_selection = cli_resolver
+    let cli_selection = ordinary
         .find("select_turn_dispatch_route(")
         .expect("CLI typed route selection");
-    assert_eq!(cli_resolver.matches("try_admit_convene(").count(), 1);
-    assert_eq!(cli_resolver.matches("autoroute_decision(").count(), 1);
+    assert_eq!(ordinary.matches("try_admit_convene(").count(), 1);
+    assert_eq!(ordinary.matches("autoroute_decision(").count(), 1);
     assert_eq!(
-        cli_resolver.matches("select_turn_dispatch_route(").count(),
+        ordinary.matches("select_turn_dispatch_route(").count(),
         1,
         "CLI must select one immutable route after its policy decisions"
     );
@@ -168,6 +181,7 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     assert!(chat_dispatch.contains("min_rounds:loop_trigger.minimum_rounds()"));
     assert!(!chat_dispatch.contains("autoroute_decision("));
     assert!(!chat_dispatch.contains("try_admit_convene("));
+    assert!(!chat_dispatch.contains("select_stream_dispatch_route("));
     assert!(
         !chat_dispatch.contains("select_turn_dispatch_route("),
         "CLI dispatch must not replace the route already selected by its resolver"

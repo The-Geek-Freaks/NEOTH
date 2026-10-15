@@ -342,7 +342,38 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "W848: B7 document-claim applied-once ledger",
         run: migration_v45_to_v46,
     },
+    Migration {
+        from: 46,
+        to: 47,
+        description: "A03: retain document extraction provenance in ctx sources",
+        run: migration_v46_to_v47,
+    },
+    Migration {
+        from: 47,
+        to: 48,
+        description: "A03: rebuild fuzzy vocabulary from canonical ctx chunks",
+        run: migration_v47_to_v48,
+    },
 ];
+
+pub(crate) fn migration_v47_to_v48(conn: &Connection) -> Result<()> {
+    crate::memory::ctx::rebuild_vocabulary(conn)
+        .context("v47→v48: rebuild fuzzy vocabulary from canonical ctx chunks")
+}
+
+pub(crate) fn migration_v46_to_v47(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE sources ADD COLUMN document_provenance_schema TEXT;
+         ALTER TABLE sources ADD COLUMN document_parser_version TEXT;
+         ALTER TABLE sources ADD COLUMN document_source_sha256 TEXT;
+         ALTER TABLE sources ADD COLUMN document_source_bytes INTEGER;
+         ALTER TABLE sources ADD COLUMN document_text_sha256 TEXT;
+         ALTER TABLE sources ADD COLUMN document_text_bytes INTEGER;
+         ALTER TABLE sources ADD COLUMN document_text_encoding TEXT;
+         ALTER TABLE sources ADD COLUMN document_text_truncated INTEGER;",
+    )
+    .context("v46→v47: retain document extraction provenance")
+}
 
 pub(crate) fn migration_v45_to_v46(conn: &Connection) -> Result<()> {
     conn.execute_batch(crate::memory::document_claims::DOCUMENT_CLAIM_SCHEMA_SQL)
@@ -2347,6 +2378,174 @@ mod tests {
         conn
     }
 
+    fn legacy_document_sources() -> Connection {
+        let conn = open_with_meta(46);
+        conn.execute_batch(
+            "CREATE TABLE sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL UNIQUE,
+                content_hash TEXT, file_path TEXT, content_type TEXT, source_category TEXT,
+                chunk_count INTEGER NOT NULL DEFAULT 0, indexed_ts INTEGER NOT NULL
+             );
+             INSERT INTO sources
+                 (label, content_hash, file_path, content_type, source_category, chunk_count, indexed_ts)
+             VALUES ('legacy', 'retained-hash', '/legacy.txt', 'prose', 'docs', 7, 1700000000);",
+        ).unwrap();
+        conn
+    }
+
+
+    fn legacy_vocabulary() -> Connection {
+        let conn = open_with_meta(47);
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE chunks USING fts5(
+                title, content, source_id UNINDEXED, content_type UNINDEXED,
+                source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                ts_ns UNINDEXED, tokenize='porter unicode61'
+             );
+             CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+                title, content, source_id UNINDEXED, content_type UNINDEXED,
+                source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                ts_ns UNINDEXED, tokenize='trigram'
+             );
+             CREATE TABLE vocabulary (term TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1);
+             INSERT INTO vocabulary VALUES ('stale', 999), ('shared', 99);
+             INSERT INTO chunks (content, source_id) VALUES ('Shared shared amber ü Ü 猫 ab', 1);
+             INSERT INTO chunks (content, source_id) VALUES ('shared cobalt', 2);
+             INSERT INTO chunks_trigram (content, source_id) VALUES ('mirroronly', 1);",
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO chunks (content, source_id) VALUES (?1, 3)",
+            [format!("{} {}", "x".repeat(32), "y".repeat(33))],
+        ).unwrap();
+        conn
+    }
+
+    fn vocabulary_rows(conn: &Connection) -> Vec<(String, i64)> {
+        conn.prepare("SELECT term, frequency FROM vocabulary ORDER BY term")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn v47_to_v48_rebuilds_only_canonical_per_chunk_vocabulary() {
+        let mut conn = legacy_vocabulary();
+        assert_eq!(migrate(&mut conn, 47, 48).unwrap(), 48);
+        assert_eq!(current_version(&conn).unwrap(), 48);
+        assert_eq!(vocabulary_rows(&conn), vec![
+            ("amber".into(), 1), ("cobalt".into(), 1), ("shared".into(), 2),
+            ("x".repeat(32), 1), ("猫".into(), 1),
+        ]);
+        let before = vocabulary_rows(&conn);
+        assert_eq!(migrate(&mut conn, 48, 48).unwrap(), 48);
+        assert_eq!(vocabulary_rows(&conn), before);
+        let mirror: String = conn.query_row("SELECT content FROM chunks_trigram", [], |row| row.get(0)).unwrap();
+        assert_eq!(mirror, "mirroronly");
+    }
+
+    #[test]
+    fn v47_to_v48_insert_failure_rolls_back_vocabulary_and_version_then_retries() {
+        let mut conn = legacy_vocabulary();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_rebuild BEFORE INSERT ON vocabulary WHEN NEW.term='cobalt'
+             BEGIN SELECT RAISE(ABORT, 'injected rebuild failure'); END;",
+        ).unwrap();
+        let before = vocabulary_rows(&conn);
+        assert!(migrate(&mut conn, 47, 48).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 47);
+        assert_eq!(vocabulary_rows(&conn), before);
+        conn.execute_batch("DROP TRIGGER fail_rebuild;").unwrap();
+        assert_eq!(migrate(&mut conn, 47, 48).unwrap(), 48);
+        assert_eq!(current_version(&conn).unwrap(), 48);
+        assert!(!vocabulary_rows(&conn).iter().any(|(term, _)| term == "stale"));
+    }
+
+    #[test]
+    fn v47_to_v48_requires_existing_tables_and_transaction() {
+        for missing in ["chunks", "vocabulary"] {
+            let mut conn = legacy_vocabulary();
+            conn.execute_batch(&format!("DROP TABLE {missing};")).unwrap();
+            assert!(migrate(&mut conn, 47, 48).is_err());
+            assert_eq!(current_version(&conn).unwrap(), 47);
+            if missing == "chunks" {
+                assert_eq!(vocabulary_rows(&conn), vec![("shared".into(), 99), ("stale".into(), 999)]);
+            }
+        }
+        let conn = legacy_vocabulary();
+        let before = vocabulary_rows(&conn);
+        assert!(migration_v47_to_v48(&conn).is_err());
+        assert_eq!(vocabulary_rows(&conn), before);
+        assert_eq!(current_version(&conn).unwrap(), 47);
+    }
+
+    #[test]
+    fn v46_to_v47_preserves_legacy_source_and_leaves_provenance_unbound() {
+        let mut conn = legacy_document_sources();
+        assert_eq!(migrate(&mut conn, 46, 47).unwrap(), 47);
+        assert_eq!(current_version(&conn).unwrap(), 47);
+        let retained: (i64, String, String, String, String, String, i64, i64) = conn.query_row(
+            "SELECT id, label, content_hash, file_path, content_type, source_category,
+                chunk_count, indexed_ts FROM sources", [], |row| Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                    row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                )),
+        ).unwrap();
+        assert_eq!(retained, (
+            1, "legacy".into(), "retained-hash".into(), "/legacy.txt".into(),
+            "prose".into(), "docs".into(), 7, 1700000000,
+        ));
+        let unbound: bool = conn.query_row(
+            "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
+                 AND document_source_sha256 IS NULL AND document_source_bytes IS NULL
+                 AND document_text_sha256 IS NULL AND document_text_bytes IS NULL
+                 AND document_text_encoding IS NULL AND document_text_truncated IS NULL
+             FROM sources", [], |row| row.get(0),
+        ).unwrap();
+        assert!(unbound);
+        assert_eq!(migrate(&mut conn, 47, 47).unwrap(), 47);
+    }
+
+    #[test]
+    fn v46_to_v47_rolls_back_partial_alters_and_retains_previous_version() {
+        let mut conn = legacy_document_sources();
+        conn.execute_batch("ALTER TABLE sources ADD COLUMN document_parser_version TEXT;").unwrap();
+        assert!(migrate(&mut conn, 46, 47).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 46);
+        assert!(conn.prepare("SELECT document_parser_version FROM sources").is_ok());
+        assert!(conn.prepare("SELECT document_provenance_schema FROM sources").is_err());
+        assert!(conn.prepare("SELECT document_source_sha256 FROM sources").is_err());
+        let retained: (i64, String) = conn.query_row(
+            "SELECT id, content_hash FROM sources WHERE label = 'legacy'", [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(retained, (1, "retained-hash".into()));
+    }
+
+    #[test]
+    fn v46_to_v47_requires_the_existing_sources_table() {
+        let mut conn = open_with_meta(46);
+        assert!(migrate(&mut conn, 46, 47).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 46);
+        assert!(conn.prepare("SELECT label FROM sources").is_err());
+    }
+
+    #[test]
+    fn v47_fresh_and_migrated_sources_have_the_same_column_contract() {
+        fn shape(conn: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
+            let mut stmt = conn.prepare("PRAGMA table_info(sources)").unwrap();
+            let rows = stmt.query_map([], |row| {
+                (0..6).map(|column| row.get(column)).collect()
+            }).unwrap();
+            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let mut migrated = legacy_document_sources();
+        migrate(&mut migrated, 46, 47).unwrap();
+        assert_eq!(shape(&fresh), shape(&migrated));
+    }
     fn open_v36_transcript_mining_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -2907,6 +3106,28 @@ mod tests {
         )
         .unwrap();
 
+        // sources has existed since v3; retain that predecessor shape so the
+        // document provenance migration must ALTER, not invent, the table.
+        conn.execute_batch(
+            "CREATE TABLE sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL UNIQUE,
+                content_hash TEXT, file_path TEXT, content_type TEXT,
+                source_category TEXT, chunk_count INTEGER NOT NULL DEFAULT 0,
+                indexed_ts INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE chunks USING fts5(
+                title, content, source_id UNINDEXED, content_type UNINDEXED,
+                source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                ts_ns UNINDEXED, tokenize='porter unicode61'
+             );",
+        ).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vocabulary (term TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1);",
+        ).unwrap();
         let target: i64 = MIGRATIONS.iter().map(|m| m.to).max().unwrap_or(3);
         // This base projection predates the migration registry. Include it
         // without the new session column so v40 exercises the real ALTER.
@@ -3104,6 +3325,13 @@ mod tests {
             "#,
         )
         .unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE chunks USING fts5(
+                title, content, source_id UNINDEXED, content_type UNINDEXED,
+                source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                ts_ns UNINDEXED, tokenize='porter unicode61'
+             );",
+        ).unwrap();
         conn.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', '3')",
             [],

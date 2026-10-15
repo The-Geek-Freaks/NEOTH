@@ -1,0 +1,46 @@
+{
+  "schema": "neoth.gold-wave2597.v1",
+  "date": "2026-10-15",
+  "base": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+  "status": "HOSTED_FAILURE_DIAGNOSED_STATIC_REPAIR_PENDING",
+  "failure": {
+    "run": "38726224590",
+    "producer": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+    "attempt": 1,
+    "job": "116392645426",
+    "platform": "macos-14",
+    "executed": 19460,
+    "passed": 19458,
+    "failed": 2
+  },
+  "change": "Add the reviewed already-authorized companion stream forwarding callsite to the exact cost inventory. Assert separate single autoroute decisions in mutually exclusive streaming/ordinary resolver branches and prohibit downstream re-selection.",
+  "tests": [
+    "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed",
+    "dispatch_consumes_the_preselected_route_without_recomputing_admission"
+  ],
+  "callsite": {
+    "source": "SRC/neothd/src/cli/companion_mcp_stream.rs",
+    "count": 1,
+    "hostedDigest": "8f26000d2d8c17056f4be88238024250cf9a8133f13c0756ddebc95602c2deda",
+    "receiver": "CostAuthorizingProvider created by chat dispatch; no factory/fallback/retry in adapter"
+  },
+  "review": {
+    "reviewer": "/root/streamed_mcp_review",
+    "method": "Prompt-only source excerpts and exact implemented assertion diff",
+    "result": "No concrete defect; keep producer-bound hosted execution pending"
+  },
+  "productionCodeChanged": false,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "worktreeSources": [
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sha256": "EF22AEBABCEE3148959FCCBFAF0F1AC3E42E0CEA0857B77BB67AF4A14370487C"
+    },
+    {
+      "path": "SRC/neothd/tests/mcp_catalogue_hotpath_source_gate.rs",
+      "sha256": "F18DE567AC0283DCB7EEE01BDE802CB88EA7087F5F021E56C7450D346D52E633"
+    }
+  ]
+}

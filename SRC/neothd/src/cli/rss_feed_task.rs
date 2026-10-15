@@ -246,6 +246,7 @@ pub async fn run_one_pass_against(
                 content_type: "prose".to_string(),
                 source_category: Some(format!("rss:{}", entry.label)),
                 event_id: None,
+                document_provenance: None,
             };
             match ctx::index_document(&mut conn, &req) {
                 Ok(_) => {

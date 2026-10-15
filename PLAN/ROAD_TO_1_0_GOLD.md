@@ -19256,3 +19256,34 @@ This candidate also carries the exact reviewed/formatted W2587 document provenan
 The existing ingest report now adds a closed `index_outcome` while preserving its legacy `chunk_count`: indexed with the committed chunk count, skipped because explicitly disabled/empty, or failed during store opening/index writing. Extraction reports remain available after the existing nonfatal index errors; automation can now identify those failures without inspecting logs. Table output explains the outcome and marks capped extraction as partial. Index success refers only to returned extracted text, not the complete source or persisted provenance.
 
 Four actual index-helper regressions cover skipped paths without store access, committed content after reopening the store, a real store-open failure, and an injected failed replacement retaining the prior source id/content in both FTS projections. Existing source/FTS transaction and database schema remain the owners. The Graphify ingest-to-memory edge guided direct transaction inspection. Rust execution and overall A03/Gold acceptance remain pending; no local runtime or closed Gold checkbox. Candidate stays outside frozen interop main.
+
+### W2594 — Dokumenten-Provenienz im bestehenden Suchindex erhalten (2026-10-15)
+
+Vorbereitetes A03-Teilpaket: Der bestehende sources-Eintrag erhaelt acht nullable Herkunftsfelder. Schema46→47 belaesst historische Zeilen ungebunden. Der Index prueft den SHA-256 und die UTF-8-Bytelaenge des gesamten Extraktionstextes vor einer Ersetzung; Herkunft, Quellenzeile und beide FTS-Projektionen bleiben in derselben Transaktion. JSON-/JSONL-Suchtreffer geben optionale source_document_provenance fuer alle drei Suchverfahren aus. Ungueltige Metadaten liefern invalid_provenance; eine abgebrochene Ersetzung erhaelt den bisherigen Eintrag. Gleichheit der Bytes verschmilzt keine unterschiedlichen Dokumentlabels und belegt keine logische Identitaet oder Rename-/Move-Lineage.
+
+14 neue gezielte Regressionen decken den Metadatenvertrag, die reale Extractor→Index→Neustart-Schnittstelle, alle Such-Fallbacks, Rollback, einen migrierten Store samt erhaltenen Legacy-Zeilen sowie Schema-Konsistenz ab. Hinzu kommt die bereits separat statisch gepruefte W2592-Regression: Quellen-Purge meldet den tatsaechlich committed entfernten Datensatz, fehlende/wiederholt entfernte Labels melden0. Unabhaengige Prompt-Codepruefung abgeschlossen; keine lokale Runtime. Der gepruefte Code ist als uncommittete Aenderung direkt im main-Arbeitsbaum uebernommen; der laufende CI-Commit 4c91723d bleibt unveraendert. Commit/Publikation, gehostete Formatierung und Laufzeitbelege dieses Pakets sind noch offen. Strukturierte Bloecke/Quellranges, logische Identitaet/Revisionen und A03-Gesamtabnahme bleiben offen. Kein Gold-Haken geschlossen.
+
+### W2595 — Bestehende terminale Dokumentenentscheidungen wirksam absichern (2026-10-15)
+
+Die direkte Quellpruefung entlang der Graphify-Navigation bestaetigt den bereits vorhandenen Owner: Pending wird unter der Vorschlags-Mutationssperre dauerhaft Approved oder Rejected; gleiche Entscheidungen sind idempotent, Gegenentscheidungen werden abgewiesen. Ein weiterer Abbruch-Owner oder neuer Befehl ist dafuer nicht erforderlich.
+
+Die bisherige Dokumenten-Reject-Regression verwendet jetzt einen gueltigen kanonischen Memory-Entwurf. Sie prueft eine wiederholte Ablehnung und den anschliessend verweigerten Accept, unveraenderte Vorschlagsbytes sowie ausbleibende DB-/Skill-/WAL-Effekte. Eine neue Regression wendet den echten Memory-Pfad an und prueft die verweigerte Ablehnung nach erfolgreichem Audit sowie nach einem Auditfehler hinter dem bereits committed DB-Effekt. Alle Fakt-/Ledger-Spalten, Vorschlagsbytes und bis dahin vorhandenen Auditbelege muessen erhalten bleiben. Ein expliziter erneuter Accept darf genau einen neuen gebundenen Abgleichbeleg mit applied_count=0 und replayed_count=1 erzeugen; die bestehenden Fakten bleiben unveraendert.
+
+Dies qualifiziert bestehendes Verhalten und fuehrt keine neue Abbruch- oder Loeschfunktion ein. Statische unabhaengige Pruefung abgeschlossen; gehostete Formatierung und Laufzeitbelege stehen aus. Zusammen mit W2594 sind 16 neue portable Identitaeten registriert (2970 gesamt), eine vorhandene Regression wurde verstaerkt. Die laufende CI auf 4c91723d prueft diese uncommitteten Aenderungen noch nicht. Extraktor-Struktur/Quellranges, logische Dokumentidentitaet und abgeleitete Loesch-/Retry-Belege bleiben offen. Kein A03- oder Gold-Haken geschlossen.
+
+### W2596 — A03: derived fuzzy vocabulary follows source lifecycle (2026-10-15)
+
+- Fixed a concrete stale-derived-state gap: source replacement and source/category purge previously retained fuzzy vocabulary terms and inflated frequencies on repeated indexing.
+- Canonical chunks now own per-chunk vocabulary contributions. Deletion subtracts affected terms before removing either FTS projection, within the existing transaction; invalid or missing counts abort and roll back.
+- Schema 47→48 rebuilds historical vocabulary once from canonical chunks, preserving tokenization and excluding the trigram mirror. No second table or identity/lifecycle owner.
+- Eight new regression cases cover historical repair, byte/Unicode boundaries, repeated replacement, source/category/all purge, invalid/overflow counts, late failure rollback and migration rollback/retry.
+- Static review accepted; hosted format/compile/runtime remain pending. No A03 or Gold checkbox is closed by this entry.
+- Evidence: docs/verification/gold-wave2596-derived-vocabulary.json.
+
+### W2597 — qualify companion streaming source guards (2026-10-15)
+
+- Full CI run 38726224590, producer 4c91723d1a6f53afaf4ca50f72cb308a70e744f1: macOS ran 19,460 tests, with 19,458 passing and two source-guard failures; 35 skipped. Windows remains separately pending at preparation.
+- Reviewed the actual companion stream receiver: chat dispatch supplies its existing CostAuthorizingProvider. Added the exact hosted-observed raw callsite signature without changing the production provider path.
+- Replaced the obsolete global autoroute-count assumption with exact per-branch checks for streaming early return and ordinary Council/MCP selection; downstream dispatch still cannot re-resolve admission.
+- Independently retained 17/17 prior-batch exact macOS cases from original artifact 11974334187 with source/run/digest binding. This partial result is not a full-CI pass.
+- Static repair reviewed; next-producer hosted verification remains pending. Evidence: docs/verification/gold-wave2597-streaming-source-guards.json.

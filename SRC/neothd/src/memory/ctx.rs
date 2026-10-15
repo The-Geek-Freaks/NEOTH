@@ -12,9 +12,11 @@
 //! Public surface mirrors the ctx-mode tool names so future migration to a
 //! WASM-hosted MCP plugin is mechanical.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+
+use super::document_provenance::DocumentProvenance;
 
 /// Max bytes per chunk. Synthesis tech-pin: 4 KiB. Larger sections are
 /// split at paragraph boundaries before that cap.
@@ -36,6 +38,9 @@ pub struct IndexRequest {
     /// Optional WAL event id this document corresponds to.
     #[serde(default)]
     pub event_id: Option<String>,
+    /// Describes the complete extracted source text, not an individual chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_provenance: Option<DocumentProvenance>,
 }
 
 fn default_content_type() -> String {
@@ -65,6 +70,9 @@ pub struct CtxHit {
     pub file_path: Option<String>,
     pub ts_ns: Option<i64>,
     pub mode: SearchMode,
+    /// Provenance of the full source text from which this hit was chunked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_document_provenance: Option<DocumentProvenance>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +115,18 @@ pub enum PurgeScope<'a> {
 /// Index one document. Replaces any prior chunks for the same label, so
 /// re-indexing is idempotent. Returns the chunk count actually written.
 pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<IndexReport> {
+    let provenance = req.document_provenance.as_ref();
+    if let Some(provenance) = provenance {
+        provenance.validate_for_content(&req.content)?;
+    }
+    let source_bytes = provenance
+        .map(|value| i64::try_from(value.source_bytes))
+        .transpose()
+        .context("document source byte count cannot be stored")?;
+    let text_bytes = provenance
+        .map(|value| i64::try_from(value.extracted_text_bytes))
+        .transpose()
+        .context("document text byte count cannot be stored")?;
     let now = now_unix();
     let content_hash = format!(
         "{:016x}",
@@ -121,8 +141,11 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
 
     tx.execute(
         "INSERT INTO sources \
-         (label, content_hash, file_path, content_type, source_category, chunk_count, indexed_ts) \
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+         (label, content_hash, file_path, content_type, source_category, chunk_count, indexed_ts, \
+          document_provenance_schema, document_parser_version, document_source_sha256, \
+          document_source_bytes, document_text_sha256, document_text_bytes, \
+          document_text_encoding, document_text_truncated) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             req.label,
             content_hash,
@@ -130,6 +153,14 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
             req.content_type,
             req.source_category,
             now,
+            provenance.map(|value| value.schema.as_str()),
+            provenance.map(|value| value.parser_version.as_str()),
+            provenance.map(|value| value.source_bytes_sha256.as_str()),
+            source_bytes,
+            provenance.map(|value| value.extracted_text_sha256.as_str()),
+            text_bytes,
+            provenance.map(|value| value.extracted_text_encoding.as_str()),
+            provenance.map(|value| i64::from(value.extracted_text_truncated)),
         ],
     )?;
     let source_id = tx.last_insert_rowid();
@@ -179,7 +210,7 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
     })
 }
 
-fn delete_for_label(tx: &rusqlite::Transaction, label: &str) -> Result<()> {
+fn delete_for_label(tx: &rusqlite::Transaction, label: &str) -> Result<usize> {
     let existing: Option<i64> = tx
         .query_row(
             "SELECT id FROM sources WHERE label = ?1",
@@ -188,14 +219,16 @@ fn delete_for_label(tx: &rusqlite::Transaction, label: &str) -> Result<()> {
         )
         .optional()?;
     if let Some(sid) = existing {
+        remove_source_vocabulary(tx, sid)?;
         tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![sid])?;
         tx.execute(
             "DELETE FROM chunks_trigram WHERE source_id = ?1",
             params![sid],
         )?;
-        tx.execute("DELETE FROM sources WHERE id = ?1", params![sid])?;
+        Ok(tx.execute("DELETE FROM sources WHERE id = ?1", params![sid])?)
+    } else {
+        Ok(0)
     }
-    Ok(())
 }
 
 struct Chunk {
@@ -368,21 +401,63 @@ fn char_boundary_truncate(s: &str, cap: usize) -> usize {
     i
 }
 
-fn bump_vocabulary(tx: &rusqlite::Transaction, body: &str) -> Result<()> {
+fn vocabulary_terms(body: &str) -> impl Iterator<Item = String> + '_ {
     let mut seen = std::collections::HashSet::new();
-    for raw in body.split(|c: char| !c.is_alphanumeric()) {
-        let t = raw.to_lowercase();
-        if t.len() < 3 || t.len() > 32 {
-            continue;
-        }
-        if !seen.insert(t.clone()) {
-            continue;
-        }
-        tx.execute(
+    body.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(move |term| (3..=32).contains(&term.len()) && seen.insert(term.clone()))
+}
+
+fn bump_vocabulary(conn: &Connection, body: &str) -> Result<()> {
+    for term in vocabulary_terms(body) {
+        let changed = conn.execute(
             "INSERT INTO vocabulary (term, frequency) VALUES (?1, 1) \
-             ON CONFLICT(term) DO UPDATE SET frequency = frequency + 1",
-            params![t],
+             ON CONFLICT(term) DO UPDATE SET frequency = frequency + 1 \
+             WHERE typeof(frequency) = 'integer' AND frequency BETWEEN 1 AND 9223372036854775806",
+            params![term],
         )?;
+        ensure!(changed == 1, "ctx vocabulary frequency is invalid or exhausted");
+    }
+    Ok(())
+}
+
+fn remove_source_vocabulary(tx: &rusqlite::Transaction, source_id: i64) -> Result<()> {
+    // Canonical chunks own the exact prior bodies. The trigram mirror must
+    // never contribute a second count. Keep subtraction in the caller's tx.
+    let mut statement = tx.prepare("SELECT content FROM chunks WHERE source_id = ?1")?;
+    let mut rows = statement.query([source_id])?;
+    while let Some(row) = rows.next()? {
+        let body: String = row.get(0)?;
+        for term in vocabulary_terms(&body) {
+            // Delete 1 first: decrementing 2 before this DELETE would erase
+            // the surviving chunk's contribution as well.
+            if tx.execute(
+                "DELETE FROM vocabulary WHERE term = ?1 AND typeof(frequency) = 'integer' AND frequency = 1",
+                [&term],
+            )? == 0
+            {
+                let changed = tx.execute(
+                    "UPDATE vocabulary SET frequency = frequency - 1 \
+                     WHERE term = ?1 AND typeof(frequency) = 'integer' AND frequency > 1",
+                    [&term],
+                )?;
+                ensure!(changed == 1, "ctx vocabulary contribution is missing or invalid");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Repair historical replacement/purge drift once during schema migration.
+/// The migration dispatcher owns both rollback and the schema-version stamp.
+pub(super) fn rebuild_vocabulary(conn: &Connection) -> Result<()> {
+    ensure!(!conn.is_autocommit(), "ctx vocabulary rebuild requires a transaction");
+    conn.execute("DELETE FROM vocabulary", [])?;
+    let mut statement = conn.prepare("SELECT content FROM chunks ORDER BY rowid")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let body: String = row.get(0)?;
+        bump_vocabulary(conn, &body)?;
     }
     Ok(())
 }
@@ -432,7 +507,10 @@ fn run_match(
 ) -> Result<Vec<CtxHit>> {
     let sql = format!(
         "SELECT t.source_id, s.label, t.title, t.content, t.content_type, \
-                t.source_category, t.event_id, t.file_path, t.ts_ns \
+                t.source_category, t.event_id, t.file_path, t.ts_ns, \
+                s.document_provenance_schema, s.document_parser_version, s.document_source_sha256, \
+                s.document_source_bytes, s.document_text_sha256, s.document_text_bytes, \
+                s.document_text_encoding, s.document_text_truncated \
          FROM {table} t \
          JOIN sources s ON s.id = t.source_id \
          WHERE t.content MATCH ?1 \
@@ -453,6 +531,7 @@ fn run_match(
                 file_path: row.get(7)?,
                 ts_ns: row.get(8)?,
                 mode,
+                source_document_provenance: DocumentProvenance::from_row(row, 9)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -601,10 +680,7 @@ pub fn doctor(conn: &Connection) -> Result<CtxDoctor> {
 pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
     let tx = conn.transaction()?;
     let n = match scope {
-        PurgeScope::Source(label) => {
-            delete_for_label(&tx, label)?;
-            1
-        }
+        PurgeScope::Source(label) => delete_for_label(&tx, label)?,
         PurgeScope::Category(cat) => {
             // Collect source_ids first, then bulk-delete chunks.
             let mut stmt = tx.prepare("SELECT id FROM sources WHERE source_category = ?1")?;
@@ -613,6 +689,7 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
                 .collect::<Result<_, _>>()?;
             drop(stmt);
             for sid in &ids {
+                remove_source_vocabulary(&tx, *sid)?;
                 tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![sid])?;
                 tx.execute(
                     "DELETE FROM chunks_trigram WHERE source_id = ?1",
@@ -667,6 +744,276 @@ mod tests {
             content_type: "prose".to_string(),
             source_category: Some("test".to_string()),
             event_id: None,
+            document_provenance: None,
+        }
+    }
+
+    fn proven_document(content: &str, label: &str) -> IndexRequest {
+        use sha2::{Digest, Sha256};
+        let mut request = idx(content, label);
+        request.document_provenance = Some(DocumentProvenance {
+            schema: "neoth.document-provenance.v1".into(),
+            parser_version: "document-extractor/v1".into(),
+            source_bytes_sha256: "a".repeat(64),
+            source_bytes: 100,
+            extracted_text_sha256: hex::encode(Sha256::digest(content.as_bytes())),
+            extracted_text_bytes: content.len() as u64,
+            extracted_text_encoding: "utf-8".into(),
+            extracted_text_truncated: true,
+        });
+        request
+    }
+
+    #[test]
+    fn document_provenance_survives_reopen_and_all_search_fallbacks_without_merging_labels() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let request = proven_document("running quickly testing barbaz kubernetes", "first");
+        let first = index_document(&mut conn, &request).unwrap();
+        let mut second = request.clone();
+        second.label = "same-bytes-distinct-document".into();
+        let second = index_document(&mut conn, &second).unwrap();
+        assert_ne!(first.source_id, second.source_id);
+        drop(conn);
+        let conn = crate::memory::store::open(&path).unwrap();
+        for (query, mode) in [
+            ("test", SearchMode::Bm25),
+            ("arba", SearchMode::Trigram),
+            ("kubernates", SearchMode::Fuzzy),
+        ] {
+            let hits = search(&conn, query, 10).unwrap();
+            assert_eq!(hits.len(), 2, "{query}");
+            for hit in hits {
+                assert_eq!(hit.mode, mode);
+                assert_eq!(hit.source_document_provenance, request.document_provenance);
+                assert_eq!(
+                    serde_json::to_value(&hit).unwrap()["source_document_provenance"]["extracted_text_truncated"],
+                    true,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let legacy = index_document(&mut conn, &idx("legacy retained body", "legacy")).unwrap();
+        // Reconstruct the exact v46 sources columns. All other schema objects
+        // are unchanged by v47; the existing legacy FTS rows remain in place.
+        for column in [
+            "document_provenance_schema", "document_parser_version", "document_source_sha256",
+            "document_source_bytes", "document_text_sha256", "document_text_bytes",
+            "document_text_encoding", "document_text_truncated",
+        ] {
+            conn.execute_batch(&format!("ALTER TABLE sources DROP COLUMN {column};")).unwrap();
+        }
+        conn.execute("UPDATE meta SET value = '46' WHERE key = 'schema_version'", []).unwrap();
+        drop(conn);
+        let mut migrated = crate::memory::store::open(&path).unwrap();
+        assert_eq!(crate::memory::migrations::current_version(&migrated).unwrap(), 47);
+        let request = proven_document("new searchable document", "document");
+        index_document(&mut migrated, &request).unwrap();
+        drop(migrated);
+        let reopened = crate::memory::store::open(&path).unwrap();
+        let legacy_hits = search(&reopened, "legacy", 10).unwrap();
+        assert_eq!(legacy_hits.len(), 1);
+        assert_eq!(legacy_hits[0].source_id, legacy.source_id);
+        assert!(legacy_hits[0].source_document_provenance.is_none());
+        let hits = search(&reopened, "searchable", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+    }
+    #[test]
+    fn invalid_document_provenance_and_aborted_replacement_preserve_source_and_both_indexes() {
+        let mut conn = fresh_conn();
+        let request = proven_document("original retained body", "doc");
+        let original = index_document(&mut conn, &request).unwrap();
+        let mut invalid = proven_document("replacement body", "doc");
+        invalid.document_provenance.as_mut().unwrap().extracted_text_sha256 = "b".repeat(64);
+        assert!(index_document(&mut conn, &invalid).is_err());
+        conn.execute_batch(
+            "CREATE TRIGGER reject_document_replacement AFTER INSERT ON sources
+             BEGIN SELECT RAISE(ABORT, 'injected replacement failure'); END;",
+        ).unwrap();
+        assert!(index_document(&mut conn, &proven_document("replacement body", "doc")).is_err());
+        let hits = search(&conn, "original", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source_id, original.source_id);
+        assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+        for table in ["chunks", "chunks_trigram"] {
+            let retained: (i64, String) = conn.query_row(
+                &format!("SELECT source_id, content FROM {table}"), [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            assert_eq!(retained, (original.source_id, request.content.clone()));
+            let count: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn replacing_document_with_unbound_text_clears_provenance_without_reusing_old_receipt() {
+        let mut conn = fresh_conn();
+        index_document(&mut conn, &proven_document("original body", "doc")).unwrap();
+        index_document(&mut conn, &idx("replacement body", "doc")).unwrap();
+        let hits = search(&conn, "replacement", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].source_document_provenance.is_none());
+        assert!(serde_json::to_value(&hits[0]).unwrap().get("source_document_provenance").is_none());
+        let unbound: bool = conn.query_row(
+            "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
+                 AND document_source_sha256 IS NULL AND document_source_bytes IS NULL
+                 AND document_text_sha256 IS NULL AND document_text_bytes IS NULL
+                 AND document_text_encoding IS NULL AND document_text_truncated IS NULL
+             FROM sources WHERE label = 'doc'", [], |row| row.get(0),
+        ).unwrap();
+        assert!(unbound);
+    }
+
+    #[test]
+    fn search_rejects_partial_or_corrupt_document_provenance_instead_of_hiding_it() {
+        let mut conn = fresh_conn();
+        for mutation in [
+            "document_parser_version = NULL",
+            "document_source_bytes = -1",
+            "document_text_bytes = 8388609",
+            "document_source_sha256 = 'bad'",
+            "document_text_truncated = 2",
+            "document_provenance_schema = 'future'",
+        ] {
+            index_document(&mut conn, &proven_document("original body", "doc")).unwrap();
+            conn.execute(&format!("UPDATE sources SET {mutation} WHERE label = 'doc'"), [])
+                .unwrap();
+            assert!(search(&conn, "original", 10).is_err(), "{mutation}");
+        }
+    }
+
+    fn vocabulary_snapshot(conn: &Connection) -> Vec<(String, i64)> {
+        conn.prepare("SELECT term, frequency FROM vocabulary ORDER BY term")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn index_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+        ["sources", "chunks", "chunks_trigram", "vocabulary"]
+            .into_iter()
+            .map(|table| {
+                let mut statement = conn
+                    .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                    .unwrap();
+                let columns = statement.column_count();
+                statement
+                    .query_map([], |row| (0..columns).map(|column| row.get(column)).collect())
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn vocabulary_replacement_and_source_purge_preserve_per_chunk_counts() {
+        let mut conn = fresh_conn();
+        index_document(&mut conn, &idx("# One\nshared shared amber\n# Two\nshared cobalt", "replace")).unwrap();
+        index_document(&mut conn, &idx("shared retained", "keep")).unwrap();
+        assert_eq!(vocabulary_snapshot(&conn), vec![
+            ("amber".into(), 1), ("cobalt".into(), 1),
+            ("retained".into(), 1), ("shared".into(), 3),
+        ]);
+        for _ in 0..2 {
+            index_document(&mut conn, &idx("shared newword newword", "replace")).unwrap();
+            assert_eq!(vocabulary_snapshot(&conn), vec![
+                ("newword".into(), 1), ("retained".into(), 1), ("shared".into(), 2),
+            ]);
+        }
+        assert_eq!(purge(&mut conn, PurgeScope::Source("replace")).unwrap(), 1);
+        assert_eq!(purge(&mut conn, PurgeScope::Source("replace")).unwrap(), 0);
+        assert_eq!(vocabulary_snapshot(&conn), vec![("retained".into(), 1), ("shared".into(), 1)]);
+        assert_eq!(search(&conn, "shard", 5).unwrap()[0].label, "keep");
+        assert_eq!(purge(&mut conn, PurgeScope::All).unwrap(), 1);
+        for table in index_snapshot(&conn) {
+            assert!(table.is_empty());
+        }
+    }
+
+    #[test]
+    fn vocabulary_category_purge_retains_only_surviving_chunk_terms() {
+        let mut conn = fresh_conn();
+        index_document(&mut conn, &idx("shared amber", "drop-one")).unwrap();
+        index_document(&mut conn, &idx("shared cobalt", "drop-two")).unwrap();
+        let mut keep = idx("shared retained", "keep");
+        keep.source_category = Some("other".into());
+        index_document(&mut conn, &keep).unwrap();
+        assert_eq!(purge(&mut conn, PurgeScope::Category("test")).unwrap(), 2);
+        assert_eq!(vocabulary_snapshot(&conn), vec![("retained".into(), 1), ("shared".into(), 1)]);
+        assert_eq!(purge(&mut conn, PurgeScope::Category("test")).unwrap(), 0);
+        for table in ["sources", "chunks", "chunks_trigram"] {
+            let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn vocabulary_corruption_aborts_replacement_and_purges_atomically() {
+        for mutation in [
+            "DELETE FROM vocabulary WHERE term='shared'",
+            "UPDATE vocabulary SET frequency=0 WHERE term='shared'",
+            "UPDATE vocabulary SET frequency=1.5 WHERE term='shared'",
+            "UPDATE vocabulary SET frequency=1 WHERE term='shared'",
+        ] {
+            for action in ["replace", "source", "category"] {
+                let mut conn = fresh_conn();
+                index_document(&mut conn, &idx("# One\namber shared\n# Two\ncobalt shared", "doc")).unwrap();
+                conn.execute(mutation, []).unwrap();
+                let before = index_snapshot(&conn);
+                let result = match action {
+                    "replace" => index_document(&mut conn, &idx("newword", "doc")).map(|_| ()),
+                    "source" => purge(&mut conn, PurgeScope::Source("doc")).map(|_| ()),
+                    _ => purge(&mut conn, PurgeScope::Category("test")).map(|_| ()),
+                };
+                assert!(result.is_err(), "{action}: {mutation}");
+                assert_eq!(index_snapshot(&conn), before, "{action}: {mutation}");
+            }
+        }
+    }
+
+    #[test]
+    fn vocabulary_cleanup_rolls_back_when_later_source_delete_fails() {
+        for action in ["replace", "source", "category"] {
+            let mut conn = fresh_conn();
+            index_document(&mut conn, &idx("amber shared", "doc")).unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER block_source_delete BEFORE DELETE ON sources
+                 BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;",
+            ).unwrap();
+            let before = index_snapshot(&conn);
+            let result = match action {
+                "replace" => index_document(&mut conn, &idx("newword", "doc")).map(|_| ()),
+                "source" => purge(&mut conn, PurgeScope::Source("doc")).map(|_| ()),
+                _ => purge(&mut conn, PurgeScope::Category("test")).map(|_| ()),
+            };
+            assert!(result.is_err(), "{action}");
+            assert_eq!(index_snapshot(&conn), before, "{action}");
+        }
+    }
+
+    #[test]
+    fn vocabulary_increment_rejects_invalid_or_overflowed_counts_atomically() {
+        for value in ["0", "1.5", "9223372036854775807"] {
+            let mut conn = fresh_conn();
+            index_document(&mut conn, &idx("shared", "keep")).unwrap();
+            conn.execute(&format!("UPDATE vocabulary SET frequency={value}"), []).unwrap();
+            let before = index_snapshot(&conn);
+            assert!(index_document(&mut conn, &idx("shared", "new")).is_err());
+            assert_eq!(index_snapshot(&conn), before);
         }
     }
 
@@ -789,6 +1136,60 @@ mod tests {
             .query_row("SELECT count(*) FROM chunks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(chunks, 1);
+    }
+
+    #[test]
+    fn purge_source_reports_only_committed_removals_and_preserves_other_documents() {
+        let mut conn = fresh_conn();
+        let keep = index_document(&mut conn, &idx("retained amber document", "keep")).unwrap();
+        let drop = index_document(&mut conn, &idx("removed cobalt document", "drop")).unwrap();
+
+        assert_eq!(purge(&mut conn, PurgeScope::Source("absent")).unwrap(), 0);
+        assert_eq!(stats(&conn).unwrap().sources_count, 2);
+        for table in ["chunks", "chunks_trigram"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 2);
+            for expected in [&keep, &drop] {
+                let count: i64 = conn
+                    .query_row(
+                        &format!("SELECT count(*) FROM {table} WHERE source_id = ?1"),
+                        [expected.source_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(count, 1);
+            }
+        }
+        let keep_hits = search(&conn, "amber", 10).unwrap();
+        assert_eq!(keep_hits.len(), 1);
+        assert_eq!(keep_hits[0].source_id, keep.source_id);
+        assert_eq!(keep_hits[0].content, "retained amber document");
+        let drop_hits = search(&conn, "cobalt", 10).unwrap();
+        assert_eq!(drop_hits.len(), 1);
+        assert_eq!(drop_hits[0].source_id, drop.source_id);
+        assert_eq!(drop_hits[0].content, "removed cobalt document");
+
+        assert_eq!(purge(&mut conn, PurgeScope::Source("drop")).unwrap(), 1);
+        assert_eq!(purge(&mut conn, PurgeScope::Source("drop")).unwrap(), 0);
+        assert_eq!(stats(&conn).unwrap().sources_count, 1);
+        assert!(search(&conn, "cobalt", 10).unwrap().is_empty());
+        let keep_hits = search(&conn, "amber", 10).unwrap();
+        assert_eq!(keep_hits.len(), 1);
+        assert_eq!(keep_hits[0].source_id, keep.source_id);
+        assert_eq!(keep_hits[0].label, "keep");
+        assert_eq!(keep_hits[0].content, "retained amber document");
+        for table in ["chunks", "chunks_trigram"] {
+            let rows: Vec<(i64, String)> = conn
+                .prepare(&format!("SELECT source_id, content FROM {table}"))
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(rows, vec![(keep.source_id, "retained amber document".to_string())]);
+        }
     }
 
     #[test]

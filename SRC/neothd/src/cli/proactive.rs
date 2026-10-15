@@ -818,44 +818,170 @@ mod tests {
     #[test]
     fn document_reject_is_a_terminal_status_only_decision() {
         let home = tempfile::tempdir().unwrap();
-        let id = make_proposal_id(
-            ProposalKind::Document,
-            "Document distillation (memory)",
-            "not-applied",
-            100,
-        );
-        let proposal = ProposedAction {
-            id: id.clone(),
-            kind: ProposalKind::Document,
-            title: "Document distillation (memory)".to_owned(),
-            rationale: "metadata only".to_owned(),
-            draft_yaml: "not-applied".to_owned(),
-            generated_ts_unix: 100,
-            status: ProposalStatus::Pending,
-            operator_note: String::new(),
-        };
-        save_proposal(home.path(), &proposal).unwrap();
-        run_proactive(ProactiveArgs {
-            action: ProactiveAction::Reject {
-                id: id.clone(),
-                note: "no".to_owned(),
+        let proposal = staged_document(
+            "Reject valid staged memory document",
+            DocumentStagingRoute::Memory {
+                scope: "release-review".to_owned(),
+                claims: vec!["this valid claim must never be applied".to_owned()],
             },
-            home: Some(home.path().to_path_buf()),
-        })
-        .expect("reject document proposal");
+        );
+        crate::proactive::document_staging::parse_approved_document_staging(&proposal)
+            .expect("fixture must be a valid consumable document draft");
+        let proposal_path = save_proposal(home.path(), &proposal).unwrap();
         assert_eq!(
-            load_proposal(home.path(), &id).unwrap().status,
-            ProposalStatus::Rejected
+            load_proposal(home.path(), &proposal.id).unwrap().status,
+            ProposalStatus::Pending
         );
+        let reject = |note: &str| {
+            run_proactive(ProactiveArgs {
+                action: ProactiveAction::Reject {
+                    id: proposal.id.clone(),
+                    note: note.to_owned(),
+                },
+                home: Some(home.path().to_path_buf()),
+            })
+        };
+        reject("do not apply").expect("reject valid document proposal");
+        let rejected = load_proposal(home.path(), &proposal.id).unwrap();
+        assert_eq!(rejected.status, ProposalStatus::Rejected);
+        assert_eq!(rejected.operator_note, "do not apply");
+        let rejected_bytes = std::fs::read(&proposal_path).unwrap();
+
+        reject("must not replace the original decision").expect("idempotent reject");
+        let error = accept_document(home.path(), &proposal.id)
+            .expect_err("a rejected valid document must not become approved");
         assert!(
-            !home.path().join("views.db").exists(),
-            "reject must not invoke a document consumer"
+            format!("{error:#}").contains("already has terminal status rejected"),
+            "{error:#}"
         );
-        assert!(
-            !home.path().join("skills").exists(),
-            "reject must not install a document Skill"
-        );
+        assert_eq!(load_proposal(home.path(), &proposal.id).unwrap(), rejected);
+        assert_eq!(std::fs::read(&proposal_path).unwrap(), rejected_bytes);
+        for path in ["views.db", "skills", "wal"] {
+            assert!(
+                !home.path().join(path).exists(),
+                "reject and refused accept must not create {path}"
+            );
+        }
     }
+
+    #[test]
+    fn document_reject_after_memory_effect_preserves_applied_claim_and_retry_state() {
+        fn rows(conn: &rusqlite::Connection, table: &str) -> Vec<Vec<rusqlite::types::Value>> {
+            let mut statement = conn
+                .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                .unwrap();
+            let columns = statement.column_count();
+            statement
+                .query_map([], |row| {
+                    (0..columns)
+                        .map(|column| row.get::<_, rusqlite::types::Value>(column))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        }
+
+        for fail_audit in [false, true] {
+            let home = tempfile::tempdir().unwrap();
+            let proposal = staged_document(
+                "Preserve applied document after refused rejection",
+                DocumentStagingRoute::Memory {
+                    scope: "release-review".to_owned(),
+                    claims: vec!["committed document claims survive rejected reversal".to_owned()],
+                },
+            );
+            let proposal_path = save_proposal(home.path(), &proposal).unwrap();
+            let wal_path = home.path().join("wal");
+            let obstruction = b"occupied by post-effect audit failure fixture";
+            if fail_audit {
+                std::fs::write(&wal_path, obstruction).unwrap();
+            }
+            let applied = accept_document(home.path(), &proposal.id);
+            if fail_audit {
+                let error = applied.expect_err("audit failure must follow committed memory effect");
+                assert!(format!("{error:#}").contains("route effect committed"));
+            } else {
+                applied.expect("apply and audit the valid document");
+            }
+            let approved = load_proposal(home.path(), &proposal.id).unwrap();
+            assert_eq!(approved.status, ProposalStatus::Approved);
+            let approved_bytes = std::fs::read(&proposal_path).unwrap();
+            let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+            let facts = rows(&conn, "idx_groundtruth");
+            let ledger = rows(&conn, "b7_applied_document_claim");
+            assert_eq!(facts.len(), 1);
+            assert_eq!(ledger.len(), 1);
+            let audits = if fail_audit {
+                Vec::new()
+            } else {
+                document_audit_payloads(
+                    home.path(),
+                    crate::wal::events::ExtendedSubtype::DocumentMemoryApplied,
+                )
+            };
+
+            let error = run_proactive(ProactiveArgs {
+                action: ProactiveAction::Reject {
+                    id: proposal.id.clone(),
+                    note: "cannot undo an applied effect".to_owned(),
+                },
+                home: Some(home.path().to_path_buf()),
+            })
+            .expect_err("approved documents cannot transition to rejected");
+            assert!(
+                format!("{error:#}").contains("already has terminal status approved"),
+                "{error:#}"
+            );
+            assert_eq!(load_proposal(home.path(), &proposal.id).unwrap(), approved);
+            assert_eq!(std::fs::read(&proposal_path).unwrap(), approved_bytes);
+            assert_eq!(rows(&conn, "idx_groundtruth"), facts);
+            assert_eq!(rows(&conn, "b7_applied_document_claim"), ledger);
+            if fail_audit {
+                assert_eq!(std::fs::read(&wal_path).unwrap(), obstruction.to_vec());
+            } else {
+                assert_eq!(audits.len(), 1);
+                assert_eq!(
+                    document_audit_payloads(
+                        home.path(),
+                        crate::wal::events::ExtendedSubtype::DocumentMemoryApplied,
+                    ),
+                    audits
+                );
+            }
+            drop(conn);
+
+            if fail_audit {
+                std::fs::remove_file(&wal_path).unwrap();
+            }
+            accept_document(home.path(), &proposal.id)
+                .expect("refused reject must preserve reconciliation through the existing owner");
+            let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+            assert_eq!(rows(&conn, "idx_groundtruth"), facts);
+            assert_eq!(rows(&conn, "b7_applied_document_claim"), ledger);
+            let reconciled_audits = document_audit_payloads(
+                home.path(),
+                crate::wal::events::ExtendedSubtype::DocumentMemoryApplied,
+            );
+            assert_eq!(reconciled_audits.len(), audits.len() + 1);
+            for audit in &audits {
+                assert!(reconciled_audits.contains(audit));
+            }
+            let fresh = reconciled_audits
+                .iter()
+                .filter(|audit| !audits.contains(audit))
+                .collect::<Vec<_>>();
+            assert_eq!(fresh.len(), 1);
+            assert_eq!(fresh[0]["proposal_id"], proposal.id);
+            assert_eq!(fresh[0]["source_bytes_sha256"], DOCUMENT_SOURCE_SHA256);
+            assert_eq!(fresh[0]["route"], "memory");
+            assert_eq!(fresh[0]["applied_count"], 0);
+            assert_eq!(fresh[0]["replayed_count"], 1);
+            assert_eq!(fresh[0]["reconciled"], true);
+            assert_eq!(std::fs::read(&proposal_path).unwrap(), approved_bytes);
+        }
+    }
+
 
     #[test]
     fn malformed_document_accept_records_approval_before_route_error() {

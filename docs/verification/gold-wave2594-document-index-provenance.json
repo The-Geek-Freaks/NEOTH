@@ -1,0 +1,94 @@
+{
+  "schema": "neoth.gold-wave2594.v1",
+  "date": "2026-10-15",
+  "base": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "MAIN_WORKTREE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Persist bounded document provenance in the existing sources table; migrate schema 46 to 47 without backfilling legacy provenance",
+    "Validate exact extracted UTF-8 text bytes and SHA-256 before replacement; commit source, provenance and both FTS indexes together",
+    "Return optional source_document_provenance on BM25, trigram and fuzzy hits; reject corrupt partial persisted metadata",
+    "Report invalid_provenance before store opening; retain the previous indexed document when replacement fails",
+    "Return actual committed source deletion count; repeated or absent-label purge returns zero"
+  ],
+  "compatibility": [
+    "Existing rows remain unbound; non-document extractors remain supported",
+    "Equal bytes under different labels do not merge documents",
+    "Existing index transaction and migration dispatcher retain ownership"
+  ],
+  "tests": [
+    "memory::document_provenance::tests::document_metadata_binds_exact_utf8_text",
+    "memory::document_provenance::tests::document_metadata_rejects_malformed_shapes_and_unbounded_values",
+    "memory::document_provenance::tests::other_extractors_and_legacy_metadata_remain_unbound",
+    "memory::ctx::tests::document_provenance_survives_reopen_and_all_search_fallbacks_without_merging_labels",
+    "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
+    "memory::ctx::tests::invalid_document_provenance_and_aborted_replacement_preserve_source_and_both_indexes",
+    "memory::ctx::tests::replacing_document_with_unbound_text_clears_provenance_without_reusing_old_receipt",
+    "memory::ctx::tests::search_rejects_partial_or_corrupt_document_provenance_instead_of_hiding_it",
+    "memory::ctx::tests::purge_source_reports_only_committed_removals_and_preserves_other_documents",
+    "memory::migrations::tests::v46_to_v47_preserves_legacy_source_and_leaves_provenance_unbound",
+    "memory::migrations::tests::v46_to_v47_rolls_back_partial_alters_and_retains_previous_version",
+    "memory::migrations::tests::v46_to_v47_requires_the_existing_sources_table",
+    "memory::migrations::tests::v47_fresh_and_migrated_sources_have_the_same_column_contract",
+    "cli::ingest::tests::document_ingest_retains_extractor_provenance_after_reopen_and_search",
+    "cli::ingest::tests::document_ingest_rejects_invalid_provenance_before_replacing_existing_index"
+  ],
+  "review": {
+    "method": "Root text review and independent prompt-only code review",
+    "reviewer": "/root/streamed_mcp_review",
+    "addedAfterReview": "Migrated v46 store write/reopen/search regression",
+    "reviewSha256": "37CA08232277AD555DE050AC2B190A9328538E5AB16DFA1D3C62A16E4BE19DE8"
+  },
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/memory/ctx.rs",
+      "sha256": "85B18B0A155C414C0C63BF4B7930C6528D64CFD39B51C2D15104F11207220263"
+    },
+    {
+      "path": "SRC/neothd/src/memory/mod.rs",
+      "sha256": "BCC2C3B5B133D6C88BB7932F01E40FACEBE5FED955514AD0023031550EF09EDC"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "sha256": "D80DD32A4AFB2D78797064F07D7FE2C70608898B5856E6C95ADD1866DFE967FD"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sha256": "3F51773826FFF5B721E75F4D2F2C0882D23096631E4F8EFD09DD4F5EC4FBA27A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/ingest.rs",
+      "sha256": "65FAFD4FB152CB81C4CB37A953166B590FECEDA1F58F000AC4840C9AAE837C88"
+    },
+    {
+      "path": "SRC/neothd/src/cli/ctx.rs",
+      "sha256": "FAFC0BFC2AC0DF04C29A8D7BDBAA3C66535BCC255FAB16036F7E0ECFD4C3138C"
+    },
+    {
+      "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
+      "sha256": "E5F06407FDBB17A897B450AD7C6D08B411F9AA611BABDE5F3416A95D05B26122"
+    },
+    {
+      "path": "SRC/neothd/src/cli/rss_feed_task.rs",
+      "sha256": "13895659D99D91B9AAD5312D4FD1DE792D65266F230484CF68B0381F4DC5AB53"
+    },
+    {
+      "path": "SRC/neothd/src/memory/document_provenance.rs",
+      "sha256": "D525FCF6B2584D18EF3F3D6708099AAC4C5682BAD4F97C6F82B727C048530739"
+    }
+  ],
+  "limitations": [
+    "Source digest remains an extractor assertion, not raw-source re-attestation",
+    "Search provenance binds the complete extracted text, not individual chunks",
+    "Structural blocks/ranges, logical identity/revision/move lineage and full staging/abort/derived-delete integration remain open"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedFormatAccepted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "currentCi": {
+    "run": "38726224590",
+    "producer": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+    "coversThisChange": false
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "neoth.gold-wave2596.v1",
+  "date": "2026-10-15",
+  "base": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "problem": "Source replacement and source/category purge removed canonical and trigram chunks but retained vocabulary contributions; repeated indexing inflated fuzzy frequencies.",
+  "change": "Maintain vocabulary from canonical chunk bodies within the existing index/purge transaction. Rebuild historical derived vocabulary once in migration 47 to 48. No additional table or lifecycle owner.",
+  "invariants": [
+    "Canonical chunks are the sole vocabulary source; trigram copies are never counted",
+    "Preserve lowercase Unicode alphanumeric tokenization, byte length 3 through 32 and per-chunk deduplication",
+    "Delete frequency 1 before decrementing larger integer counts; missing or invalid contributions abort the transaction",
+    "Insert/upsert rejects invalid or exhausted integer counts instead of coercing to floating point",
+    "Historical rebuild, failure rollback and version stamp share the migration dispatch transaction",
+    "Normal mutations retokenize only affected source chunks; full-index rebuild runs once on migration"
+  ],
+  "tests": [
+    "memory::ctx::tests::vocabulary_replacement_and_source_purge_preserve_per_chunk_counts",
+    "memory::ctx::tests::vocabulary_category_purge_retains_only_surviving_chunk_terms",
+    "memory::ctx::tests::vocabulary_corruption_aborts_replacement_and_purges_atomically",
+    "memory::ctx::tests::vocabulary_cleanup_rolls_back_when_later_source_delete_fails",
+    "memory::ctx::tests::vocabulary_increment_rejects_invalid_or_overflowed_counts_atomically",
+    "memory::migrations::tests::v47_to_v48_rebuilds_only_canonical_per_chunk_vocabulary",
+    "memory::migrations::tests::v47_to_v48_insert_failure_rolls_back_vocabulary_and_version_then_retries",
+    "memory::migrations::tests::v47_to_v48_requires_existing_tables_and_transaction"
+  ],
+  "review": {
+    "reviewer": "/root/document_provenance_slice",
+    "method": "Prompt-only review of actual implementation contracts and eight regression cases",
+    "result": "No concrete correctness defect; canonical FTS bodies suffice without a contribution table",
+    "execution": "None"
+  },
+  "nonclaims": [
+    "No complete A03 closure or document logical identity/source ranges",
+    "No local compile, test or database runtime",
+    "No hosted runtime or Gold acceptance"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "worktreeSources": [
+    {
+      "path": "SRC/neothd/src/memory/ctx.rs",
+      "sha256": "CCA6CCD92426CFB3079B044BA81B791BFDD07FD053C6BAB05012946204791717"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sha256": "41F32A277447AE68360258D5F8C4E1ABCCB6D2B617A71A4AD67DA6F3F8A5FB74"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "sha256": "53C242FEB9356CAE7002781543E06AFF297D858D7DB2371ACFE8307F5AD396BC"
+    }
+  ]
+}

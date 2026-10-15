@@ -1,0 +1,43 @@
+{
+  "schema": "neoth.gold-wave2595.v1",
+  "date": "2026-10-15",
+  "base": "4c91723d1a6f53afaf4ca50f72cb308a70e744f1",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "EXISTING_BEHAVIOR_QUALIFICATION_HOSTED_PENDING",
+  "problem": "The existing document reject regression used a malformed draft and did not exercise a later accept or reject after a committed route effect.",
+  "change": "Use a valid canonical Memory document for terminal rejection; add real Memory apply/reject/reconciliation coverage for both successful and failed initial audit delivery.",
+  "existingOwner": "proactive::action_staging::set_proposal_status and the existing document Memory applied-once ledger",
+  "productionCodeChanged": false,
+  "tests": [
+    "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
+    "cli::proactive::tests::document_reject_after_memory_effect_preserves_applied_claim_and_retry_state"
+  ],
+  "newRegistrations": 1,
+  "strengthenedExisting": 1,
+  "sourcePath": "SRC/neothd/src/cli/proactive.rs",
+  "worktreeSourceSha256": "6A78BD0A21198389CC3F75BFABB8A3F5B42529603962D2C9FA65D9973C97A655",
+  "assertions": [
+    "Rejected valid draft cannot be accepted; exact terminal bytes and first note retained, no DB/skills/WAL created",
+    "Reject after Memory commit fails without changing proposal bytes, all fact/ledger columns or existing audit evidence",
+    "Recovery uses the existing approved owner and emits exactly one matching reconciliation receipt; fact/ledger state stays unchanged"
+  ],
+  "review": {
+    "schema": "neoth.wave2595.static-review.v1",
+    "sourceSha256": "6A78BD0A21198389CC3F75BFABB8A3F5B42529603962D2C9FA65D9973C97A655",
+    "reviewer": "/root/streamed_mcp_review",
+    "mode": "Prompt-only actual test contracts and SQL helper excerpt; no tools or execution",
+    "finding": "Strengthen post-reaccept audit cardinality and identity",
+    "resolution": "Reject alone changes no audit. Explicit reaccept intentionally writes one new reconciliation receipt; require exact previous_count+1, retain previous receipts, bind new proposal/source/route and zero new claims plus one replay.",
+    "approved": true,
+    "compiled": false,
+    "executed": false
+  },
+  "nonclaims": [
+    "No new abort command or lifecycle owner",
+    "No applied-effect deletion or full derived-delete/retry-proof qualification",
+    "No structural source ranges, logical identity or A03/Gold completion"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

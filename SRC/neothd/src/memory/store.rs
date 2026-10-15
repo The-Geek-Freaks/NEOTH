@@ -135,7 +135,9 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 ///      `legacy-unknown-v0` and are never inferred from model or dimension.
 /// v45: durable Dream Light/REM/Repair run, receipt, and observation journal.
 /// v46: B7 document-claim applied-once ledger, atomically paired with ground truth.
-pub const SCHEMA_VERSION: i64 = 46;
+/// v47: optional source-bound document extraction provenance for ctx search.
+/// v48: fuzzy vocabulary rebuilt from canonical chunks and maintained on deletion.
+pub const SCHEMA_VERSION: i64 = 48;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2158,7 +2160,15 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             content_type    TEXT,
             source_category TEXT,
             chunk_count     INTEGER NOT NULL DEFAULT 0,
-            indexed_ts      INTEGER NOT NULL
+            indexed_ts      INTEGER NOT NULL,
+            document_provenance_schema TEXT,
+            document_parser_version TEXT,
+            document_source_sha256 TEXT,
+            document_source_bytes INTEGER,
+            document_text_sha256 TEXT,
+            document_text_bytes INTEGER,
+            document_text_encoding TEXT,
+            document_text_truncated INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS sources_indexed_ts ON sources (indexed_ts DESC);

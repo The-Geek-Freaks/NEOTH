@@ -27,6 +27,7 @@ use crate::media::{
 };
 use crate::memory::{
     ctx::{IndexReport, IndexRequest, index_document},
+    document_provenance::DocumentProvenance,
     embeddings, store,
 };
 use crate::providers::clip_engine;
@@ -480,6 +481,7 @@ enum IndexSkipReason {
 #[derive(Debug, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum IndexFailureStage {
+    InvalidProvenance,
     OpenStore,
     WriteIndex,
 }
@@ -501,6 +503,9 @@ impl IngestIndexOutcome {
             Self::Skipped {
                 reason: IndexSkipReason::EmptyText,
             } => "skipped (empty text)",
+            Self::Failed {
+                stage: IndexFailureStage::InvalidProvenance,
+            } => "document provenance does not match extracted text",
             Self::Failed {
                 stage: IndexFailureStage::OpenStore,
             } => "failed to open index store",
@@ -528,6 +533,22 @@ fn index_extracted_text(
             reason: IndexSkipReason::EmptyText,
         };
     }
+    let document_provenance = match DocumentProvenance::from_extraction_metadata(&extraction.metadata)
+        .and_then(|provenance| {
+            if let Some(provenance) = provenance.as_ref() {
+                provenance.validate_for_content(&extraction.text)?;
+            }
+            Ok(provenance)
+        })
+    {
+        Ok(provenance) => provenance,
+        Err(_) => {
+            tracing::warn!("ingest: invalid document provenance; index unchanged");
+            return IngestIndexOutcome::Failed {
+                stage: IndexFailureStage::InvalidProvenance,
+            };
+        }
+    };
     let db_path = args
         .db
         .clone()
@@ -548,6 +569,7 @@ fn index_extracted_text(
         content_type: "prose".to_string(),
         source_category: Some("ingest".to_string()),
         event_id: None,
+        document_provenance,
     };
     match index_document(&mut conn, &request) {
         Ok(IndexReport { chunk_count, .. }) => {
@@ -878,7 +900,21 @@ mod tests {
     fn index_fixture_extraction(text: &str) -> Extraction {
         Extraction {
             text: text.to_string(),
-            metadata: serde_json::json!({"extractor": "document", "truncated": false}),
+            metadata: {
+                use sha2::{Digest, Sha256};
+                serde_json::json!({
+                    "extractor": "document", "truncated": false,
+                    "provenance": {
+                        "schema": "neoth.document-provenance.v1",
+                        "parser_version": "document-extractor/v1",
+                        "source": {"sha256": "a".repeat(64), "bytes": 12},
+                        "extracted_text": {
+                            "sha256": hex::encode(Sha256::digest(text.as_bytes())),
+                            "bytes": text.len(), "encoding": "utf-8"
+                        }
+                    }
+                })
+            },
         }
     }
 
@@ -1033,6 +1069,72 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn document_ingest_retains_extractor_provenance_after_reopen_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("document.rtf");
+        std::fs::write(&path, br"{\rtf1\ansi searchable provenance body}").unwrap();
+        let extraction = crate::media::document::DocumentExtractor
+            .extract(&Asset::Path {
+                kind: AssetKind::Document,
+                mime: "application/rtf".into(),
+                path: path.clone(),
+            })
+            .await
+            .unwrap();
+        let expected = DocumentProvenance::from_extraction_metadata(&extraction.metadata)
+            .unwrap().unwrap();
+        let db = dir.path().join("views.db");
+        let outcome = index_extracted_text(
+            &index_fixture_args(&db, false), &extraction, "doc", Some(&path), dir.path(),
+        );
+        assert_eq!(outcome, IngestIndexOutcome::Indexed { chunk_count: 1 });
+        let reopened = store::open(&db).unwrap();
+        let hits = crate::memory::ctx::search(&reopened, "searchable", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source_document_provenance.as_ref(), Some(&expected));
+        assert_eq!(
+            serde_json::to_value(&hits[0]).unwrap()["source_document_provenance"],
+            serde_json::to_value(expected).unwrap(),
+        );
+    }
+
+    #[test]
+    fn document_ingest_rejects_invalid_provenance_before_replacing_existing_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let args = index_fixture_args(&db, false);
+        let initial = index_fixture_extraction("original searchable content");
+        assert_eq!(
+            index_extracted_text(&args, &initial, "doc", None, dir.path()),
+            IngestIndexOutcome::Indexed { chunk_count: 1 },
+        );
+        let original = crate::memory::ctx::search(&store::open(&db).unwrap(), "original", 10)
+            .unwrap().remove(0);
+        let mut missing = index_fixture_extraction("replacement");
+        missing.metadata.as_object_mut().unwrap().remove("provenance");
+        let mut mismatch = index_fixture_extraction("replacement");
+        mismatch.text = "different text".into();
+        for extraction in [missing, mismatch] {
+            let outcome = index_extracted_text(&args, &extraction, "doc", None, dir.path());
+            assert_eq!(
+                serde_json::to_value(outcome).unwrap(),
+                serde_json::json!({"status": "failed", "stage": "invalid_provenance"}),
+            );
+            let reopened = store::open(&db).unwrap();
+            let hits = crate::memory::ctx::search(&reopened, "original", 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].source_id, original.source_id);
+            assert_eq!(hits[0].source_document_provenance, original.source_document_provenance);
+            for table in ["chunks", "chunks_trigram"] {
+                let retained: String = reopened.query_row(
+                    &format!("SELECT content FROM {table} WHERE source_id = ?1"),
+                    [original.source_id], |row| row.get(0),
+                ).unwrap();
+                assert_eq!(retained, initial.text);
+            }
+        }
+    }
     #[test]
     fn detect_kind_returns_image_for_known_extensions() {
         for ext in ["png", "jpg", "jpeg", "webp", "gif"] {

@@ -30,7 +30,7 @@ idx_embedding (SQLite table, schema v6)
 | `memory/embeddings.rs` | CRUD for `idx_embedding` table | `upsert`, `find_similar`, `delete`, `count`, `SimilarHit` |
 | `memory/store.rs` | Open / migrate views.db | `open`, `default_path` |
 | `memory/session_start_recall.rs` | Existing-only bounded local recall preparation after RAW delivery and before the first provider prompt; stale/failed work is not retried from the prompt path and Incognito does not construct it | internal `start_session_recall_preload`, `SessionStartRecallPreload` |
-| `memory/migrations/mod.rs` | Schema migration chain v3 → v6 | (internal) |
+| `memory/migrations/mod.rs` | Transactional schema migration chain, including v46 → v47 document provenance | (internal) |
 
 ## Schema
 
@@ -91,3 +91,33 @@ Query Vec<f32> (must be L2-normalised)
 - `cli/ingest.rs` — calls `embeddings::upsert` after extraction
 - `cli/recall.rs` — calls `embeddings::find_similar` for `--similar-to` / `--similar-to-text`
 - `wal/events.rs` — `0x2D EMBED_PERSISTED` records when a row lands
+
+## Ctx document provenance
+
+`memory/ctx.rs` remains the owner of source replacement and its two FTS
+projections. `memory/document_provenance.rs` validates the bounded metadata
+contract shared by ingestion and search. Schema v47 adds eight nullable columns
+to the existing `sources` row; v46 migration preserves historical rows with all
+eight values NULL.
+
+An `IndexRequest.document_provenance` must match the complete extracted UTF-8
+text before replacement begins. The source insert, provenance, FTS writes, and
+chunk count commit together. A replacement without provenance clears the prior
+values. Failed replacements retain the old source and search data.
+`CtxHit.source_document_provenance` exposes the same source metadata for BM25,
+trigram, and fuzzy hits. Mixed-NULL or invalid persisted values return an error
+instead of silently appearing as unbound legacy data.
+
+`purge(Source(label))` returns the actual committed source-removal count:
+one for an existing source, zero for a missing or already removed source.
+Removing the source removes its provenance with the same transaction; the B7
+`document_claims` ledger is a separate owner and is unchanged by this slice.
+
+Schema v48 repairs historical fuzzy vocabulary drift once by rebuilding it from
+canonical `chunks.content` only. Replacement and source/category purge subtract
+each old chunk's distinct eligible terms before deleting source/FTS rows, within
+the same transaction. All-purge clears the vocabulary too. Repeated indexing
+therefore preserves per-chunk counts. The vocabulary is a derived index, not a
+second document authority; missing, invalid or exhausted counts abort a mutation.
+The migration requires its caller's transaction and rolls back both vocabulary
+and version on failure. Normal edits read only affected source chunks.

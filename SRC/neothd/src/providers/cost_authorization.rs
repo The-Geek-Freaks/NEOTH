@@ -9161,6 +9161,15 @@ mod tests {
                 "ac63095416544d545f508e4acac6166eff02eb78e3d94b0d21b90d2b6ce56091",
             ),
             (
+                "cli/companion_mcp_stream.rs",
+                1,
+                // The StreamingMcp route supplies the already-created
+                // CostAuthorizingProvider with its usage home, effect gate,
+                // policy, consent and audit context. This adapter opens one
+                // stream; it has no provider factory, fallback or retry.
+                "8f26000d2d8c17056f4be88238024250cf9a8133f13c0756ddebc95602c2deda",
+            ),
+            (
                 "cli/doctor.rs",
                 1,
                 "512312f73fa25f3c6b3d6e5aaeca21beba630303a7eae8f19aae872d4900f3a7",

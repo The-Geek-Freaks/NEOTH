@@ -293,6 +293,7 @@ pub async fn run_one_pass_against_authorized(
                 content_type: "prose".to_string(),
                 source_category: Some(source_category.to_string()),
                 event_id: None,
+                document_provenance: None,
             };
             match ctx::index_document(&mut conn, &req) {
                 Ok(_) => indexed += 1,

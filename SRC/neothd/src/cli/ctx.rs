@@ -162,6 +162,7 @@ pub async fn run_ctx(args: CtxArgs) -> Result<()> {
             content_type: args.content_type.clone(),
             source_category: args.category.clone(),
             event_id: None,
+            document_provenance: None,
         };
         let report = ctx::index_document(&mut conn, &req)?;
         render_report(&report, args.output);
@@ -183,6 +184,7 @@ pub async fn run_ctx(args: CtxArgs) -> Result<()> {
             content_type: args.content_type.clone(),
             source_category: args.category.clone(),
             event_id: None,
+            document_provenance: None,
         };
         let report = ctx::index_document(&mut conn, &req)?;
         render_report(&report, args.output);

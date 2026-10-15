@@ -67,7 +67,21 @@ JSON/JSONL reports retain `chunk_count` and add `index_outcome`:
 - `{"status":"skipped","reason":"disabled"}` identifies `--no-index`; `empty_text` identifies an empty extraction.
 - `{"status":"failed","stage":"open_store"}` or `write_index` identifies an indexing failure. The extraction report remains available, preserving the existing nonfatal index-error contract; automation must inspect this field before claiming indexing succeeded.
 
-`chunk_count` remains `null` for skipped/failed indexing. The outcome contains fixed status codes, not database errors or private paths. Table output explains the outcome and marks `metadata.truncated: true` as a partial extraction. Successful indexing covers the returned text only; it does not assert that extraction covered the entire source or that document provenance was persisted in `sources`.
+`chunk_count` remains `null` for skipped/failed indexing. The outcome contains fixed status codes, not database errors or private paths. Table output explains the outcome and marks `metadata.truncated: true` as a partial extraction. Successful indexing covers the returned text only; it does not assert that extraction covered the entire source.
+
+For the built-in document extractor, indexing also persists the bounded parser version,
+source-byte digest/length, exact extracted UTF-8 digest/length, and truncation flag in
+the same transaction as the source and both FTS projections. Invalid or incomplete
+document provenance produces `{"status":"failed","stage":"invalid_provenance"}`
+before opening the store; mismatched metadata cannot replace a prior entry.
+Other extractors and legacy rows remain unbound.
+
+`neoth ctx` JSON/JSONL search hits expose this as optional
+`source_document_provenance`. It describes the complete extracted source text,
+not the individual matched chunk. A true `extracted_text_truncated` flag means the
+stored text is partial. The raw-source digest remains an extractor assertion;
+the index verifies the extracted-text binding and does not reread the raw file.
+Equal digests do not merge distinct labels or establish rename/move identity.
 
 ### WAL concurrency contract
 
