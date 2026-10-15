@@ -1,0 +1,72 @@
+{
+  "schema": "neoth.gold-wave2600.v1",
+  "date": "2026-10-15",
+  "base": "0195f03613de812ac7a999fae415a212fdad07d6",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "MAIN_WORKTREE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Validate typed bounded source structure and retain it in optional document provenance returned by actual extraction-to-index path",
+    "Migrate schema48 to49 with one nullable sources column through the existing transactional migration dispatcher; historical rows retain NULL",
+    "Persist and replace structure atomically with source, FTS and vocabulary; existing purge owners remove the same source row",
+    "Return structure after reopen and every search fallback, rejecting corrupt/orphaned or mismatched metadata",
+    "Bound structure JSON to256KiB and aggregate actual stored structure payload to1MiB per search response, counting repeated source hits; reject overflowing SQLite LIMIT"
+  ],
+  "tests": [
+    "memory::ctx::tests::corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit",
+    "memory::ctx::tests::document_structure_survives_reopen_and_all_search_modes_as_source_ranges",
+    "memory::ctx::tests::repeated_source_structure_counts_against_the_search_payload_budget",
+    "memory::ctx::tests::structure_replacement_failure_and_purge_follow_the_existing_source_transaction",
+    "memory::ctx::tests::v48_store_reopens_with_nullable_structure_and_preserved_existing_provenance",
+    "memory::document_provenance::tests::document_metadata_retains_only_source_bound_docx_structure",
+    "memory::document_provenance::tests::legacy_provenance_json_defaults_to_no_structure_without_fabricating_ranges",
+    "memory::document_structure::tests::structure_admits_bounded_incomplete_members_and_zero_length_eof_tail",
+    "memory::document_structure::tests::structure_checks_actual_json_and_global_collection_limits",
+    "memory::document_structure::tests::structure_enforces_row_cell_and_paragraph_caps_across_parent_collections",
+    "memory::document_structure::tests::structure_rejects_unknown_fields_bad_coordinates_and_inconsistent_completeness",
+    "memory::document_structure::tests::structure_roundtrip_retains_source_ranges_and_rejects_other_source_binding",
+    "memory::migrations::tests::v48_to_v49_requires_the_source_owner_and_rejects_column_collision",
+    "memory::migrations::tests::v48_to_v49_retains_legacy_rows_and_matches_fresh_source_columns",
+    "memory::migrations::tests::v48_to_v49_version_write_failure_rolls_back_the_column_and_retries"
+  ],
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/memory/document_provenance.rs",
+      "sha256": "8933239743A7E1F8EE36AD2CA1BF371F67802C7A5A603F041C3D70F16CF683E2"
+    },
+    {
+      "path": "SRC/neothd/src/memory/ctx.rs",
+      "sha256": "01196B1683B2369ADA94A1DFAC69D47CB612770137CB74A11A20A47807DCB049"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "sha256": "60EF539E8A84592D7B5C037AF5E57C70573BED7F75E1A63D126603DD55F524F8"
+    },
+    {
+      "path": "SRC/neothd/src/memory/mod.rs",
+      "sha256": "0A17D06F510D9D099103AAFC1C1741161DF2478ADDDF7655AFF1B8156A34D5C9"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sha256": "164D72E62E63B7E0296FE34EC522D9C1778B1D8A230B71CCC7A1D423A86BD842"
+    },
+    {
+      "path": "SRC/neothd/src/memory/document_structure.rs",
+      "sha256": "E63B9C0F2DDCF5D457F06EC1DA0F3BE13AB4B00FFC4749F07F351888C5C7A696"
+    }
+  ],
+  "review": {
+    "method": "Root text review and independent prompt-only source review",
+    "reviewer": "/root/document_provenance_slice",
+    "runtimeClaim": false
+  },
+  "limitations": [
+    "Index preserves extractor assertions and does not independently reopen original archive members",
+    "Source ranges do not locate individual normalized chunks or rendered grid cells",
+    "Full A03, native devices and release acceptance remain open"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedFormatAccepted": false,
+  "hostedCompileAccepted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

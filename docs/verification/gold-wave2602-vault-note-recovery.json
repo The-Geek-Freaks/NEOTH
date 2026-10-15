@@ -1,0 +1,36 @@
+{
+  "schema": "neoth.gold-wave2602.v1",
+  "date": "2026-10-15",
+  "base": "0195f03613de812ac7a999fae415a212fdad07d6",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "MAIN_WORKTREE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Exercise existing approved Vault-note route after successful audit and injected outer audit failure",
+    "Refused reject preserves approved proposal, exact single note and existing audit state",
+    "Explicit reaccept reconciles exact note with one new source/proposal/target/content-bound metadata-only audit",
+    "Subsequent operator edit causes the specific content-custody refusal and preserves note/proposal/audits"
+  ],
+  "tests": [
+    "cli::proactive::tests::document_vault_note_post_effect_recovery_preserves_terminal_state_and_operator_custody"
+  ],
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/cli/proactive.rs",
+      "sha256": "37EB6AC65C2F865CC1974954A782AEAB4908EF752AF395280B9B2B8C07720F48"
+    }
+  ],
+  "review": {
+    "reviewer": "/root/document_provenance_slice",
+    "method": "Prompt-only actual control-flow and assertions supplied by Root",
+    "adopted": "Specific existing-document-note mismatch error and changed operator bytes",
+    "clarification": "Controlled regular-file WAL obstruction proves absence of audit segments; do not call directory-only helper on obstruction"
+  },
+  "limitations": [
+    "Vault route only; Skill inner mutation intent differs and is not simulated by this obstruction",
+    "No new production owner or fault seam",
+    "No derived deletion, logical identity or full A03 closure"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

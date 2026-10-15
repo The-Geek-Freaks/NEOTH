@@ -810,6 +810,16 @@ mod tests {
              DROP TABLE idx_episode_origin_conflict_v1; \
              DROP TABLE idx_counterparty_clustering_consent_v1; \
              DROP TABLE idx_episode_origin_v2; \
+             DROP TABLE b7_applied_document_claim; \
+             ALTER TABLE sources DROP COLUMN document_structure_json; \
+             ALTER TABLE sources DROP COLUMN document_text_truncated; \
+             ALTER TABLE sources DROP COLUMN document_text_encoding; \
+             ALTER TABLE sources DROP COLUMN document_text_bytes; \
+             ALTER TABLE sources DROP COLUMN document_text_sha256; \
+             ALTER TABLE sources DROP COLUMN document_source_bytes; \
+             ALTER TABLE sources DROP COLUMN document_source_sha256; \
+             ALTER TABLE sources DROP COLUMN document_parser_version; \
+             ALTER TABLE sources DROP COLUMN document_provenance_schema; \
              UPDATE meta SET value='41' WHERE key='schema_version';",
         )
         .unwrap();

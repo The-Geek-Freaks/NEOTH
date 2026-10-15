@@ -210,8 +210,12 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+          key: linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            linux-1.91-cargo-checkpoint-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-
+            linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            linux-1.91-cargo-checkpoint-${{ hashFiles('SRC/Cargo.lock') }}-
+            linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             linux-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}
             linux-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             linux-1.91-cargo-complete-
@@ -281,6 +285,22 @@ jobs:
         timeout-minutes: 20
         working-directory: SRC
         run: cargo test --workspace --doc --locked
+
+      # Retain completed lint/doc compilation before a runner can be lost in
+      # GUI preparation. This optional cache never supplies acceptance evidence:
+      # every build/test command still runs and restored JUnit is discarded.
+      - name: Save Linux pre-GUI compilation checkpoint
+        if: ${{ !cancelled() && steps.slim-clippy.outcome == 'success' && steps.workspace-clippy.outcome == 'success' && steps.doctests.outcome == 'success' && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: linux-1.91-cargo-checkpoint-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # The measured cold preparation reached its final compile at 50m07s.
       # Allow profile/environment setup to finish after compile, while preserving
@@ -474,9 +494,12 @@ jobs:
             SRC/target/
           key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
           # Prefer a compatible interrupted target, then retain the existing
-          # exact and broad combined-cache archives during the migration.
+          # same-OS/lock live-audio and legacy combined-cache fallbacks. This
+          # also warms main when an older platform cache belongs to a branch
+          # that main cannot access. Cargo still checks every build input.
           restore-keys: |
             ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-
 

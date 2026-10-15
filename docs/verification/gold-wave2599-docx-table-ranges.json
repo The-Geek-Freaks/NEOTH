@@ -1,0 +1,54 @@
+{
+  "schema": "neoth.gold-wave2599.v1",
+  "date": "2026-10-15",
+  "base": "0195f03613de812ac7a999fae415a212fdad07d6",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "MAIN_WORKTREE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Project physical DOCX table, row, cell and paragraph ranges in the exact uncompressed word/document.xml UTF-8 byte coordinates; retain existing text extraction",
+    "Bind source container and archive member SHA-256/byte extents; distinguish complete scan from complete supported projection",
+    "Omit unsupported merged, nested, foreign and revised tables whole; report malformed tails and resource limits without manufacturing layout or chunk offsets"
+  ],
+  "tests": [
+    "media::document::tests::docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member",
+    "media::document::tests::docx_structure_omissions_preserve_text_and_distinguish_container_revisions",
+    "media::document::tests::non_docx_documents_do_not_claim_docx_structure",
+    "media::docx_structure::tests::docx_ranges_bind_exact_member_bytes_and_preserve_cells_and_paragraphs",
+    "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
+    "media::docx_structure::tests::docx_ranges_omit_merged_revised_and_offset_tables_whole",
+    "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
+    "media::docx_structure::tests::docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries",
+    "media::docx_structure::tests::docx_ranges_keep_omission_totals_after_diagnostic_cap",
+    "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
+    "media::docx_structure::tests::docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables",
+    "media::docx_structure::tests::docx_ranges_cap_actual_serialized_metadata_including_source_binding"
+  ],
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/media/document.rs",
+      "sha256": "C3C685623071C8A17A8C775B596F3C4BE7307447E855DE1A6DEDDE83BA7CF36A"
+    },
+    {
+      "path": "SRC/neothd/src/media/mod.rs",
+      "sha256": "FC9512257A12E8B82DFBE58E63215A4EB8F2A5751149A16752A018899CF60983"
+    },
+    {
+      "path": "SRC/neothd/src/media/docx_structure.rs",
+      "sha256": "A17E063C9D0F1AFE3D5B67244548AA9694D1AF2B2429D5F838BAB776F5E2AC61"
+    }
+  ],
+  "review": {
+    "method": "Root text review and independent prompt-only source review",
+    "reviewer": "/root/document_provenance_slice",
+    "runtimeClaim": false
+  },
+  "limitations": [
+    "Other formats, lists, code and section projections remain open",
+    "Logical document identity, revisions and rename/move lineage remain open"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedFormatAccepted": false,
+  "hostedCompileAccepted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

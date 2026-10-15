@@ -44,6 +44,7 @@ pub mod dictation;
 /// pure-Rust backends.
 pub mod docling;
 pub mod document;
+mod docx_structure;
 /// MM-02b — ffmpeg-backed video frame decoder (single still near a timestamp).
 pub mod frame_decoder;
 /// GOLD-ADAPT-HANDY-07 — GPU/accelerator detection + FMA3 guard for the

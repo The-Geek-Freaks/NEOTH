@@ -52,6 +52,7 @@ pub mod dimension;
 /// W848 — approved document claim batches apply exactly once per source/claim/scope.
 pub mod document_claims;
 pub mod document_provenance;
+pub mod document_structure;
 pub mod drift;
 pub mod embeddings;
 /// GOLD-ADAPT-MEM-06 — knowledge-graph layer (typed entities + weighted

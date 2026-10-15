@@ -960,6 +960,29 @@ mod tests {
              );",
         )
         .unwrap();
+        // Schema v3 already owns the ctx tables. The migration chain only
+        // evolves them; a stamp without these base objects is not a v3 store.
+        conn.execute_batch(
+            "CREATE TABLE sources (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL UNIQUE,
+                 content_hash TEXT, file_path TEXT, content_type TEXT, source_category TEXT,
+                 chunk_count INTEGER NOT NULL DEFAULT 0, indexed_ts INTEGER NOT NULL
+             );
+             CREATE INDEX sources_indexed_ts ON sources (indexed_ts DESC);
+             CREATE INDEX sources_category ON sources (source_category);
+             CREATE VIRTUAL TABLE chunks USING fts5(
+                 title, content, source_id UNINDEXED, content_type UNINDEXED,
+                 source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                 ts_ns UNINDEXED, tokenize='porter unicode61'
+             );
+             CREATE VIRTUAL TABLE chunks_trigram USING fts5(
+                 title, content, source_id UNINDEXED, content_type UNINDEXED,
+                 source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
+                 ts_ns UNINDEXED, tokenize='trigram'
+             );
+             CREATE TABLE vocabulary (term TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1);",
+        )
+        .unwrap();
         migrations::migrate(&mut conn, 3, previous).unwrap();
         drop(conn);
         let args = MigrateArgs {

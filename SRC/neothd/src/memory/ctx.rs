@@ -21,6 +21,9 @@ use super::document_provenance::DocumentProvenance;
 /// Max bytes per chunk. Synthesis tech-pin: 4 KiB. Larger sections are
 /// split at paragraph boundaries before that cap.
 const CHUNK_BYTE_CAP: usize = 4 * 1024;
+/// Count the actual stored structure JSON once per returned chunk, including
+/// repeated hits from one source. Overflow is an error, never partial success.
+const MAX_SEARCH_STRUCTURE_BYTES: usize = 1024 * 1024;
 
 /// One indexed document. Operator-supplied label is the unique key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +130,8 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
         .map(|value| i64::try_from(value.extracted_text_bytes))
         .transpose()
         .context("document text byte count cannot be stored")?;
+    let structure_json = provenance.and_then(|value| value.structure.as_ref())
+        .map(super::document_structure::DocumentStructure::to_json).transpose()?;
     let now = now_unix();
     let content_hash = format!(
         "{:016x}",
@@ -144,8 +149,8 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
          (label, content_hash, file_path, content_type, source_category, chunk_count, indexed_ts, \
           document_provenance_schema, document_parser_version, document_source_sha256, \
           document_source_bytes, document_text_sha256, document_text_bytes, \
-          document_text_encoding, document_text_truncated) \
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+          document_text_encoding, document_text_truncated, document_structure_json) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             req.label,
             content_hash,
@@ -161,6 +166,7 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
             text_bytes,
             provenance.map(|value| value.extracted_text_encoding.as_str()),
             provenance.map(|value| i64::from(value.extracted_text_truncated)),
+            structure_json,
         ],
     )?;
     let source_id = tx.last_insert_rowid();
@@ -511,12 +517,13 @@ fn run_match(
     limit: usize,
     mode: SearchMode,
 ) -> Result<Vec<CtxHit>> {
+    let sql_limit = i64::try_from(limit).context("ctx search limit exceeds SQLite integer range")?;
     let sql = format!(
         "SELECT t.source_id, s.label, t.title, t.content, t.content_type, \
                 t.source_category, t.event_id, t.file_path, t.ts_ns, \
                 s.document_provenance_schema, s.document_parser_version, s.document_source_sha256, \
                 s.document_source_bytes, s.document_text_sha256, s.document_text_bytes, \
-                s.document_text_encoding, s.document_text_truncated \
+                s.document_text_encoding, s.document_text_truncated, s.document_structure_json \
          FROM {table} t \
          JOIN sources s ON s.id = t.source_id \
          WHERE t.content MATCH ?1 \
@@ -524,8 +531,18 @@ fn run_match(
          LIMIT ?2"
     );
     let mut stmt = conn.prepare(&sql)?;
+    let mut structure_bytes = 0usize;
     let rows = stmt
-        .query_map(params![query, limit as i64], |row| {
+        .query_map(params![query, sql_limit], |row| {
+            let source_document_provenance = DocumentProvenance::from_row(row, 9)?;
+            if let rusqlite::types::ValueRef::Text(bytes) = row.get_ref(17)? {
+                structure_bytes = structure_bytes.checked_add(bytes.len())
+                    .filter(|total| *total <= MAX_SEARCH_STRUCTURE_BYTES)
+                    .ok_or_else(|| rusqlite::Error::FromSqlConversionFailure(
+                        17, rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::other("ctx search structure payload limit exceeded")),
+                    ))?;
+            }
             Ok(CtxHit {
                 source_id: row.get(0)?,
                 label: row.get(1)?,
@@ -537,7 +554,7 @@ fn run_match(
                 file_path: row.get(7)?,
                 ts_ns: row.get(8)?,
                 mode,
-                source_document_provenance: DocumentProvenance::from_row(row, 9)?,
+                source_document_provenance,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -766,8 +783,138 @@ mod tests {
             extracted_text_bytes: content.len() as u64,
             extracted_text_encoding: "utf-8".into(),
             extracted_text_truncated: true,
+            structure: None,
         });
         request
+    }
+
+    fn structured_document(content: &str, label: &str) -> IndexRequest {
+        let mut request = proven_document(content, label);
+        let provenance = request.document_provenance.as_mut().unwrap();
+        provenance.structure = Some(super::super::document_structure::DocumentStructure::from_value(
+            &super::super::document_structure::test_structure_value(&provenance.source_bytes_sha256, provenance.source_bytes),
+        ).unwrap());
+        request
+    }
+
+    #[test]
+    fn document_structure_survives_reopen_and_all_search_modes_as_source_ranges() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let request = structured_document("running quickly testing barbaz kubernetes", "doc");
+        index_document(&mut conn, &request).unwrap();
+        drop(conn);
+        let conn = crate::memory::store::open(&path).unwrap();
+        for (query, mode) in [("test", SearchMode::Bm25), ("arba", SearchMode::Trigram), ("kubernates", SearchMode::Fuzzy)] {
+            let hits = search(&conn, query, 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].mode, mode);
+            assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+            assert_eq!(serde_json::to_value(&hits[0]).unwrap()["source_document_provenance"]["structure"]["coordinate_system"],
+                "zip-entry-utf8-byte-offset/v1");
+        }
+    }
+
+    #[test]
+    fn structure_replacement_failure_and_purge_follow_the_existing_source_transaction() {
+        let mut conn = fresh_conn();
+        let original = structured_document("original retained text", "doc");
+        index_document(&mut conn, &original).unwrap();
+        let mut invalid = structured_document("replacement text", "doc");
+        invalid.document_provenance.as_mut().unwrap().source_bytes += 1;
+        assert!(index_document(&mut conn, &invalid).is_err());
+        conn.execute_batch("CREATE TRIGGER reject_structure_replacement AFTER INSERT ON sources
+            BEGIN SELECT RAISE(ABORT, 'injected source failure'); END;").unwrap();
+        assert!(index_document(&mut conn, &structured_document("replacement text", "doc")).is_err());
+        assert_eq!(search(&conn, "original", 10).unwrap()[0].source_document_provenance, original.document_provenance);
+        conn.execute_batch("DROP TRIGGER reject_structure_replacement").unwrap();
+        index_document(&mut conn, &proven_document("replacement text", "doc")).unwrap();
+        let hits = search(&conn, "replacement", 10).unwrap();
+        assert!(hits[0].source_document_provenance.as_ref().unwrap().structure.is_none());
+        let cleared: bool = conn.query_row("SELECT document_structure_json IS NULL FROM sources WHERE label='doc'", [], |row| row.get(0)).unwrap();
+        assert!(cleared);
+        index_document(&mut conn, &original).unwrap();
+        assert_eq!(purge(&mut conn, PurgeScope::Source("doc")).unwrap(), 1);
+        assert!(search(&conn, "original", 10).unwrap().is_empty());
+        let remaining: i64 = conn.query_row("SELECT count(*) FROM sources WHERE document_structure_json IS NOT NULL", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, 0);
+        for scope in [PurgeScope::Category("test"), PurgeScope::All] {
+            index_document(&mut conn, &original).unwrap();
+            assert_eq!(purge(&mut conn, scope).unwrap(), 1);
+            let count: i64 = conn.query_row("SELECT count(*) FROM sources WHERE document_structure_json IS NOT NULL", [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit() {
+        let mut conn = fresh_conn();
+        let request = structured_document("find this document", "doc");
+        for malformed in ["{".to_owned(), "null".to_owned(), " ".repeat(super::super::document_structure::MAX_STRUCTURE_JSON_BYTES + 1)] {
+            index_document(&mut conn, &request).unwrap();
+            conn.execute("UPDATE sources SET document_structure_json=?1", params![malformed]).unwrap();
+            assert!(search(&conn, "document", 10).is_err());
+        }
+        index_document(&mut conn, &request).unwrap();
+        conn.execute("UPDATE sources SET document_source_sha256=?1", params!["c".repeat(64)]).unwrap();
+        assert!(search(&conn, "document", 10).is_err());
+        index_document(&mut conn, &idx("find this document", "legacy")).unwrap();
+        purge(&mut conn, PurgeScope::Source("doc")).unwrap();
+        let sidecar = request.document_provenance.unwrap().structure.unwrap().to_json().unwrap();
+        conn.execute("UPDATE sources SET document_structure_json=?1 WHERE label='legacy'", params![sidecar]).unwrap();
+        assert!(search(&conn, "document", 10).is_err());
+    }
+
+    #[test]
+    fn v48_store_reopens_with_nullable_structure_and_preserved_existing_provenance() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let request = proven_document("retained provenance", "doc");
+        index_document(&mut conn, &request).unwrap();
+        index_document(&mut conn, &idx("unbound legacy", "legacy")).unwrap();
+        conn.execute_batch("ALTER TABLE sources DROP COLUMN document_structure_json;
+            UPDATE meta SET value='48' WHERE key='schema_version';").unwrap();
+        drop(conn);
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        assert_eq!(crate::memory::migrations::current_version(&conn).unwrap(), crate::memory::store::SCHEMA_VERSION);
+        assert_eq!(search(&conn, "provenance", 10).unwrap()[0].source_document_provenance, request.document_provenance);
+        assert!(search(&conn, "legacy", 10).unwrap()[0].source_document_provenance.is_none());
+        let upgraded = structured_document("retained provenance", "doc");
+        index_document(&mut conn, &upgraded).unwrap();
+        drop(conn);
+        let conn = crate::memory::store::open(&path).unwrap();
+        assert_eq!(search(&conn, "provenance", 10).unwrap()[0].source_document_provenance, upgraded.document_provenance);
+    }
+
+    #[test]
+    fn repeated_source_structure_counts_against_the_search_payload_budget() {
+        let mut value = super::super::document_structure::test_structure_value(&"a".repeat(64), 100);
+        value["entry_bytes"] = serde_json::json!(8_000_000);
+        value["tables"][0]["source_range"] = serde_json::json!([1, 7_999_999]);
+        value["tables"][0]["rows"][0]["source_range"] = serde_json::json!([2, 7_999_998]);
+        value["tables"][0]["rows"][0]["cells"] = serde_json::json!([{
+            "source_range": [3, 7_999_997],
+            "paragraph_source_ranges": (0..4_096u64).map(|i| [1_000_000+i*10, 1_000_005+i*10]).collect::<Vec<_>>()
+        }]);
+        let structure = super::super::document_structure::DocumentStructure::from_value(&value).unwrap();
+        let structure_len = structure.to_json().unwrap().len();
+        let allowed = MAX_SEARCH_STRUCTURE_BYTES / structure_len;
+        let paragraph = format!("needle {}\n\n", "x".repeat(CHUNK_BYTE_CAP - 32));
+        let mut request = proven_document(&paragraph.repeat(allowed + 2), "doc");
+        request.document_provenance.as_mut().unwrap().structure = Some(structure);
+        let mut conn = fresh_conn();
+        index_document(&mut conn, &request).unwrap();
+        assert_eq!(search(&conn, "needle", allowed).unwrap().len(), allowed);
+        let error = search(&conn, "needle", allowed + 1).unwrap_err();
+        assert!(format!("{error:#}").contains("structure payload limit"));
+        assert_eq!(search(&conn, "needle", 1).unwrap().len(), 1);
+        if usize::BITS > 63 {
+            let empty = Connection::open_in_memory().unwrap();
+            let error = run_match(&empty, "chunks", "needle", usize::MAX, SearchMode::Bm25).unwrap_err();
+            assert!(format!("{error:#}").contains("SQLite integer range"));
+        }
     }
 
     #[test]
@@ -818,6 +965,7 @@ mod tests {
             "document_text_bytes",
             "document_text_encoding",
             "document_text_truncated",
+            "document_structure_json",
         ] {
             conn.execute_batch(&format!("ALTER TABLE sources DROP COLUMN {column};"))
                 .unwrap();
@@ -831,7 +979,7 @@ mod tests {
         let mut migrated = crate::memory::store::open(&path).unwrap();
         assert_eq!(
             crate::memory::migrations::current_version(&migrated).unwrap(),
-            47
+            crate::memory::store::SCHEMA_VERSION
         );
         let request = proven_document("new searchable document", "document");
         index_document(&mut migrated, &request).unwrap();
@@ -911,6 +1059,7 @@ mod tests {
                  AND document_source_sha256 IS NULL AND document_source_bytes IS NULL
                  AND document_text_sha256 IS NULL AND document_text_bytes IS NULL
                  AND document_text_encoding IS NULL AND document_text_truncated IS NULL
+                 AND document_structure_json IS NULL
              FROM sources WHERE label = 'doc'",
                 [],
                 |row| row.get(0),

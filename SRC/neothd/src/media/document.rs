@@ -20,6 +20,10 @@
 //! dependency. RTF is the one non-zip format and gets its own
 //! control-word stripper.
 //!
+//! DOCX additionally exposes bounded physical table/cell/paragraph source ranges
+//! in metadata. They address the exact uncompressed XML member, preserve the
+//! existing text contract, and explicitly mark unsupported or incomplete input.
+//!
 //! Limitations (first slice — read only):
 //!   - XLSX reads shared strings only (cell labels/text), not computed
 //!     numeric cells or inline strings.
@@ -189,9 +193,11 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
         reason: "unrecognised document format (mime + extension both unknown)".into(),
     })?;
     let bytes = read_asset_bytes(asset)?;
+    let source_sha256 = hex::encode(Sha256::digest(&bytes));
+    let mut document_structure = None;
 
     let (mut text, truncated) = if fmt.is_zip() {
-        extract_zip_text(&bytes, fmt)?
+        extract_zip_text(&bytes, fmt, &source_sha256, &mut document_structure)?
     } else {
         truncate_owned_text(rtf_to_text(&bytes), MAX_CONTENT_TEXT)
     };
@@ -207,7 +213,7 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
         "schema": "neoth.document-provenance.v1",
         "parser_version": DOCUMENT_PARSER_VERSION,
         "source": {
-            "sha256": hex::encode(Sha256::digest(&bytes)),
+            "sha256": source_sha256,
             "bytes": bytes.len(),
         },
         "extracted_text": {
@@ -216,9 +222,7 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
             "encoding": "utf-8",
         },
     });
-    Ok(Extraction {
-        text,
-        metadata: serde_json::json!({
+    let mut metadata = serde_json::json!({
             "extractor": "document",
             "format": fmt.as_str(),
             "char_count": stats.0,
@@ -226,8 +230,11 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
             "line_count": stats.2,
             "truncated": truncated,
             "provenance": provenance,
-        }),
-    })
+        });
+    if let Some(structure) = document_structure {
+        metadata["document_structure"] = structure;
+    }
+    Ok(Extraction { text, metadata })
 }
 
 /// mime first (the channel layer sets a precise OOXML/ODF mime), then
@@ -284,7 +291,12 @@ fn enforce_document_byte_ceiling(len: u64) -> Result<(), ExtractionError> {
 
 type Archive = zip::ZipArchive<Cursor<Vec<u8>>>;
 
-fn extract_zip_text(bytes: &[u8], fmt: DocFormat) -> Result<(String, bool), ExtractionError> {
+fn extract_zip_text(
+    bytes: &[u8],
+    fmt: DocFormat,
+    source_sha256: &str,
+    document_structure: &mut Option<serde_json::Value>,
+) -> Result<(String, bool), ExtractionError> {
     let cursor = Cursor::new(bytes.to_vec());
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| ExtractionError::Backend {
         backend: "document",
@@ -297,6 +309,11 @@ fn extract_zip_text(bytes: &[u8], fmt: DocFormat) -> Result<(String, bool), Extr
         DocFormat::Docx => {
             let xml = read_member(&mut archive, "word/document.xml", &mut read_budget)?
                 .ok_or_else(missing("docx", "word/document.xml"))?;
+            *document_structure = Some(super::docx_structure::project(
+                &xml,
+                source_sha256,
+                bytes.len(),
+            ));
             Ok(truncate_owned_text(
                 xml_body_text(&xml, DOCX_BREAKS),
                 MAX_CONTENT_TEXT,
@@ -1142,6 +1159,91 @@ mod tests {
         assert_eq!(out.text, "Hello\nWorld & more");
         assert_eq!(out.metadata["format"], "docx");
         assert_eq!(out.metadata["truncated"], false);
+    }
+
+
+    #[test]
+    fn docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member() {
+        let xml = concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>",
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>One &amp; Ω</w:t></w:r></w:p>",
+            "<w:p><w:r><w:t>Two</w:t></w:r></w:p></w:tc>",
+            "<w:tc><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            "</w:body></w:document>"
+        );
+        let bytes = make_zip(&[("word/document.xml", xml)]);
+        let expected_source_hash = hex::encode(Sha256::digest(&bytes));
+        let expected_source_bytes = bytes.len();
+        let out = extract_blocking(&doc_asset(DOCX_MIME, bytes)).unwrap();
+        assert_eq!(out.text, xml_body_text(xml, DOCX_BREAKS));
+        assert_eq!(out.metadata["provenance"]["source"]["sha256"], expected_source_hash);
+        assert_eq!(out.metadata["provenance"]["source"]["bytes"], expected_source_bytes);
+        assert_eq!(out.metadata["provenance"]["extracted_text"]["sha256"], hex::encode(Sha256::digest(out.text.as_bytes())));
+        let structure = &out.metadata["document_structure"];
+        assert_eq!(structure["source_document"], out.metadata["provenance"]["source"]);
+        assert_eq!(structure["entry_sha256"], hex::encode(Sha256::digest(xml.as_bytes())));
+        assert_eq!(structure["entry_bytes"], xml.len());
+        assert_eq!(structure["complete"], true);
+        let cells = structure["tables"][0]["rows"][0]["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0]["paragraph_source_ranges"].as_array().unwrap().len(), 2);
+        assert_eq!(cells[1]["paragraph_source_ranges"].as_array().unwrap().len(), 1);
+        assert!(serde_json::to_vec(structure).unwrap().len() <= 256 * 1024);
+        let index_provenance = crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
+            .unwrap()
+            .unwrap();
+        index_provenance.validate_for_content(&out.text).unwrap();
+        assert_eq!(index_provenance.source_bytes_sha256, expected_source_hash);
+    }
+
+    #[test]
+    fn docx_structure_omissions_preserve_text_and_distinguish_container_revisions() {
+        let xml = concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>",
+            "<w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>",
+            "<w:p><w:r><w:t>Still readable</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+            "</w:body></w:document>"
+        );
+        let first = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", xml)]))).unwrap();
+        let second = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", xml), ("unused.txt", "revision")]))).unwrap();
+        for out in [&first, &second] {
+            assert_eq!(out.text, xml_body_text(xml, DOCX_BREAKS));
+            let structure = &out.metadata["document_structure"];
+            assert_eq!(structure["complete"], false);
+            assert_eq!(structure["scan_complete"], true);
+            assert_eq!(structure["omitted_tables_observed"], 1);
+            assert!(structure["tables"].as_array().unwrap().is_empty());
+            assert_eq!(structure["source_document"], out.metadata["provenance"]["source"]);
+            crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
+                .unwrap()
+                .unwrap()
+                .validate_for_content(&out.text)
+                .unwrap();
+        }
+        assert_eq!(first.metadata["document_structure"]["entry_sha256"], second.metadata["document_structure"]["entry_sha256"]);
+        assert_ne!(first.metadata["document_structure"]["source_document"]["sha256"], second.metadata["document_structure"]["source_document"]["sha256"]);
+        assert_eq!(first.metadata["provenance"]["extracted_text"], second.metadata["provenance"]["extracted_text"]);
+        let malformed = xml.replace("</w:body>", "<w:tbl><w:tr></w:tbl></w:body>");
+        let out = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", &malformed)]))).unwrap();
+        assert_eq!(out.text, xml_body_text(&malformed, DOCX_BREAKS));
+        assert_eq!(out.metadata["document_structure"]["complete"], false);
+        assert_eq!(out.metadata["document_structure"]["scan_complete"], false);
+        assert_eq!(out.metadata["provenance"]["extracted_text"]["sha256"], hex::encode(Sha256::digest(out.text.as_bytes())));
+        crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
+            .unwrap()
+            .unwrap()
+            .validate_for_content(&out.text)
+            .unwrap();
+    }
+
+    #[test]
+    fn non_docx_documents_do_not_claim_docx_structure() {
+        let rtf = extract_blocking(&doc_asset("application/rtf", br"{\rtf1 hello}".to_vec())).unwrap();
+        let odt = extract_blocking(&doc_asset("application/vnd.oasis.opendocument.text", make_zip(&[("content.xml", "<p>hello</p>")]))).unwrap();
+        for out in [rtf, odt] {
+            assert_eq!(out.metadata.get("document_structure"), None);
+            assert_eq!(out.metadata["provenance"]["parser_version"], DOCUMENT_PARSER_VERSION);
+        }
     }
 
     #[tokio::test]

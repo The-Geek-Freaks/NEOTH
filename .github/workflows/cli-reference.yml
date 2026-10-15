@@ -19,6 +19,10 @@ on:
         description: 'Also run the exact updater-status live-binding and offline-boundary regressions'
         type: boolean
         default: false
+      document_regressions:
+        description: 'Also run 32 exact document structure, persistence, recovery and migration regressions'
+        type: boolean
+        default: false
       macos_provider_regression:
         description: 'Run the exact native macOS Buddy provider GUI callback regression'
         type: boolean
@@ -49,12 +53,24 @@ jobs:
     name: Export exact-source CLI reference
     if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.core_audio_regressions || inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions) && 75 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.core_audio_regressions || inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions || inputs.document_regressions) && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Prepare document regression run context
+        if: ${{ inputs.document_regressions }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-document-regressions"
+          mkdir -p "$proof_dir"
+          printf 'producer=%s\nref=%s\nrun=%s\nattempt=%s\njob_key=%s\n' \
+            "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" > "$proof_dir/run-context.txt"
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -79,6 +95,8 @@ jobs:
       # This cache family belongs to this workflow. Its key intentionally tracks
       # the Rust toolchain and lockfile, while Cargo still validates all current
       # source inputs; it is an accelerator, never an acceptance receipt.
+      # A same-OS/lock live-audio fallback also warms a cold main branch; it
+      # contains the same four paths and never bypasses Cargo freshness checks.
       - name: Restore CLI-reference Cargo checkpoint
         id: cli-reference-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -90,6 +108,7 @@ jobs:
             SRC/target/
           key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-cli-reference-rust-1.91-cargo-
 
       - name: Check exact-source slim-core production Clippy
@@ -115,6 +134,106 @@ jobs:
         timeout-minutes: 45
         working-directory: SRC
         run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
+
+      - name: Run exact document and migration regressions
+        if: ${{ inputs.document_regressions }}
+        timeout-minutes: 45
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          proof_dir="$RUNNER_TEMP/neoth-document-regressions"
+          mkdir -p "$proof_dir"
+          python3 - <<'PY' 2>&1 | tee "$proof_dir/selection-validation.log"
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "neoth-document-regressions"
+          matrix_path = root / "docs/verification/gold-wave95-96-test-matrix.json"
+          matrix_bytes = matrix_path.read_bytes()
+          matrix = json.loads(matrix_bytes)
+          spec = matrix.get("wave2601DocumentRegressions", {})
+          names = spec.get("requiredTests", [])
+          if spec.get("requiredCount") != 32 or len(names) != 32 or len(set(names)) != 32:
+              raise SystemExit("document regression selection must contain exactly 32 unique identities")
+          if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
+              raise SystemExit("invalid document regression identity")
+          native = matrix.get("requiredNativeTests", [])
+          records = []
+          inputs = {
+              "docs/verification/gold-wave95-96-test-matrix.json": hashlib.sha256(matrix_bytes).hexdigest(),
+          }
+          expected_names = []
+          for relative in (
+              "docs/verification/gold-wave2599-docx-table-ranges.json",
+              "docs/verification/gold-wave2600-document-structure-persistence.json",
+              "docs/verification/gold-wave2602-vault-note-recovery.json",
+              "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
+          ):
+              report_bytes = (root / relative).read_bytes()
+              report = json.loads(report_bytes)
+              expected_names.extend(report.get("tests", report.get("observedWindows", {}).get("failures", [])))
+              inputs[relative] = hashlib.sha256(report_bytes).hexdigest()
+          if names != sorted(expected_names) or len(set(expected_names)) != 32:
+              raise SystemExit("document selection differs from the 28 new and four observed-failing cases")
+          for name in names:
+              matches = [record for record in native if record.get("test") == name and record.get("junitClass") == "neoth"]
+              if len(matches) != 1:
+                  raise SystemExit(f"document regression is not uniquely registered: {name}")
+              record = matches[0]
+              relative = pathlib.PurePosixPath(record["sourcePath"])
+              if relative.is_absolute() or ".." in relative.parts or not relative.parts or relative.parts[0] != "SRC":
+                  raise SystemExit(f"invalid source path: {relative}")
+              source = (root / relative).resolve()
+              if not source.is_relative_to(root):
+                  raise SystemExit(f"source escapes checkout: {relative}")
+              actual = hashlib.sha256(source.read_bytes()).hexdigest()
+              if actual != record["sourceSha256"].lower():
+                  raise SystemExit(f"source binding mismatch: {relative}")
+              records.append({"test": name, "sourcePath": relative.as_posix(), "sourceSha256": actual, "junitClass": "neoth"})
+              inputs[relative.as_posix()] = actual
+          for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml"):
+              inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+          receipt = {
+              "schema": "neoth.document-regressions.v1", "producer": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"],
+              "requiredCount": 32, "fixtures": records, "inputs": inputs,
+          }
+          (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+          PY
+          cargo test -p neoth --lib --locked --no-run 2>&1 | tee "$proof_dir/compile.log"
+          visited=0
+          while IFS= read -r identity; do
+            test -n "$identity"
+            number=$((visited + 1))
+            cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$proof_dir/$number.discovery.log"
+            test "$(grep -Fxc "$identity: test" "$proof_dir/$number.discovery.log")" -eq 1
+            cargo test -p neoth --lib --locked "$identity" -- --exact --test-threads=1 2>&1 | tee "$proof_dir/$number.test.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$number.test.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$number.test.log")" -eq 1
+            visited=$number
+          done < "$proof_dir/fixture-names.txt"
+          test "$visited" -eq 32
+          printf 'selected=32\nvisited=%s\nfailed_or_missing=0\n' "$visited" > "$proof_dir/final-counts.txt"
+
+      - name: Upload document regression evidence
+        if: ${{ always() && inputs.document_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: document-index-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-document-regressions/
+          if-no-files-found: error
+          retention-days: 14
 
       # This optional contract is deliberately narrow: each listed identity is
       # discovered and run once, while the ordinary type check, public CLI
@@ -524,6 +643,13 @@ jobs:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: '1'
     steps:
+      - name: Reject incompatible document and macOS regression modes
+        if: ${{ inputs.document_regressions }}
+        shell: bash
+        run: |
+          echo '::error::document_regressions requires the Linux core lane; do not combine with macos_provider_regression'
+          exit 1
+
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

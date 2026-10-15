@@ -1,0 +1,128 @@
+{
+  "schema": "neoth.gold-wave2601.v1",
+  "date": "2026-10-15",
+  "base": "0195f03613de812ac7a999fae415a212fdad07d6",
+  "status": "MAIN_WORKTREE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Full-store migration integration assertion follows current SCHEMA_VERSION; explicit migration-specific target assertions remain fixed",
+    "Save an optional bounded post-doctest/pre-GUI Linux checkpoint after successful prerequisite compilation",
+    "Use producer-qualified completed cache keys with current-producer checkpoint preference and legacy completed/partial fallbacks",
+    "Repair the exact observed CLI v3 and v41/v42 historical migration fixtures; preserve all behavior assertions and strict production failure handling",
+    "Add an opt-in 32-case exact document regression lane to the existing hosted CLI-reference workflow before the expensive full platform matrix",
+    "Restore same-OS/same-lock live-audio Cargo fallback for cold main platform and CLI-reference jobs; preserve all compilation and acceptance checks"
+  ],
+  "observedFailure": {
+    "run": "38742366323",
+    "job": "116447068651",
+    "step": "Prepare Linux GUI callback runtime prerequisites",
+    "exit": 143,
+    "diagnostic": "The runner has received a shutdown signal",
+    "underlyingCause": "unknown",
+    "compilerFailureEstablished": false
+  },
+  "preserved": [
+    "All compile/test commands and acceptance gates",
+    "Receipt invalidation and GUI containment",
+    "One active heavy CI stream",
+    "Unrelated local Cargo.lock and .gitignore"
+  ],
+  "review": {
+    "reviewer": "/root/interop_ci_budget_review",
+    "scope": "Prompt-only cache guards, historical migration fixture repairs, exact-case selection/source bindings, stderr capture and always-upload proof; no local executable validation",
+    "result": "static reviewed"
+  },
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/memory/ctx.rs",
+      "sha256": "01196B1683B2369ADA94A1DFAC69D47CB612770137CB74A11A20A47807DCB049"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sha256": "164D72E62E63B7E0296FE34EC522D9C1778B1D8A230B71CCC7A1D423A86BD842"
+    },
+    {
+      "path": "SRC/neothd/src/cli/migrate.rs",
+      "sha256": "D6C1C2615F712F068BD59104F9B8F56A38C451D062C8DE2D4F9AA37CB3949A72"
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sha256": "C202A35A594F3FF0E69C28C51B8E57A7575B65A079141C2F5B556E82FFDD417A"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "148FED3938A84C3C42670896EB071B3CB037FC52D0A64AD4DA5E666AE7B163D9"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "426A209E3ECD6575DC0E3472FFBF368E11FC258F8B8263FD8BBE7E88B5AF9499"
+    }
+  ],
+  "performanceImprovementMeasured": false,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "observedWindows": {
+    "run": "38742366323",
+    "job": "116447068756",
+    "runTests": 19362,
+    "passed": 19358,
+    "failed": 4,
+    "skipped": 34,
+    "failures": [
+      "cli::migrate::tests::run_reaches_target",
+      "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+      "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
+      "memory::migrations::tests::v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens"
+    ]
+  },
+  "focusedValidation": {
+    "workflow": ".github/workflows/cli-reference.yml",
+    "input": "document_regressions=true",
+    "exactCases": 32,
+    "newCases": 28,
+    "observedFailureCases": 4,
+    "sourceSelection": "Canonical native matrix cross-checked against the four batch reports",
+    "admissionRequires": "Original artifact/API digest and raw producer source bindings, numeric job identity, successful exact discovery/execution for all32 and successful workflow terminal status",
+    "localRuntimeExecuted": false,
+    "hostedAccepted": false
+  },
+  "validationSequence": [
+    "Publish reviewed main batch while immutable old full run completes; overlap only fast automatic source/format checks",
+    "Finish old full-run macOS triage and integrate every required repair before new heavy validation",
+    "Freeze final producer after any hosted format repair and source rebind",
+    "Run32 exact document cases on final producer",
+    "Run full platform CI on that same producer",
+    "Run Mobile-Interop on that same producer",
+    "Run native validation consuming accepted same-producer interop proof"
+  ],
+  "cacheScopeFinding": {
+    "oldMacCompleteRef": "refs/heads/codex/w2589-recipe-and-document",
+    "mainMacPlatformCachesAtInspection": 0,
+    "mainLiveAudioFallbackExists": true,
+    "source": "https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache",
+    "rawEvidence": "work/gold-20260906/wave2598-document-integration/CACHE_SCOPE_DIAGNOSIS.json",
+    "speedupMeasured": false,
+    "actualCurrentRestoreMissNeedsTerminalLog": true
+  },
+  "sequenceOptimization": {
+    "oldFullRun": "38742366323",
+    "oldProducer": "0195f03613de812ac7a999fae415a212fdad07d6",
+    "alreadyFailedJobs": [
+      "116447068651",
+      "116447068756"
+    ],
+    "publishMayOverlapOldTerminal": true,
+    "heavyDispatchRequiresOldTerminalTriage": true,
+    "reviewer": "/root/interop_ci_budget_review",
+    "reason": "Old macOS binaries and fixture CLI were compiled from immutable old producer; fullCI has no push trigger. Fast preflight can run while remaining old tests finish."
+  },
+  "macosCompileObservation": {
+    "proof": "work/gold-20260906/wave2598-document-integration/MACOS_COMPILE_CUSTODY.json",
+    "snapshots": 144,
+    "peakSwapMiB": 3367.88,
+    "peakRustcRssKiB": 5013344,
+    "compileSucceeded": true,
+    "increaseParallelism": false,
+    "fullRunAccepted": false
+  }
+}
