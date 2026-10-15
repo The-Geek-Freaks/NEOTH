@@ -26,7 +26,10 @@ impl Provider for StreamedMcpProvider<'_> {
 
     async fn complete(&self, req: Request) -> Result<Completion> {
         let started = std::time::Instant::now();
-        let stream = self.inner.stream(req).await
+        let stream = self
+            .inner
+            .stream(req)
+            .await
             .map_err(|_| anyhow::anyhow!("companion MCP stream could not open"))?;
         let mut completion = collect_stream(stream).await?;
         completion.latency = started.elapsed();
@@ -39,9 +42,15 @@ async fn collect_stream(mut stream: ChunkStream) -> Result<Completion> {
     let mut expected_identity: Option<CompletionIdentity> = None;
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(|_| anyhow::anyhow!("companion MCP stream failed"))?;
-        ensure!(chunk.identity.is_bound(), "companion MCP stream identity is unbound");
+        ensure!(
+            chunk.identity.is_bound(),
+            "companion MCP stream identity is unbound"
+        );
         if let Some(expected) = &expected_identity {
-            ensure!(expected == &chunk.identity, "companion MCP stream identity changed");
+            ensure!(
+                expected == &chunk.identity,
+                "companion MCP stream identity changed"
+            );
         } else {
             expected_identity = Some(chunk.identity.clone());
         }
@@ -50,15 +59,23 @@ async fn collect_stream(mut stream: ChunkStream) -> Result<Completion> {
             "companion MCP stream exceeds round limit"
         );
         // Refused or truncated tool syntax must never reach the dispatch parser.
-        ensure!(!chunk.termination.is_refusal(), "companion MCP stream refused");
         ensure!(
-            !matches!(chunk.termination.finish_reason.as_deref(), Some("length" | "max_tokens")),
+            !chunk.termination.is_refusal(),
+            "companion MCP stream refused"
+        );
+        ensure!(
+            !matches!(
+                chunk.termination.finish_reason.as_deref(),
+                Some("length" | "max_tokens")
+            ),
             "companion MCP stream truncated"
         );
         completion.text.push_str(&chunk.delta);
         completion.input_tokens = chunk.input_tokens.or(completion.input_tokens);
         completion.output_tokens = chunk.output_tokens.or(completion.output_tokens);
-        completion.cache_creation_tokens = chunk.cache_creation_tokens.or(completion.cache_creation_tokens);
+        completion.cache_creation_tokens = chunk
+            .cache_creation_tokens
+            .or(completion.cache_creation_tokens);
         completion.cache_read_tokens = chunk.cache_read_tokens.or(completion.cache_read_tokens);
         if chunk.done {
             completion.model = chunk.identity.wire_model.clone();
@@ -107,7 +124,9 @@ mod tests {
         last.output_tokens = Some(0);
         last.cache_read_tokens = Some(7);
         last.termination = ProviderTermination::finished(Some("stop".into()));
-        let result = collect_stream(stream(vec![Ok(first), Ok(last)])).await.unwrap();
+        let result = collect_stream(stream(vec![Ok(first), Ok(last)]))
+            .await
+            .unwrap();
         assert_eq!(result.text, "first answer");
         assert_eq!(result.identity, identity());
         assert_eq!(result.model, "stream-model");
@@ -127,27 +146,42 @@ mod tests {
         let mut changed = chunk("private", true);
         changed.identity.wire_model = "different".into();
         let error = collect_stream(stream(vec![Ok(chunk("first", false)), Ok(changed)]))
-            .await.unwrap_err();
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "companion MCP stream identity changed");
     }
 
     #[tokio::test]
     async fn streamed_mcp_requires_done_and_discards_private_transport_errors() {
         let error = collect_stream(stream(vec![Ok(chunk("unfinished", false))]))
-            .await.unwrap_err();
-        assert_eq!(error.to_string(), "companion MCP stream ended without terminal");
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "companion MCP stream ended without terminal"
+        );
         let error = collect_stream(stream(vec![Err(anyhow::anyhow!("private body"))]))
-            .await.unwrap_err();
+            .await
+            .unwrap_err();
         assert_eq!(error.to_string(), "companion MCP stream failed");
     }
 
     #[tokio::test]
     async fn streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences() {
-        assert!(collect_stream(stream(vec![Ok(chunk(&"x".repeat(MAX_ROUND_BYTES + 1), true))]))
-            .await.is_err());
+        assert!(
+            collect_stream(stream(vec![Ok(chunk(
+                &"x".repeat(MAX_ROUND_BYTES + 1),
+                true
+            ))]))
+            .await
+            .is_err()
+        );
         let mut refused = chunk("```mcp-tool-call", true);
         refused.termination = ProviderTermination::refused(
-            Some("content_filter".into()), RefusalOrigin::FinishReason, "content_filter", None,
+            Some("content_filter".into()),
+            RefusalOrigin::FinishReason,
+            "content_filter",
+            None,
         );
         assert!(collect_stream(stream(vec![Ok(refused)])).await.is_err());
         for reason in ["length", "max_tokens"] {

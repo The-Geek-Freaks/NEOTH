@@ -6612,7 +6612,8 @@ pub(super) async fn dispatch_provider(
     };
     // Retain the same authorized leaf boundary and the same canary quarantine.
     // Only the combined companion route consumes SSE for every MCP round.
-    let streamed_mcp_provider = super::companion_mcp_stream::StreamedMcpProvider { inner: provider };
+    let streamed_mcp_provider =
+        super::companion_mcp_stream::StreamedMcpProvider { inner: provider };
     let guarded_streamed_mcp_provider = CanaryGuardedProvider {
         inner: &streamed_mcp_provider,
         canary,
@@ -18500,12 +18501,15 @@ mod tests {
         }
         #[async_trait]
         impl Provider for StreamOnly {
-            fn name(&self) -> &'static str { "companion-stream-test" }
+            fn name(&self) -> &'static str {
+                "companion-stream-test"
+            }
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 panic!("combined companion route must not switch to non-stream completion")
             }
             async fn stream(&self, _req: Request) -> Result<crate::providers::ChunkStream> {
-                self.opened.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.opened
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let split = self.body.len() / 2;
                 let identity = crate::providers::CompletionIdentity {
                     provider: self.name().into(),
@@ -18533,7 +18537,10 @@ mod tests {
             opened: std::sync::atomic::AtomicUsize::new(0),
         };
         let streamed = super::super::companion_mcp_stream::StreamedMcpProvider { inner: &inner };
-        let guarded = CanaryGuardedProvider { inner: &streamed, canary: &canary };
+        let guarded = CanaryGuardedProvider {
+            inner: &streamed,
+            canary: &canary,
+        };
         let error = guarded.complete(Request::default()).await.unwrap_err();
         assert!(!error.to_string().contains(&inner.body));
         assert_eq!(inner.opened.load(std::sync::atomic::Ordering::SeqCst), 1);

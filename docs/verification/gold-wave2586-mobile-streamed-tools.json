@@ -47,5 +47,17 @@
   "localExecutableValidationRan": false,
   "hostedRuntimeAccepted": false,
   "releaseAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": 38713770285,
+    "producer": "02fb34084aeec740f5c9e579b35e90eb10854a19",
+    "artifact": 11961244514,
+    "zipSha256": "3068F036F887079E6FF51E7937897FED2B2F1AF086397BE6168303AB60BB40DA",
+    "patchSha256": "2E8DC322E3C37F37F3BA02C5C8843B53FF9547EDF8D6A93418F791330F234ADE",
+    "scope": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/cli/companion_mcp_stream.rs"
+    ],
+    "runtimeAccepted": false
+  }
 }
