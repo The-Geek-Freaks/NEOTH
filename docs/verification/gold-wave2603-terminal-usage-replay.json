@@ -24,11 +24,11 @@
   "sourceFiles": [
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
-      "sha256": "3BEEBBE8164B3CFC1EDA089D3F9A14CFC9C87F596CE8D89F0A9D87DA23000424"
+      "sha256": "6037D86390E329599751528E99BA3E7D9E1EBA6482784B22A80BF74F7D15D670"
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sha256": "202F61741A08DCD3A601EACB7782B864A59AE2B648D69AA630D107089754BB91"
+      "sha256": "62A96851854BBC8E965CF3E5864AED013C752ED00F06200B4195E884639FD6CC"
     },
     {
       "path": ".github/workflows/cli-reference.yml",
@@ -58,5 +58,18 @@
     "proof": "work/gold-20260906/wave2601-combined-document-batch/document33-e4cf3eb5-admission/ROOT_ADMISSION.json",
     "sha256": "8A9FB107B7E31AA0283FEA143754C9819933E3C2A1AE0DFF5EC39B66B4D8D2E4",
     "notFinalProducerAcceptance": true
+  },
+  "hostedFormatting": {
+    "run": "38780782245",
+    "producer": "e7ba9c083ed23a7b0871938dd2fafa7d435c65c7",
+    "artifact": 11995079144,
+    "zipSha256": "6ED11DEC841C07654391C8C3C50F4DDA115687EBD49F4EA24BE5EB5174B4C5C8",
+    "patchSha256": "D7F420059EF7713AA14CBE422E95BAB275BB6399289ECD092BAED5A4B441FC20",
+    "allowedTargets": [
+      "SRC/neothd/src/daemon/usage_log.rs",
+      "SRC/neothd/src/providers/cost_authorization.rs"
+    ],
+    "localFormatterExecuted": false,
+    "newProducerFastChecks": "pending"
   }
 }
