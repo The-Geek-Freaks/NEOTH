@@ -2606,7 +2606,7 @@ mod tests {
                 .query_map([], |row| (0..6).map(|column| row.get(column)).collect())
                 .unwrap();
             // The v47 contract predates the separately tested optional v49 column.
-            rows.collect::<rusqlite::Result<Vec<_>>>()
+            rows.collect::<rusqlite::Result<Vec<Vec<rusqlite::types::Value>>>>()
                 .unwrap()
                 .into_iter()
                 .filter(|row| {

@@ -525,18 +525,17 @@ fn scan(xml: &str, state: &mut State) {
                 }
             }
             Event::Text(text) => {
-                let valid = std::str::from_utf8(text.as_ref())
+                let text: &[u8] = text.as_ref();
+                let valid = std::str::from_utf8(text)
                     .is_ok_and(|value| value.chars().all(legal_xml_char));
                 if !valid {
                     Err("invalid_xml_text")
-                } else if state.stack.is_empty()
-                    && !text.as_ref().iter().all(u8::is_ascii_whitespace)
-                {
+                } else if state.stack.is_empty() && !text.iter().all(u8::is_ascii_whitespace) {
                     Err("text_outside_root")
                 } else {
                     if state.table.is_some()
                         && !state.stack.last().is_some_and(|frame| frame.is(b"t"))
-                        && !text.as_ref().iter().all(u8::is_ascii_whitespace)
+                        && !text.iter().all(u8::is_ascii_whitespace)
                     {
                         state.reject_table("unsupported_text_position");
                     }
@@ -556,12 +555,10 @@ fn scan(xml: &str, state: &mut State) {
                 }
             }
             Event::GeneralRef(reference) => {
+                let name: &[u8] = reference.as_ref();
                 let valid = match reference.resolve_char_ref() {
                     Ok(Some(ch)) => legal_xml_char(ch),
-                    Ok(None) => matches!(
-                        reference.as_ref(),
-                        b"amp" | b"lt" | b"gt" | b"apos" | b"quot"
-                    ),
+                    Ok(None) => matches!(name, b"amp" | b"lt" | b"gt" | b"apos" | b"quot"),
                     Err(_) => false,
                 };
                 if !valid {

@@ -47,7 +47,7 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sha256": "84576D3644D6C60629A6B8CE2569D534FC54D57F2BC6A98CDFA9CE1D48812399"
+      "sha256": "78D87589FED574B96EF5E3921D8549A3CC673D2F9CD76F0B1D8E237684BCA7CB"
     },
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
@@ -78,5 +78,20 @@
     "applied": true,
     "newProducerPreflightPending": true,
     "localFormatterExecuted": false
+  },
+  "focusedCompileRepair": {
+    "failedRun": "38770620060",
+    "failedProducer": "4b0f994c300002db30eb0e42df9158ba500b7db0",
+    "job": "116545163135",
+    "errorCodes": [
+      "E0282",
+      "E0308",
+      "E0277"
+    ],
+    "repair": "Constrain XML payloads to byte slices and migration-shape collection to nested Value vectors; existing semantics/assertions retained",
+    "reviewer": "/root/document_compile_repair",
+    "hostedRevalidation": "pending",
+    "runtimeCasesExecutedInFailedRun": 0,
+    "localRuntimeExecuted": false
   }
 }
