@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T10:32:06.9384654Z",
-  "validationStatus": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
+  "capturedUtc": "2026-10-15T10:37:16.0910311Z",
+  "validationStatus": "W2589_RECIPE_AND_W2587_DOCUMENT_STATIC_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4472,9 +4472,19 @@
       "sha256": "A0ABDD8920CA12DCD0BC02240801AD1B0C3028F9387DF87DCDD2EEB6FFF357AA"
     },
     {
+      "path": "docs/verification/gold-wave2587-document-provenance.json",
+      "bytes": 2031,
+      "sha256": "03940E0A936BDCEE85E89548ABCE174E85E2664254B965F0B6E26F990278D15C"
+    },
+    {
       "path": "docs/verification/gold-wave2588-interop-breaker-isolation.json",
       "bytes": 1317,
       "sha256": "A18511E00126F48C01DF2537A774EF3FFE61D638381FD198417CC64B58FEB8CC"
+    },
+    {
+      "path": "docs/verification/gold-wave2589-recipe-inconclusive-check.json",
+      "bytes": 1758,
+      "sha256": "C1681BAE752EBBDDF5B90040DA941088D572D313E08C20F2CB37EE52EBDACC32"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5653,8 +5663,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2627336,
-      "sha256": "266AC1CD414AABE828380AD4EC08ED7EDBFDA3A11F70CF7B19AC37ED0AB659F4"
+      "bytes": 2630456,
+      "sha256": "817ACB4C08873B6525F65073B1D17C8452537C2A1D0A10BD9820CE96AD540E96"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6938,8 +6948,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recipe.rs",
-      "bytes": 25411,
-      "sha256": "7CD4244650C7E1811403B44311C48BCFF3278A694E3A1877EB7D51AF7D099F84"
+      "bytes": 30598,
+      "sha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E"
     },
     {
       "path": "SRC/neothd/src/cli/reflect.rs",
@@ -8353,8 +8363,8 @@
     },
     {
       "path": "SRC/neothd/src/media/document.rs",
-      "bytes": 47261,
-      "sha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58"
+      "bytes": 52089,
+      "sha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E"
     },
     {
       "path": "SRC/neothd/src/media/frame_decoder.rs",

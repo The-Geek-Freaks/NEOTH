@@ -302,24 +302,13 @@ async fn run_one(
             crate::cli::chat::run_chat(make_args()).await
         }
         Some(retry) => {
-            let attempts = retry.max.saturating_add(1);
-            for attempt in 1..=attempts {
-                crate::cli::chat::run_chat(make_args()).await?;
-                if shell_check_succeeds(&retry.success_check) {
-                    return Ok(());
-                }
-                if attempt < attempts {
-                    eprintln!(
-                        "  retry {attempt}/{attempts}: success_check `{}` failed — re-running",
-                        retry.success_check
-                    );
-                }
-            }
-            anyhow::bail!(
-                "recipe `{}`: success_check `{}` still failing after {attempts} attempt(s)",
-                spec.name,
-                retry.success_check
+            run_with_retry(
+                &spec.name,
+                retry,
+                || crate::cli::chat::run_chat(make_args()),
+                || shell_check_succeeds(&retry.success_check),
             )
+            .await
         }
     }
 }
@@ -367,10 +356,9 @@ fn confirm_untrusted_deeplink(name: &str, system: &str, prompt: &str) -> Result<
     }
 }
 
-/// Run a shell `success_check` and report whether it exited 0. Uses the platform
-/// shell (`cmd /C` on Windows, `sh -c` elsewhere). A spawn failure counts as
-/// NOT-succeeded (the check couldn't confirm success).
-fn shell_check_succeeds(cmd: &str) -> bool {
+/// Run the operator-authored check through the platform shell. Only a normal
+/// nonzero exit permits the explicit retry policy; an inconclusive check aborts.
+fn shell_check_succeeds(cmd: &str) -> Result<bool> {
     let mut command = if cfg!(windows) {
         let mut c = std::process::Command::new("cmd");
         c.args(["/C", cmd]);
@@ -380,7 +368,54 @@ fn shell_check_succeeds(cmd: &str) -> bool {
         c.args(["-c", cmd]);
         c
     };
-    command.status().map(|s| s.success()).unwrap_or(false)
+    classify_success_check_exit(cmd, command.status().map(|status| status.code()))
+}
+
+fn classify_success_check_exit(command: &str, result: std::io::Result<Option<i32>>) -> Result<bool> {
+    match result {
+        Ok(Some(0)) => Ok(true),
+        Ok(Some(_)) => Ok(false),
+        Ok(None) => anyhow::bail!(
+            "recipe success_check `{command}` ended without a normal exit code; \
+             verification is inconclusive, so the recipe will not be replayed"
+        ),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "could not run recipe success_check `{command}`; \
+                 verification is inconclusive, so the recipe will not be replayed"
+            )
+        }),
+    }
+}
+
+async fn run_with_retry<RunAttempt, AttemptFuture, CheckSuccess>(
+    recipe_name: &str,
+    retry: &crate::recipes::schema::RetryPolicy,
+    mut run_attempt: RunAttempt,
+    mut check_success: CheckSuccess,
+) -> Result<()>
+where
+    RunAttempt: FnMut() -> AttemptFuture,
+    AttemptFuture: std::future::Future<Output = Result<()>>,
+    CheckSuccess: FnMut() -> Result<bool>,
+{
+    let attempts = retry.max.saturating_add(1);
+    for attempt in 1..=attempts {
+        run_attempt().await?;
+        if check_success()? {
+            return Ok(());
+        }
+        if attempt < attempts {
+            eprintln!(
+                "  retry {attempt}/{attempts}: success_check `{}` failed — re-running",
+                retry.success_check
+            );
+        }
+    }
+    anyhow::bail!(
+        "recipe `{recipe_name}`: success_check `{}` still failing after {attempts} attempt(s)",
+        retry.success_check
+    )
 }
 
 fn validate_one(file: &Path, output: OutputFormat) -> Result<()> {
@@ -578,10 +613,133 @@ mod tests {
         assert!(err.to_string().contains("deeplink"), "got: {err}");
     }
 
+    #[tokio::test]
+    async fn retry_does_not_replay_after_inconclusive_check() {
+        for signalled in [false, true] {
+            let attempts = std::cell::Cell::new(0);
+            let checks = std::cell::Cell::new(0);
+            let retry = crate::recipes::schema::RetryPolicy {
+                max: 3,
+                success_check: "test-check".into(),
+            };
+            let error = run_with_retry(
+                "test-recipe",
+                &retry,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    async { Ok(()) }
+                },
+                || {
+                    checks.set(checks.get() + 1);
+                    let exit = if signalled {
+                        Ok(None)
+                    } else {
+                        Err(std::io::Error::other("check could not start or finish"))
+                    };
+                    classify_success_check_exit(&retry.success_check, exit)
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("verification is inconclusive"));
+            assert_eq!(attempts.get(), 1);
+            assert_eq!(checks.get(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_replays_only_after_verified_false_then_stops_on_true() {
+        let attempts = std::cell::Cell::new(0);
+        let checks = std::cell::Cell::new(0);
+        let retry = crate::recipes::schema::RetryPolicy {
+            max: 3,
+            success_check: "test-check".into(),
+        };
+        run_with_retry(
+            "test-recipe",
+            &retry,
+            || {
+                attempts.set(attempts.get() + 1);
+                async { Ok(()) }
+            },
+            || {
+                checks.set(checks.get() + 1);
+                let code = if checks.get() == 1 { 7 } else { 0 };
+                classify_success_check_exit(&retry.success_check, Ok(Some(code)))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(checks.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn retry_does_not_run_check_when_recipe_attempt_fails() {
+        let attempts = std::cell::Cell::new(0);
+        let checks = std::cell::Cell::new(0);
+        let retry = crate::recipes::schema::RetryPolicy {
+            max: 3,
+            success_check: "test-check".into(),
+        };
+        let error = run_with_retry(
+            "test-recipe",
+            &retry,
+            || {
+                attempts.set(attempts.get() + 1);
+                async { anyhow::bail!("chat execution failed") }
+            },
+            || {
+                checks.set(checks.get() + 1);
+                Ok(true)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "chat execution failed");
+        assert_eq!(attempts.get(), 1);
+        assert_eq!(checks.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn retry_preserves_exhaustion_for_verified_failures() {
+        for max in [0, 2] {
+            let attempts = std::cell::Cell::new(0);
+            let checks = std::cell::Cell::new(0);
+            let retry = crate::recipes::schema::RetryPolicy {
+                max,
+                success_check: "test-check".into(),
+            };
+            let error = run_with_retry(
+                "test-recipe",
+                &retry,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    async { Ok(()) }
+                },
+                || {
+                    checks.set(checks.get() + 1);
+                    classify_success_check_exit(&retry.success_check, Ok(Some(1)))
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(attempts.get(), max + 1);
+            assert_eq!(checks.get(), max + 1);
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "recipe `test-recipe`: success_check `test-check` still failing after {} attempt(s)",
+                    max + 1
+                )
+            );
+        }
+    }
+
     #[test]
     fn shell_check_distinguishes_success_and_failure() {
-        assert!(shell_check_succeeds("exit 0"), "exit 0 → success");
-        assert!(!shell_check_succeeds("exit 1"), "exit 1 → failure");
+        assert!(shell_check_succeeds("exit 0").unwrap(), "exit 0 → success");
+        assert!(!shell_check_succeeds("exit 1").unwrap(), "exit 1 → failure");
     }
 
     #[test]

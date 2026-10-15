@@ -29,11 +29,16 @@
 use std::io::{Cursor, Read};
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
+
 use super::{Asset, AssetKind, Extraction, ExtractionError, MediaExtractor};
 
 /// Per-member read cap — guards against a zip-bomb member inflating to
 /// gigabytes. 64 MiB is comfortably above any real document part.
 const MAX_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
+/// Version of this extraction contract, not a document identity or build number.
+/// Bump when parsing, normalization, limits or the truncation marker changes.
+const DOCUMENT_PARSER_VERSION: &str = "document-extractor/v1";
 const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_MEMBERS: usize = 4_096;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
@@ -195,6 +200,22 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     }
 
     let stats = compute_stats(&text);
+    // Bind the bytes actually parsed and the exact returned UTF-8 text, including
+    // the marker. Input overflow already fails before this point. Equal content
+    // is not evidence of logical identity, ownership, or rename/move lineage.
+    let provenance = serde_json::json!({
+        "schema": "neoth.document-provenance.v1",
+        "parser_version": DOCUMENT_PARSER_VERSION,
+        "source": {
+            "sha256": hex::encode(Sha256::digest(&bytes)),
+            "bytes": bytes.len(),
+        },
+        "extracted_text": {
+            "sha256": hex::encode(Sha256::digest(text.as_bytes())),
+            "bytes": text.len(),
+            "encoding": "utf-8",
+        },
+    });
     Ok(Extraction {
         text,
         metadata: serde_json::json!({
@@ -204,6 +225,7 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
             "word_count": stats.1,
             "line_count": stats.2,
             "truncated": truncated,
+            "provenance": provenance,
         }),
     })
 }
@@ -929,6 +951,103 @@ mod tests {
     const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     const EPUB_MIME: &str = "application/epub+zip";
 
+    #[tokio::test]
+    async fn provenance_binds_exact_bytes_and_text_without_path_identity() {
+        let bytes = br"{\rtf1\ansi Hi \u937?}".to_vec();
+        let expected = serde_json::json!({
+            "schema": "neoth.document-provenance.v1",
+            "parser_version": "document-extractor/v1",
+            "source": {
+                "sha256": "4618ff3cbcb700cc5447c29f6827ed6333926d8e3bc56a46d3ebf8bc26a2389b",
+                "bytes": 22,
+            },
+            "extracted_text": {
+                "sha256": "3086e67b6bfe7976709c7ad90ec0e6b77a0ccc4d8142f2065aa1a56f60811b5a",
+                "bytes": 5,
+                "encoding": "utf-8",
+            },
+        });
+        let memory = DocumentExtractor
+            .extract(&doc_asset("application/rtf", bytes.clone()))
+            .await
+            .unwrap();
+        assert_eq!(memory.text, "Hi Ω");
+        assert_eq!(memory.metadata["provenance"], expected);
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["private-original.rtf", "unrelated-copy.rtf"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, &bytes).unwrap();
+            let extracted = DocumentExtractor
+                .extract(&Asset::Path {
+                    kind: AssetKind::Document,
+                    mime: "application/rtf".into(),
+                    path,
+                })
+                .await
+                .unwrap();
+            assert_eq!(extracted.text, memory.text);
+            assert_eq!(extracted.metadata, memory.metadata);
+            assert!(!extracted.metadata.to_string().contains(name));
+        }
+    }
+
+    #[tokio::test]
+    async fn provenance_distinguishes_source_revision_from_equal_text() {
+        let escaped = DocumentExtractor
+            .extract(&doc_asset("application/rtf", br"{\rtf1 caf\'e9}".to_vec()))
+            .await
+            .unwrap();
+        let unicode = DocumentExtractor
+            .extract(&doc_asset(
+                "application/rtf",
+                br"{\rtf1 caf\u233?}".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(escaped.text, "café");
+        assert_eq!(escaped.text, unicode.text);
+        assert_ne!(
+            escaped.metadata["provenance"]["source"]["sha256"],
+            unicode.metadata["provenance"]["source"]["sha256"]
+        );
+        assert_eq!(
+            escaped.metadata["provenance"]["extracted_text"],
+            unicode.metadata["provenance"]["extracted_text"]
+        );
+    }
+
+    #[tokio::test]
+    async fn provenance_hashes_unicode_safe_capped_text_with_visible_marker() {
+        let prefix = "a".repeat(MAX_CONTENT_TEXT - 1);
+        let rtf = format!(r"{{\rtf1 {prefix}\u937?}}");
+        let source_len = rtf.len();
+        let expected_source_hash = hex::encode(Sha256::digest(rtf.as_bytes()));
+        let extracted = DocumentExtractor
+            .extract(&doc_asset("application/rtf", rtf.into_bytes()))
+            .await
+            .unwrap();
+        // The two-byte Omega cannot fit in the single remaining content byte.
+        let expected = format!("{prefix}{TRUNCATION_MARKER}");
+        assert_eq!(extracted.text, expected);
+        assert!(extracted.text.len() <= MAX_TOTAL_TEXT);
+        assert_eq!(extracted.metadata["truncated"], true);
+        assert_eq!(
+            extracted.metadata["provenance"]["source"]["sha256"],
+            expected_source_hash
+        );
+        assert_eq!(
+            extracted.metadata["provenance"]["source"]["bytes"],
+            source_len
+        );
+        assert_eq!(
+            extracted.metadata["provenance"]["extracted_text"]["sha256"],
+            hex::encode(Sha256::digest(expected.as_bytes()))
+        );
+        assert_eq!(
+            extracted.metadata["provenance"]["extracted_text"]["bytes"],
+            expected.len()
+        );
+    }
     // ── format detection ──────────────────────────────────────────────
 
     #[test]

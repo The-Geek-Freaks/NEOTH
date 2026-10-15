@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
+  "status": "W2589_RECIPE_AND_W2587_DOCUMENT_STATIC_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 426372,
-    "sha256": "4221455F02F1D4416F2A8B3ACF3E67CFFA91B3E6AB22FDB75E33E9B0A645046C"
+    "bytes": 426768,
+    "sha256": "4E58B3124E2C5E20949BECF20F3D9390F1512465E84434AB412FDB3D4A810DC0"
   },
-  "sourceInputs": 2325,
+  "sourceInputs": 2327,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -17629,19 +17629,19 @@
     {
       "test": "media::document::tests::epub_preserves_table_header_and_data_cell_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "334C1333D2F516E6EA29BCCD88B0EAA7BF2C607FBCE200F8DDF5BA237DCF8A58",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
       "junitClass": "neoth"
     },
     {
@@ -17684,6 +17684,48 @@
       "test": "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
       "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::recipe::tests::retry_does_not_replay_after_inconclusive_check",
+      "sourcePath": "SRC/neothd/src/cli/recipe.rs",
+      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::recipe::tests::retry_replays_only_after_verified_false_then_stops_on_true",
+      "sourcePath": "SRC/neothd/src/cli/recipe.rs",
+      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::recipe::tests::retry_does_not_run_check_when_recipe_attempt_fails",
+      "sourcePath": "SRC/neothd/src/cli/recipe.rs",
+      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::recipe::tests::retry_preserves_exhaustion_for_verified_failures",
+      "sourcePath": "SRC/neothd/src/cli/recipe.rs",
+      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::document::tests::provenance_binds_exact_bytes_and_text_without_path_identity",
+      "sourcePath": "SRC/neothd/src/media/document.rs",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::document::tests::provenance_distinguishes_source_revision_from_equal_text",
+      "sourcePath": "SRC/neothd/src/media/document.rs",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::document::tests::provenance_hashes_unicode_safe_capped_text_with_visible_marker",
+      "sourcePath": "SRC/neothd/src/media/document.rs",
+      "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
       "junitClass": "neoth"
     }
   ],
@@ -83763,6 +83805,44 @@
       }
     ],
     "note": "Synchronize exact selection contract from 117 to 118 core cases and assert the new breaker regression identity. Hosted38720981603 formatting passed; stale count failed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2589": {
+    "base": "4792a80ca6ef0ecf0deba12981cac26e31a5acab",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2587-document-provenance.json",
+        "bytes": 2031,
+        "sha256": "03940E0A936BDCEE85E89548ABCE174E85E2664254B965F0B6E26F990278D15C",
+        "blob": "419721a0cf8ccf7fd43471135b6ce136a1a1a44f"
+      },
+      {
+        "path": "docs/verification/gold-wave2589-recipe-inconclusive-check.json",
+        "bytes": 1758,
+        "sha256": "C1681BAE752EBBDDF5B90040DA941088D572D313E08C20F2CB37EE52EBDACC32",
+        "blob": "20922836dd5e24fc1eb63a7aca28c47ba0306001"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2630456,
+        "sha256": "817ACB4C08873B6525F65073B1D17C8452537C2A1D0A10BD9820CE96AD540E96",
+        "blob": "0d27a732b1e39addfdac51ee467644824176d76a"
+      },
+      {
+        "path": "SRC/neothd/src/cli/recipe.rs",
+        "bytes": 30598,
+        "sha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+        "blob": "b392f6a0bf988e94230360f69d11598318ba92f1"
+      },
+      {
+        "path": "SRC/neothd/src/media/document.rs",
+        "bytes": 52089,
+        "sha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
+        "blob": "17a8d936aabf0d444097ee87d654134a3ba42279"
+      }
+    ],
+    "note": "Inconclusive success verification stops recipe replay; reviewed document provenance retained. Main frozen on interop producer4792a80c. Runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

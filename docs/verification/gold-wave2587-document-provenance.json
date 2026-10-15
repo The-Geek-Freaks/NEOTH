@@ -1,0 +1,41 @@
+{
+  "schema": "neoth.gold-wave2587.v1",
+  "date": "2026-10-15",
+  "base": "ab0647d1a5ee69d28107492f5d946a3f4d958436",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "SOURCE_CANDIDATE_HOSTED_VALIDATION_PENDING",
+  "problem": "Document extraction reports do not bind parser version, source content and exact returned text.",
+  "changes": [
+    "Add versioned provenance to existing Extraction.metadata",
+    "Hash already-read bounded source bytes; input overflow remains an error",
+    "Hash exact returned UTF-8 text after normalization and cap marker",
+    "Existing CLI JSON ingestion report carries metadata without a new owner or storage path"
+  ],
+  "tests": [
+    "media::document::tests::provenance_binds_exact_bytes_and_text_without_path_identity",
+    "media::document::tests::provenance_distinguishes_source_revision_from_equal_text",
+    "media::document::tests::provenance_hashes_unicode_safe_capped_text_with_visible_marker"
+  ],
+  "sourceRead": "Bounded all-or-error existing read; digest describes bytes actually supplied to parser, not a filesystem snapshot or logical identity.",
+  "consumer": "SRC/neothd/src/cli/ingest.rs: IngestReport.metadata copies Extraction.metadata",
+  "graph": "Admitted file-navigation.json selected media/document.rs; direct source read verified CLI report propagation.",
+  "pending": [
+    "Hosted Rust formatting and execution",
+    "Structural blocks and source ranges",
+    "Index-persisted provenance",
+    "Logical identity and rename/move lineage",
+    "A03 and Gold acceptance"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": 38716115351,
+    "artifact": 11961799893,
+    "producer": "be32e7d4fe07a272a0b50c7a605c9cb903b8c8d4",
+    "archiveSha256": "E1705A2BABB9EF2852D6F127D1B8B0A34B2414E4DAB2507A4D735558A032F649",
+    "patchSha256": "E964936BB562F20B0950F0CB13FEE85F9E918528D6A40E1AAE18D6676855788B",
+    "scope": "SRC/neothd/src/media/document.rs",
+    "localRustfmtExecuted": false
+  }
+}

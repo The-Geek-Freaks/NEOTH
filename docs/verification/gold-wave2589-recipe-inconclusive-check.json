@@ -1,0 +1,35 @@
+{
+  "schema": "neoth.gold-wave2589.v1",
+  "date": "2026-10-15",
+  "base": "4792a80ca6ef0ecf0deba12981cac26e31a5acab",
+  "adoption": "ADOPT-20261012-A01",
+  "status": "SOURCE_CANDIDATE_HOSTED_VALIDATION_PENDING",
+  "problem": "Recipe verification spawn/wait errors and signal termination were collapsed into false, automatically replaying the completed recipe.",
+  "changes": [
+    "Keep the existing local-recipe retry owner and deeplink single-run boundary",
+    "Treat exit zero as success and normal nonzero exit as an explicit-policy retry",
+    "Propagate inconclusive verifier outcomes before any next recipe attempt",
+    "Preserve chat-error propagation, max-plus-one semantics and exhaustion wording"
+  ],
+  "tests": [
+    "cli::recipe::tests::retry_does_not_replay_after_inconclusive_check",
+    "cli::recipe::tests::retry_replays_only_after_verified_false_then_stops_on_true",
+    "cli::recipe::tests::retry_does_not_run_check_when_recipe_attempt_fails",
+    "cli::recipe::tests::retry_preserves_exhaustion_for_verified_failures"
+  ],
+  "existingShellRegression": "cli::recipe::tests::shell_check_distinguishes_success_and_failure",
+  "unchangedBoundaries": [
+    "No shell verifier for deeplink recipes",
+    "Normal nonzero exits remain the operator-authored retry contract",
+    "No new scheduler, durable retry owner or automatic replay on unknown outcome"
+  ],
+  "staticReview": "Root source inspection plus prompt-only independent Rust review",
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "pending": [
+    "Hosted Rust formatting and compilation",
+    "Hosted execution of four retry control regressions and existing recipe cases",
+    "Overall A01 workflow adoption remains open"
+  ]
+}
