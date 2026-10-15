@@ -40,7 +40,10 @@ impl DocumentProvenance {
         }
         if self.parser_version.is_empty()
             || self.parser_version.len() > MAX_PARSER_VERSION_BYTES
-            || !self.parser_version.bytes().all(|byte| matches!(byte, b' '..=b'~'))
+            || !self
+                .parser_version
+                .bytes()
+                .all(|byte| matches!(byte, b' '..=b'~'))
         {
             bail!("invalid document provenance parser version");
         }
@@ -82,7 +85,10 @@ impl DocumentProvenance {
             .and_then(Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("invalid document provenance truncation flag"))?;
         let provenance = required_object(metadata, "provenance")?;
-        require_exact_keys(provenance, &["schema", "parser_version", "source", "extracted_text"])?;
+        require_exact_keys(
+            provenance,
+            &["schema", "parser_version", "source", "extracted_text"],
+        )?;
         let source = required_object(provenance, "source")?;
         require_exact_keys(source, &["sha256", "bytes"])?;
         let text = required_object(provenance, "extracted_text")?;
@@ -113,25 +119,49 @@ impl DocumentProvenance {
         let text_bytes: Option<i64> = row.get(start + 5)?;
         let encoding: Option<String> = row.get(start + 6)?;
         let truncated: Option<i64> = row.get(start + 7)?;
-        match (schema, parser, source_hash, source_bytes, text_hash, text_bytes, encoding, truncated) {
+        match (
+            schema,
+            parser,
+            source_hash,
+            source_bytes,
+            text_hash,
+            text_bytes,
+            encoding,
+            truncated,
+        ) {
             (None, None, None, None, None, None, None, None) => Ok(None),
-            (Some(schema), Some(parser_version), Some(source_bytes_sha256), Some(source_bytes),
-             Some(extracted_text_sha256), Some(text_bytes), Some(extracted_text_encoding), Some(truncated)) => {
-                let source_bytes = u64::try_from(source_bytes)
-                    .map_err(|_| persisted_error(start + 3))?;
-                let extracted_text_bytes = u64::try_from(text_bytes)
-                    .map_err(|_| persisted_error(start + 5))?;
+            (
+                Some(schema),
+                Some(parser_version),
+                Some(source_bytes_sha256),
+                Some(source_bytes),
+                Some(extracted_text_sha256),
+                Some(text_bytes),
+                Some(extracted_text_encoding),
+                Some(truncated),
+            ) => {
+                let source_bytes =
+                    u64::try_from(source_bytes).map_err(|_| persisted_error(start + 3))?;
+                let extracted_text_bytes =
+                    u64::try_from(text_bytes).map_err(|_| persisted_error(start + 5))?;
                 let extracted_text_truncated = match truncated {
                     0 => false,
                     1 => true,
                     _ => return Err(persisted_error(start + 7)),
                 };
                 let provenance = Self {
-                    schema, parser_version, source_bytes_sha256, source_bytes,
-                    extracted_text_sha256, extracted_text_bytes, extracted_text_encoding,
+                    schema,
+                    parser_version,
+                    source_bytes_sha256,
+                    source_bytes,
+                    extracted_text_sha256,
+                    extracted_text_bytes,
+                    extracted_text_encoding,
                     extracted_text_truncated,
                 };
-                provenance.validate_metadata().map_err(|_| persisted_error(start))?;
+                provenance
+                    .validate_metadata()
+                    .map_err(|_| persisted_error(start))?;
                 Ok(Some(provenance))
             }
             _ => Err(persisted_error(start)),
@@ -145,25 +175,36 @@ fn sha256_lower(bytes: &[u8]) -> String {
 
 fn validate_lower_sha256(value: &str) -> Result<()> {
     if value.len() != 64
-        || !value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
         bail!("invalid document provenance SHA-256 digest");
     }
     Ok(())
 }
 
-fn required_object<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a Map<String, Value>> {
-    object.get(key).and_then(Value::as_object)
+fn required_object<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> Result<&'a Map<String, Value>> {
+    object
+        .get(key)
+        .and_then(Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("invalid document provenance metadata"))
 }
 
 fn required_string<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a str> {
-    object.get(key).and_then(Value::as_str)
+    object
+        .get(key)
+        .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("invalid document provenance metadata"))
 }
 
 fn required_u64(object: &Map<String, Value>, key: &str) -> Result<u64> {
-    object.get(key).and_then(Value::as_u64)
+    object
+        .get(key)
+        .and_then(Value::as_u64)
         .ok_or_else(|| anyhow::anyhow!("invalid document provenance metadata"))
 }
 
@@ -178,7 +219,10 @@ fn persisted_error(column: usize) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         column,
         Type::Text,
-        Box::new(io::Error::new(io::ErrorKind::InvalidData, "invalid persisted document provenance")),
+        Box::new(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid persisted document provenance",
+        )),
     )
 }
 
@@ -204,7 +248,8 @@ mod tests {
     #[test]
     fn document_metadata_binds_exact_utf8_text() {
         let provenance = DocumentProvenance::from_extraction_metadata(&document_metadata())
-            .unwrap().unwrap();
+            .unwrap()
+            .unwrap();
         provenance.validate_for_content("über").unwrap();
         assert_eq!(provenance.source_bytes, 12);
         assert_eq!(provenance.extracted_text_bytes, 5);
@@ -224,18 +269,33 @@ mod tests {
             ("/provenance", Value::Null),
             ("/truncated", Value::String("false".into())),
             ("/provenance/source/sha256", Value::String("A".repeat(64))),
-            ("/provenance/source/bytes", Value::from(MAX_DOCUMENT_SOURCE_BYTES + 1)),
-            ("/provenance/extracted_text/bytes", Value::from(MAX_DOCUMENT_TEXT_BYTES + 1)),
+            (
+                "/provenance/source/bytes",
+                Value::from(MAX_DOCUMENT_SOURCE_BYTES + 1),
+            ),
+            (
+                "/provenance/extracted_text/bytes",
+                Value::from(MAX_DOCUMENT_TEXT_BYTES + 1),
+            ),
             ("/provenance/extracted_text/bytes", Value::from(-1)),
             ("/provenance/parser_version", Value::String("x".repeat(65))),
-            ("/provenance/parser_version", Value::String("bad\nversion".into())),
+            (
+                "/provenance/parser_version",
+                Value::String("bad\nversion".into()),
+            ),
             ("/provenance/schema", Value::String("future".into())),
-            ("/provenance/extracted_text/encoding", Value::String("latin-1".into())),
+            (
+                "/provenance/extracted_text/encoding",
+                Value::String("latin-1".into()),
+            ),
         ];
         for (path, value) in cases {
             let mut bad = valid.clone();
             *bad.pointer_mut(path).unwrap() = value;
-            assert!(DocumentProvenance::from_extraction_metadata(&bad).is_err(), "{path}");
+            assert!(
+                DocumentProvenance::from_extraction_metadata(&bad).is_err(),
+                "{path}"
+            );
         }
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("provenance");
@@ -247,8 +307,15 @@ mod tests {
 
     #[test]
     fn other_extractors_and_legacy_metadata_remain_unbound() {
-        for metadata in [Value::Null, serde_json::json!({}), serde_json::json!({"extractor": "pdf"})] {
-            assert_eq!(DocumentProvenance::from_extraction_metadata(&metadata).unwrap(), None);
+        for metadata in [
+            Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({"extractor": "pdf"}),
+        ] {
+            assert_eq!(
+                DocumentProvenance::from_extraction_metadata(&metadata).unwrap(),
+                None
+            );
         }
     }
 }

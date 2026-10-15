@@ -2393,7 +2393,6 @@ mod tests {
         conn
     }
 
-
     fn legacy_vocabulary() -> Connection {
         let conn = open_with_meta(47);
         conn.execute_batch(
@@ -2412,11 +2411,13 @@ mod tests {
              INSERT INTO chunks (content, source_id) VALUES ('Shared shared amber ü Ü 猫 ab', 1);
              INSERT INTO chunks (content, source_id) VALUES ('shared cobalt', 2);
              INSERT INTO chunks_trigram (content, source_id) VALUES ('mirroronly', 1);",
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO chunks (content, source_id) VALUES (?1, 3)",
             [format!("{} {}", "x".repeat(32), "y".repeat(33))],
-        ).unwrap();
+        )
+        .unwrap();
         conn
     }
 
@@ -2434,14 +2435,22 @@ mod tests {
         let mut conn = legacy_vocabulary();
         assert_eq!(migrate(&mut conn, 47, 48).unwrap(), 48);
         assert_eq!(current_version(&conn).unwrap(), 48);
-        assert_eq!(vocabulary_rows(&conn), vec![
-            ("amber".into(), 1), ("cobalt".into(), 1), ("shared".into(), 2),
-            ("x".repeat(32), 1), ("猫".into(), 1),
-        ]);
+        assert_eq!(
+            vocabulary_rows(&conn),
+            vec![
+                ("amber".into(), 1),
+                ("cobalt".into(), 1),
+                ("shared".into(), 2),
+                ("x".repeat(32), 1),
+                ("猫".into(), 1),
+            ]
+        );
         let before = vocabulary_rows(&conn);
         assert_eq!(migrate(&mut conn, 48, 48).unwrap(), 48);
         assert_eq!(vocabulary_rows(&conn), before);
-        let mirror: String = conn.query_row("SELECT content FROM chunks_trigram", [], |row| row.get(0)).unwrap();
+        let mirror: String = conn
+            .query_row("SELECT content FROM chunks_trigram", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(mirror, "mirroronly");
     }
 
@@ -2451,7 +2460,8 @@ mod tests {
         conn.execute_batch(
             "CREATE TRIGGER fail_rebuild BEFORE INSERT ON vocabulary WHEN NEW.term='cobalt'
              BEGIN SELECT RAISE(ABORT, 'injected rebuild failure'); END;",
-        ).unwrap();
+        )
+        .unwrap();
         let before = vocabulary_rows(&conn);
         assert!(migrate(&mut conn, 47, 48).is_err());
         assert_eq!(current_version(&conn).unwrap(), 47);
@@ -2459,18 +2469,26 @@ mod tests {
         conn.execute_batch("DROP TRIGGER fail_rebuild;").unwrap();
         assert_eq!(migrate(&mut conn, 47, 48).unwrap(), 48);
         assert_eq!(current_version(&conn).unwrap(), 48);
-        assert!(!vocabulary_rows(&conn).iter().any(|(term, _)| term == "stale"));
+        assert!(
+            !vocabulary_rows(&conn)
+                .iter()
+                .any(|(term, _)| term == "stale")
+        );
     }
 
     #[test]
     fn v47_to_v48_requires_existing_tables_and_transaction() {
         for missing in ["chunks", "vocabulary"] {
             let mut conn = legacy_vocabulary();
-            conn.execute_batch(&format!("DROP TABLE {missing};")).unwrap();
+            conn.execute_batch(&format!("DROP TABLE {missing};"))
+                .unwrap();
             assert!(migrate(&mut conn, 47, 48).is_err());
             assert_eq!(current_version(&conn).unwrap(), 47);
             if missing == "chunks" {
-                assert_eq!(vocabulary_rows(&conn), vec![("shared".into(), 99), ("stale".into(), 999)]);
+                assert_eq!(
+                    vocabulary_rows(&conn),
+                    vec![("shared".into(), 99), ("stale".into(), 999)]
+                );
             }
         }
         let conn = legacy_vocabulary();
@@ -2485,24 +2503,49 @@ mod tests {
         let mut conn = legacy_document_sources();
         assert_eq!(migrate(&mut conn, 46, 47).unwrap(), 47);
         assert_eq!(current_version(&conn).unwrap(), 47);
-        let retained: (i64, String, String, String, String, String, i64, i64) = conn.query_row(
-            "SELECT id, label, content_hash, file_path, content_type, source_category,
-                chunk_count, indexed_ts FROM sources", [], |row| Ok((
-                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
-                    row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
-                )),
-        ).unwrap();
-        assert_eq!(retained, (
-            1, "legacy".into(), "retained-hash".into(), "/legacy.txt".into(),
-            "prose".into(), "docs".into(), 7, 1700000000,
-        ));
-        let unbound: bool = conn.query_row(
-            "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
+        let retained: (i64, String, String, String, String, String, i64, i64) = conn
+            .query_row(
+                "SELECT id, label, content_hash, file_path, content_type, source_category,
+                chunk_count, indexed_ts FROM sources",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            retained,
+            (
+                1,
+                "legacy".into(),
+                "retained-hash".into(),
+                "/legacy.txt".into(),
+                "prose".into(),
+                "docs".into(),
+                7,
+                1700000000,
+            )
+        );
+        let unbound: bool = conn
+            .query_row(
+                "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
                  AND document_source_sha256 IS NULL AND document_source_bytes IS NULL
                  AND document_text_sha256 IS NULL AND document_text_bytes IS NULL
                  AND document_text_encoding IS NULL AND document_text_truncated IS NULL
-             FROM sources", [], |row| row.get(0),
-        ).unwrap();
+             FROM sources",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(unbound);
         assert_eq!(migrate(&mut conn, 47, 47).unwrap(), 47);
     }
@@ -2510,16 +2553,29 @@ mod tests {
     #[test]
     fn v46_to_v47_rolls_back_partial_alters_and_retains_previous_version() {
         let mut conn = legacy_document_sources();
-        conn.execute_batch("ALTER TABLE sources ADD COLUMN document_parser_version TEXT;").unwrap();
+        conn.execute_batch("ALTER TABLE sources ADD COLUMN document_parser_version TEXT;")
+            .unwrap();
         assert!(migrate(&mut conn, 46, 47).is_err());
         assert_eq!(current_version(&conn).unwrap(), 46);
-        assert!(conn.prepare("SELECT document_parser_version FROM sources").is_ok());
-        assert!(conn.prepare("SELECT document_provenance_schema FROM sources").is_err());
-        assert!(conn.prepare("SELECT document_source_sha256 FROM sources").is_err());
-        let retained: (i64, String) = conn.query_row(
-            "SELECT id, content_hash FROM sources WHERE label = 'legacy'", [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        assert!(
+            conn.prepare("SELECT document_parser_version FROM sources")
+                .is_ok()
+        );
+        assert!(
+            conn.prepare("SELECT document_provenance_schema FROM sources")
+                .is_err()
+        );
+        assert!(
+            conn.prepare("SELECT document_source_sha256 FROM sources")
+                .is_err()
+        );
+        let retained: (i64, String) = conn
+            .query_row(
+                "SELECT id, content_hash FROM sources WHERE label = 'legacy'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(retained, (1, "retained-hash".into()));
     }
 
@@ -2535,9 +2591,9 @@ mod tests {
     fn v47_fresh_and_migrated_sources_have_the_same_column_contract() {
         fn shape(conn: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
             let mut stmt = conn.prepare("PRAGMA table_info(sources)").unwrap();
-            let rows = stmt.query_map([], |row| {
-                (0..6).map(|column| row.get(column)).collect()
-            }).unwrap();
+            let rows = stmt
+                .query_map([], |row| (0..6).map(|column| row.get(column)).collect())
+                .unwrap();
             rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
         }
         let dir = tempfile::tempdir().unwrap();
@@ -3124,7 +3180,8 @@ mod tests {
                 source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
                 ts_ns UNINDEXED, tokenize='porter unicode61'
              );",
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute_batch(
             "CREATE TABLE vocabulary (term TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1);",
         ).unwrap();
@@ -3331,7 +3388,8 @@ mod tests {
                 source_category UNINDEXED, event_id UNINDEXED, file_path UNINDEXED,
                 ts_ns UNINDEXED, tokenize='porter unicode61'
              );",
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', '3')",
             [],

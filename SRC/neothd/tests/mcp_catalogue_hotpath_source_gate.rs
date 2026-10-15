@@ -146,7 +146,10 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     assert!(streaming.contains("returnTurnRouteResolution{route:select_stream_dispatch_route("));
     assert!(streaming.contains("streaming_mode_disables_council"));
     assert_eq!(streaming.matches("autoroute_decision(").count(), 1);
-    assert_eq!(streaming.matches("select_stream_dispatch_route(").count(), 1);
+    assert_eq!(
+        streaming.matches("select_stream_dispatch_route(").count(),
+        1
+    );
     assert!(!streaming.contains("select_turn_dispatch_route("));
     assert!(!streaming.contains("try_admit_convene("));
     assert!(!ordinary.contains("select_stream_dispatch_route("));

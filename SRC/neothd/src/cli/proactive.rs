@@ -982,7 +982,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn malformed_document_accept_records_approval_before_route_error() {
         let home = tempfile::tempdir().unwrap();

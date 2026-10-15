@@ -416,7 +416,10 @@ fn bump_vocabulary(conn: &Connection, body: &str) -> Result<()> {
              WHERE typeof(frequency) = 'integer' AND frequency BETWEEN 1 AND 9223372036854775806",
             params![term],
         )?;
-        ensure!(changed == 1, "ctx vocabulary frequency is invalid or exhausted");
+        ensure!(
+            changed == 1,
+            "ctx vocabulary frequency is invalid or exhausted"
+        );
     }
     Ok(())
 }
@@ -451,7 +454,10 @@ fn remove_source_vocabulary(tx: &rusqlite::Transaction, source_id: i64) -> Resul
 /// Repair historical replacement/purge drift once during schema migration.
 /// The migration dispatcher owns both rollback and the schema-version stamp.
 pub(super) fn rebuild_vocabulary(conn: &Connection) -> Result<()> {
-    ensure!(!conn.is_autocommit(), "ctx vocabulary rebuild requires a transaction");
+    ensure!(
+        !conn.is_autocommit(),
+        "ctx vocabulary rebuild requires a transaction"
+    );
     conn.execute("DELETE FROM vocabulary", [])?;
     let mut statement = conn.prepare("SELECT content FROM chunks ORDER BY rowid")?;
     let mut rows = statement.query([])?;
@@ -804,16 +810,29 @@ mod tests {
         // Reconstruct the exact v46 sources columns. All other schema objects
         // are unchanged by v47; the existing legacy FTS rows remain in place.
         for column in [
-            "document_provenance_schema", "document_parser_version", "document_source_sha256",
-            "document_source_bytes", "document_text_sha256", "document_text_bytes",
-            "document_text_encoding", "document_text_truncated",
+            "document_provenance_schema",
+            "document_parser_version",
+            "document_source_sha256",
+            "document_source_bytes",
+            "document_text_sha256",
+            "document_text_bytes",
+            "document_text_encoding",
+            "document_text_truncated",
         ] {
-            conn.execute_batch(&format!("ALTER TABLE sources DROP COLUMN {column};")).unwrap();
+            conn.execute_batch(&format!("ALTER TABLE sources DROP COLUMN {column};"))
+                .unwrap();
         }
-        conn.execute("UPDATE meta SET value = '46' WHERE key = 'schema_version'", []).unwrap();
+        conn.execute(
+            "UPDATE meta SET value = '46' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
         drop(conn);
         let mut migrated = crate::memory::store::open(&path).unwrap();
-        assert_eq!(crate::memory::migrations::current_version(&migrated).unwrap(), 47);
+        assert_eq!(
+            crate::memory::migrations::current_version(&migrated).unwrap(),
+            47
+        );
         let request = proven_document("new searchable document", "document");
         index_document(&mut migrated, &request).unwrap();
         drop(migrated);
@@ -824,7 +843,10 @@ mod tests {
         assert!(legacy_hits[0].source_document_provenance.is_none());
         let hits = search(&reopened, "searchable", 10).unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+        assert_eq!(
+            hits[0].source_document_provenance,
+            request.document_provenance
+        );
     }
     #[test]
     fn invalid_document_provenance_and_aborted_replacement_preserve_source_and_both_indexes() {
@@ -832,26 +854,39 @@ mod tests {
         let request = proven_document("original retained body", "doc");
         let original = index_document(&mut conn, &request).unwrap();
         let mut invalid = proven_document("replacement body", "doc");
-        invalid.document_provenance.as_mut().unwrap().extracted_text_sha256 = "b".repeat(64);
+        invalid
+            .document_provenance
+            .as_mut()
+            .unwrap()
+            .extracted_text_sha256 = "b".repeat(64);
         assert!(index_document(&mut conn, &invalid).is_err());
         conn.execute_batch(
             "CREATE TRIGGER reject_document_replacement AFTER INSERT ON sources
              BEGIN SELECT RAISE(ABORT, 'injected replacement failure'); END;",
-        ).unwrap();
+        )
+        .unwrap();
         assert!(index_document(&mut conn, &proven_document("replacement body", "doc")).is_err());
         let hits = search(&conn, "original", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].source_id, original.source_id);
-        assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+        assert_eq!(
+            hits[0].source_document_provenance,
+            request.document_provenance
+        );
         for table in ["chunks", "chunks_trigram"] {
-            let retained: (i64, String) = conn.query_row(
-                &format!("SELECT source_id, content FROM {table}"), [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            ).unwrap();
+            let retained: (i64, String) = conn
+                .query_row(
+                    &format!("SELECT source_id, content FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
             assert_eq!(retained, (original.source_id, request.content.clone()));
-            let count: i64 = conn.query_row(
-                &format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0),
-            ).unwrap();
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
             assert_eq!(count, 1);
         }
     }
@@ -864,14 +899,23 @@ mod tests {
         let hits = search(&conn, "replacement", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].source_document_provenance.is_none());
-        assert!(serde_json::to_value(&hits[0]).unwrap().get("source_document_provenance").is_none());
-        let unbound: bool = conn.query_row(
-            "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
+        assert!(
+            serde_json::to_value(&hits[0])
+                .unwrap()
+                .get("source_document_provenance")
+                .is_none()
+        );
+        let unbound: bool = conn
+            .query_row(
+                "SELECT document_provenance_schema IS NULL AND document_parser_version IS NULL
                  AND document_source_sha256 IS NULL AND document_source_bytes IS NULL
                  AND document_text_sha256 IS NULL AND document_text_bytes IS NULL
                  AND document_text_encoding IS NULL AND document_text_truncated IS NULL
-             FROM sources WHERE label = 'doc'", [], |row| row.get(0),
-        ).unwrap();
+             FROM sources WHERE label = 'doc'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(unbound);
     }
 
@@ -887,8 +931,11 @@ mod tests {
             "document_provenance_schema = 'future'",
         ] {
             index_document(&mut conn, &proven_document("original body", "doc")).unwrap();
-            conn.execute(&format!("UPDATE sources SET {mutation} WHERE label = 'doc'"), [])
-                .unwrap();
+            conn.execute(
+                &format!("UPDATE sources SET {mutation} WHERE label = 'doc'"),
+                [],
+            )
+            .unwrap();
             assert!(search(&conn, "original", 10).is_err(), "{mutation}");
         }
     }
@@ -911,7 +958,9 @@ mod tests {
                     .unwrap();
                 let columns = statement.column_count();
                 statement
-                    .query_map([], |row| (0..columns).map(|column| row.get(column)).collect())
+                    .query_map([], |row| {
+                        (0..columns).map(|column| row.get(column)).collect()
+                    })
                     .unwrap()
                     .collect::<rusqlite::Result<_>>()
                     .unwrap()
@@ -922,21 +971,41 @@ mod tests {
     #[test]
     fn vocabulary_replacement_and_source_purge_preserve_per_chunk_counts() {
         let mut conn = fresh_conn();
-        index_document(&mut conn, &idx("# One\nshared shared amber\n# Two\nshared cobalt", "replace")).unwrap();
+        index_document(
+            &mut conn,
+            &idx(
+                "# One\nshared shared amber\n# Two\nshared cobalt",
+                "replace",
+            ),
+        )
+        .unwrap();
         index_document(&mut conn, &idx("shared retained", "keep")).unwrap();
-        assert_eq!(vocabulary_snapshot(&conn), vec![
-            ("amber".into(), 1), ("cobalt".into(), 1),
-            ("retained".into(), 1), ("shared".into(), 3),
-        ]);
+        assert_eq!(
+            vocabulary_snapshot(&conn),
+            vec![
+                ("amber".into(), 1),
+                ("cobalt".into(), 1),
+                ("retained".into(), 1),
+                ("shared".into(), 3),
+            ]
+        );
         for _ in 0..2 {
             index_document(&mut conn, &idx("shared newword newword", "replace")).unwrap();
-            assert_eq!(vocabulary_snapshot(&conn), vec![
-                ("newword".into(), 1), ("retained".into(), 1), ("shared".into(), 2),
-            ]);
+            assert_eq!(
+                vocabulary_snapshot(&conn),
+                vec![
+                    ("newword".into(), 1),
+                    ("retained".into(), 1),
+                    ("shared".into(), 2),
+                ]
+            );
         }
         assert_eq!(purge(&mut conn, PurgeScope::Source("replace")).unwrap(), 1);
         assert_eq!(purge(&mut conn, PurgeScope::Source("replace")).unwrap(), 0);
-        assert_eq!(vocabulary_snapshot(&conn), vec![("retained".into(), 1), ("shared".into(), 1)]);
+        assert_eq!(
+            vocabulary_snapshot(&conn),
+            vec![("retained".into(), 1), ("shared".into(), 1)]
+        );
         assert_eq!(search(&conn, "shard", 5).unwrap()[0].label, "keep");
         assert_eq!(purge(&mut conn, PurgeScope::All).unwrap(), 1);
         for table in index_snapshot(&conn) {
@@ -953,10 +1022,17 @@ mod tests {
         keep.source_category = Some("other".into());
         index_document(&mut conn, &keep).unwrap();
         assert_eq!(purge(&mut conn, PurgeScope::Category("test")).unwrap(), 2);
-        assert_eq!(vocabulary_snapshot(&conn), vec![("retained".into(), 1), ("shared".into(), 1)]);
+        assert_eq!(
+            vocabulary_snapshot(&conn),
+            vec![("retained".into(), 1), ("shared".into(), 1)]
+        );
         assert_eq!(purge(&mut conn, PurgeScope::Category("test")).unwrap(), 0);
         for table in ["sources", "chunks", "chunks_trigram"] {
-            let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+            let count: i64 = conn
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
             assert_eq!(count, 1);
         }
     }
@@ -971,7 +1047,11 @@ mod tests {
         ] {
             for action in ["replace", "source", "category"] {
                 let mut conn = fresh_conn();
-                index_document(&mut conn, &idx("# One\namber shared\n# Two\ncobalt shared", "doc")).unwrap();
+                index_document(
+                    &mut conn,
+                    &idx("# One\namber shared\n# Two\ncobalt shared", "doc"),
+                )
+                .unwrap();
                 conn.execute(mutation, []).unwrap();
                 let before = index_snapshot(&conn);
                 let result = match action {
@@ -993,7 +1073,8 @@ mod tests {
             conn.execute_batch(
                 "CREATE TRIGGER block_source_delete BEFORE DELETE ON sources
                  BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;",
-            ).unwrap();
+            )
+            .unwrap();
             let before = index_snapshot(&conn);
             let result = match action {
                 "replace" => index_document(&mut conn, &idx("newword", "doc")).map(|_| ()),
@@ -1010,7 +1091,8 @@ mod tests {
         for value in ["0", "1.5", "9223372036854775807"] {
             let mut conn = fresh_conn();
             index_document(&mut conn, &idx("shared", "keep")).unwrap();
-            conn.execute(&format!("UPDATE vocabulary SET frequency={value}"), []).unwrap();
+            conn.execute(&format!("UPDATE vocabulary SET frequency={value}"), [])
+                .unwrap();
             let before = index_snapshot(&conn);
             assert!(index_document(&mut conn, &idx("shared", "new")).is_err());
             assert_eq!(index_snapshot(&conn), before);
@@ -1148,7 +1230,9 @@ mod tests {
         assert_eq!(stats(&conn).unwrap().sources_count, 2);
         for table in ["chunks", "chunks_trigram"] {
             let count: i64 = conn
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(count, 2);
             for expected in [&keep, &drop] {
@@ -1188,7 +1272,10 @@ mod tests {
                 .unwrap()
                 .collect::<rusqlite::Result<_>>()
                 .unwrap();
-            assert_eq!(rows, vec![(keep.source_id, "retained amber document".to_string())]);
+            assert_eq!(
+                rows,
+                vec![(keep.source_id, "retained amber document".to_string())]
+            );
         }
     }
 

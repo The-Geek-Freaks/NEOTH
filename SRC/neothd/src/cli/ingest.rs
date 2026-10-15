@@ -533,14 +533,15 @@ fn index_extracted_text(
             reason: IndexSkipReason::EmptyText,
         };
     }
-    let document_provenance = match DocumentProvenance::from_extraction_metadata(&extraction.metadata)
-        .and_then(|provenance| {
-            if let Some(provenance) = provenance.as_ref() {
-                provenance.validate_for_content(&extraction.text)?;
-            }
-            Ok(provenance)
-        })
-    {
+    let document_provenance = match DocumentProvenance::from_extraction_metadata(
+        &extraction.metadata,
+    )
+    .and_then(|provenance| {
+        if let Some(provenance) = provenance.as_ref() {
+            provenance.validate_for_content(&extraction.text)?;
+        }
+        Ok(provenance)
+    }) {
         Ok(provenance) => provenance,
         Err(_) => {
             tracing::warn!("ingest: invalid document provenance; index unchanged");
@@ -1083,10 +1084,15 @@ mod tests {
             .await
             .unwrap();
         let expected = DocumentProvenance::from_extraction_metadata(&extraction.metadata)
-            .unwrap().unwrap();
+            .unwrap()
+            .unwrap();
         let db = dir.path().join("views.db");
         let outcome = index_extracted_text(
-            &index_fixture_args(&db, false), &extraction, "doc", Some(&path), dir.path(),
+            &index_fixture_args(&db, false),
+            &extraction,
+            "doc",
+            Some(&path),
+            dir.path(),
         );
         assert_eq!(outcome, IngestIndexOutcome::Indexed { chunk_count: 1 });
         let reopened = store::open(&db).unwrap();
@@ -1110,9 +1116,14 @@ mod tests {
             IngestIndexOutcome::Indexed { chunk_count: 1 },
         );
         let original = crate::memory::ctx::search(&store::open(&db).unwrap(), "original", 10)
-            .unwrap().remove(0);
+            .unwrap()
+            .remove(0);
         let mut missing = index_fixture_extraction("replacement");
-        missing.metadata.as_object_mut().unwrap().remove("provenance");
+        missing
+            .metadata
+            .as_object_mut()
+            .unwrap()
+            .remove("provenance");
         let mut mismatch = index_fixture_extraction("replacement");
         mismatch.text = "different text".into();
         for extraction in [missing, mismatch] {
@@ -1125,12 +1136,18 @@ mod tests {
             let hits = crate::memory::ctx::search(&reopened, "original", 10).unwrap();
             assert_eq!(hits.len(), 1);
             assert_eq!(hits[0].source_id, original.source_id);
-            assert_eq!(hits[0].source_document_provenance, original.source_document_provenance);
+            assert_eq!(
+                hits[0].source_document_provenance,
+                original.source_document_provenance
+            );
             for table in ["chunks", "chunks_trigram"] {
-                let retained: String = reopened.query_row(
-                    &format!("SELECT content FROM {table} WHERE source_id = ?1"),
-                    [original.source_id], |row| row.get(0),
-                ).unwrap();
+                let retained: String = reopened
+                    .query_row(
+                        &format!("SELECT content FROM {table} WHERE source_id = ?1"),
+                        [original.source_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
                 assert_eq!(retained, initial.text);
             }
         }
