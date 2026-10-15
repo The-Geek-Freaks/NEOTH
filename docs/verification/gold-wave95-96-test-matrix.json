@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 429886,
-    "sha256": "E789827757D5A5F848524A277A4C83260ECB8E3CE89D5AE192CB1E020C054C57"
+    "sha256": "0485EF1A7B5F75A727EA532E614C9A44BA59C80AFA5A3E0374F6D27EB073FF41"
   },
   "sourceInputs": 2344,
   "requiredNativeTests": [
@@ -17917,55 +17917,55 @@
     {
       "test": "media::docx_structure::tests::docx_ranges_bind_exact_member_bytes_and_preserve_cells_and_paragraphs",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_omit_merged_revised_and_offset_tables_whole",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_keep_omission_totals_after_diagnostic_cap",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_cap_actual_serialized_metadata_including_source_binding",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5",
+      "sourceSha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
       "junitClass": "neoth"
     },
     {
@@ -84835,6 +84835,26 @@
       }
     ],
     "note": "Focused38770620060 identified byte-slice and nested collection inference errors before test execution. Minimal static-reviewed type fixes;33 exact cases and3006 portable registrations unchanged; hosted revalidation required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2601FocusedFormatRepair": {
+    "base": "083cb79faf3c786dea10613f961ac6ae454fc284",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2599-docx-table-ranges.json",
+        "bytes": 4286,
+        "sha256": "D2179E0BA20B13C96325BBDE2C71535680D052F9E8975D2D731C0F7EACDBAD82",
+        "blob": "03433180f05bf9c864d04683ca3b37d3716b003f"
+      },
+      {
+        "path": "SRC/neothd/src/media/docx_structure.rs",
+        "bytes": 33420,
+        "sha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F",
+        "blob": "78a334c4a1e1b4884940bc2150dabff2ea5f4b22"
+      }
+    ],
+    "note": "Imported exact083cb79f hosted rustfmt patch only; compiler-type fixes still require focused33 runtime proof.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

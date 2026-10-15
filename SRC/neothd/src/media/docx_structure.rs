@@ -526,8 +526,8 @@ fn scan(xml: &str, state: &mut State) {
             }
             Event::Text(text) => {
                 let text: &[u8] = text.as_ref();
-                let valid = std::str::from_utf8(text)
-                    .is_ok_and(|value| value.chars().all(legal_xml_char));
+                let valid =
+                    std::str::from_utf8(text).is_ok_and(|value| value.chars().all(legal_xml_char));
                 if !valid {
                     Err("invalid_xml_text")
                 } else if state.stack.is_empty() && !text.iter().all(u8::is_ascii_whitespace) {

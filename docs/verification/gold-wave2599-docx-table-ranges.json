@@ -34,7 +34,7 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "sha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5"
+      "sha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F"
     }
   ],
   "review": {
@@ -74,6 +74,15 @@
     "reviewer": "/root/document_compile_repair",
     "hostedRevalidation": "pending",
     "runtimeCasesExecutedInFailedRun": 0,
-    "localRuntimeExecuted": false
+    "localRuntimeExecuted": false,
+    "hostedFormatting": {
+      "run": 38772264768,
+      "producer": "083cb79faf3c786dea10613f961ac6ae454fc284",
+      "artifact": 11991124034,
+      "zipSha256": "53B6210BD2E098CC1325568ABD5F855CDEF47985864558B520B2EC417E0A5C08",
+      "patchSha256": "538FA5856B355FEF26B5EB856A7EF5F6EEB338248239B250F979E01563D455FA",
+      "applied": true,
+      "localFormatterExecuted": false
+    }
   }
 }

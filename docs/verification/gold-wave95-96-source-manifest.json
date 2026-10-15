@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T16:47:19.8868206Z",
+  "capturedUtc": "2026-10-15T16:50:20.1244457Z",
   "validationStatus": "W2599_W2602_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -4523,8 +4523,8 @@
     },
     {
       "path": "docs/verification/gold-wave2599-docx-table-ranges.json",
-      "bytes": 3897,
-      "sha256": "1F63390C4690FD3239C0869F93F4CEDB0BE4FFFE2DD0CA1CB3F3905C240391A6"
+      "bytes": 4286,
+      "sha256": "D2179E0BA20B13C96325BBDE2C71535680D052F9E8975D2D731C0F7EACDBAD82"
     },
     {
       "path": "docs/verification/gold-wave2600-document-structure-persistence.json",
@@ -8433,8 +8433,8 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "bytes": 33421,
-      "sha256": "59A2FA296D22B22F90DA38519F34E4B156F79A8068C00910A48A49B092EC0DC5"
+      "bytes": 33420,
+      "sha256": "22B69A7FA91C30280EA8FF055B13C1A3CB9A71E06471A41F65D539B6E119C94F"
     },
     {
       "path": "SRC/neothd/src/media/frame_decoder.rs",
