@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T17:16:34.3760656Z",
-  "validationStatus": "W2599_W2602_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "capturedUtc": "2026-10-15T17:48:41.6705111Z",
+  "validationStatus": "W2599_W2603_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 42824,
-      "sha256": "1AC37A1B1DB8FE6CCA4EA2CC21AFD23386B8B1264145716DC69118BF34E5E0F2"
+      "bytes": 49353,
+      "sha256": "9EED29DD6F3A855FB917AB02ED2EBB140113BC23DD761F5F5A312E8FFCD093BD"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4542,6 +4542,11 @@
       "sha256": "134031955FD758F0BBDB75E64D11D336348E2EB729108FE511D2934C359415ED"
     },
     {
+      "path": "docs/verification/gold-wave2603-terminal-usage-replay.json",
+      "bytes": 3119,
+      "sha256": "2954FF0D58B3794D034831185FFB1C94CA40508FE54FA3BC39B2049867C03FD2"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5718,8 +5723,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2649345,
-      "sha256": "02C82D95E66F2147D42F5D3443D390845D0ABB5FFA01B1B400557EF13D89FAF1"
+      "bytes": 2651003,
+      "sha256": "45DC90EBFBACB6140FB2BB3EA2AD251BE7A41C3FEA360B099DB8A418E0C844B3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7903,8 +7908,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
-      "bytes": 77914,
-      "sha256": "109A8D1FAFF66237EFCEDEAB9382B07A840909AE4158C7A2C5E16420134D342D"
+      "bytes": 92123,
+      "sha256": "3BEEBBE8164B3CFC1EDA089D3F9A14CFC9C87F596CE8D89F0A9D87DA23000424"
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
@@ -8933,8 +8938,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 370769,
-      "sha256": "EF22AEBABCEE3148959FCCBFAF0F1AC3E42E0CEA0857B77BB67AF4A14370487C"
+      "bytes": 371779,
+      "sha256": "202F61741A08DCD3A601EACB7782B864A59AE2B648D69AA630D107089754BB91"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",

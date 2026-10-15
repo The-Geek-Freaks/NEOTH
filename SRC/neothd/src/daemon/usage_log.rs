@@ -675,17 +675,99 @@ fn terminal_prompt_tax(
     }
 }
 
-fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
-    let value: serde_json::Value = serde_json::from_slice(payload)?;
-    if value
-        .get("usage_projection_schema")
-        .and_then(serde_json::Value::as_str)
-        != Some("neoth.provider-usage.v2")
+/// Freeze the already-computed projection. Bit strings preserve the existing
+/// floating-point result without inventing a new pricing or rounding policy.
+/// This is not a price-table snapshot or evidence of provider settlement.
+pub(crate) fn terminal_usage_snapshot(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
+    if event.cost_usd.is_some_and(|cost| !cost.is_finite() || cost.is_sign_negative())
+        || event.cache_savings_usd.is_some_and(|savings| !savings.is_finite())
     {
-        // Historical terminal frames predate invocation-id-backed projection
-        // and may already have a legacy JSONL row. Do not double-count them.
+        anyhow::bail!("terminal usage amounts are invalid");
+    }
+    let mut metadata = serde_json::to_value(event)?;
+    let object = metadata.as_object_mut().expect("usage event is an object");
+    object.remove("cost_usd");
+    object.remove("cache_savings_usd");
+    Ok(serde_json::json!({
+        "schema": "neoth.provider-usage-snapshot.v1",
+        "event_metadata": metadata,
+        "cost_usd_bits": event.cost_usd.map(|value| format!("{:016x}", value.to_bits())),
+        "cache_savings_usd_bits": event.cache_savings_usd.map(|value| format!("{:016x}", value.to_bits())),
+    }))
+}
+
+fn snapshot_amount(snapshot: &serde_json::Value, field: &str) -> anyhow::Result<Option<f64>> {
+    let value = snapshot.get(field)
+        .ok_or_else(|| anyhow::anyhow!("terminal usage snapshot field `{field}` is missing"))?;
+    if value.is_null() {
         return Ok(None);
     }
+    let bits = value.as_str().filter(|text| {
+        text.len() == 16 && text.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }).ok_or_else(|| anyhow::anyhow!("terminal usage snapshot field `{field}` is not canonical f64 bits"))?;
+    let amount = f64::from_bits(u64::from_str_radix(bits, 16)?);
+    if !amount.is_finite() || (field == "cost_usd_bits" && amount.is_sign_negative()) {
+        anyhow::bail!("terminal usage snapshot field `{field}` is not a valid amount");
+    }
+    Ok(Some(amount))
+}
+
+fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<UsageEvent> {
+    let metadata = snapshot.get("event_metadata")
+        .ok_or_else(|| anyhow::anyhow!("terminal usage snapshot metadata is missing"))?;
+    if metadata.get("cost_usd").is_some() || metadata.get("cache_savings_usd").is_some() {
+        anyhow::bail!("terminal usage snapshot contains competing amount representations");
+    }
+    let mut event: UsageEvent = serde_json::from_value(metadata.clone())?;
+    event.cost_usd = snapshot_amount(snapshot, "cost_usd_bits")?;
+    event.cache_savings_usd = snapshot_amount(snapshot, "cache_savings_usd_bits")?;
+    // Re-encoding enforces the complete versioned field set: optional fields
+    // must be explicitly present as null, not silently supplied by defaults.
+    if terminal_usage_snapshot(&event)? != *snapshot {
+        anyhow::bail!("terminal usage snapshot has an unsupported schema or incomplete field set");
+    }
+    Ok(event)
+}
+
+fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
+    usage_event_from_terminal_payload_with_legacy(payload, |event| {
+        // V2 did not retain original amounts or a historic price basis.
+        provider_terminal_event(
+            event.ts_unix, &event.provider, &event.model, event.input_tokens,
+            event.output_tokens, event.latency_ms, event.ok, event.cache_creation_tokens,
+            event.cache_read_tokens, event.automated,
+            event.invocation_id.as_deref().expect("validated invocation id"),
+            event.outcome.as_deref().expect("validated terminal outcome"),
+            event.call_scope.as_deref().expect("validated call scope"),
+            event.source.as_deref(), event.call_type.as_deref(), event.streaming,
+            event.prompt_tax,
+        )
+    })
+}
+
+fn usage_event_from_terminal_payload_with_legacy(
+    payload: &[u8],
+    legacy_projection: impl FnOnce(UsageEvent) -> UsageEvent,
+) -> anyhow::Result<Option<UsageEvent>> {
+    let value: serde_json::Value = serde_json::from_slice(payload)?;
+    let snapshot = match value.get("usage_projection_schema") {
+        Some(serde_json::Value::String(schema)) if schema == "neoth.provider-usage.v3" => {
+            Some(usage_event_from_snapshot(value.get("usage_snapshot")
+                .ok_or_else(|| anyhow::anyhow!("v3 terminal usage snapshot is missing"))?)?)
+        }
+        Some(serde_json::Value::String(schema)) if schema == "neoth.provider-usage.v2" => {
+            if value.get("usage_snapshot").is_some() {
+                anyhow::bail!("legacy terminal usage contains a v3 snapshot");
+            }
+            None
+        }
+        None if value.get("usage_snapshot").is_none() => {
+            // Historical frames may already have a legacy JSONL row. Preserve
+            // the existing skip boundary; do not double-count their usage.
+            return Ok(None);
+        }
+        _ => anyhow::bail!("unsupported terminal usage projection schema"),
+    };
     let invocation_id = terminal_required_str(&value, "invocation_id")?;
     if invocation_id.len() != 64 || !invocation_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("terminal usage invocation_id is not canonical SHA-256 hex");
@@ -710,36 +792,48 @@ fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<Us
                 .map(|latency_ns| latency_ns / 1_000_000)
         })
         .ok_or_else(|| anyhow::anyhow!("terminal usage latency is missing or invalid"))?;
-    Ok(Some(provider_terminal_event(
+    let event = UsageEvent {
         ts_unix,
-        terminal_required_str(&value, "provider")?,
-        value
+        provider: terminal_required_str(&value, "provider")?.to_owned(),
+        model: value
             .get("wire_model")
             .and_then(serde_json::Value::as_str)
             .or_else(|| value.get("model").and_then(serde_json::Value::as_str))
             .filter(|model| !model.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("terminal usage wire model is missing or empty"))?,
-        terminal_optional_u32(&value, "input_tokens")?,
-        terminal_optional_u32(&value, "output_tokens")?,
+            .ok_or_else(|| anyhow::anyhow!("terminal usage wire model is missing or empty"))?.to_owned(),
+        input_tokens: terminal_optional_u32(&value, "input_tokens")?,
+        output_tokens: terminal_optional_u32(&value, "output_tokens")?,
         latency_ms,
         ok,
-        terminal_optional_u32(&value, "cache_creation_tokens")?,
-        terminal_optional_u32(&value, "cache_read_tokens")?,
-        value
+        cache_creation_tokens: terminal_optional_u32(&value, "cache_creation_tokens")?,
+        cache_read_tokens: terminal_optional_u32(&value, "cache_read_tokens")?,
+        automated: value
             .get("automated")
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `automated` is missing"))?,
-        invocation_id,
-        outcome,
-        terminal_required_str(&value, "call_scope")?,
-        terminal_optional_str(&value, "source")?,
-        terminal_optional_str(&value, "call_type")?,
-        value
+        invocation_id: Some(invocation_id.to_owned()),
+        outcome: Some(outcome.to_owned()),
+        call_scope: Some(terminal_required_str(&value, "call_scope")?.to_owned()),
+        source: terminal_optional_str(&value, "source")?.map(str::to_owned),
+        call_type: terminal_optional_str(&value, "call_type")?.map(str::to_owned),
+        streaming: value
             .get("streaming")
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `streaming` is missing"))?,
-        terminal_prompt_tax(&value)?,
-    )))
+        prompt_tax: terminal_prompt_tax(&value)?,
+        cost_usd: None,
+        cache_savings_usd: None,
+    };
+    if let Some(snapshot) = snapshot {
+        let mut metadata = snapshot.clone();
+        metadata.cost_usd = None;
+        metadata.cache_savings_usd = None;
+        if metadata != event {
+            anyhow::bail!("terminal usage snapshot does not match its outer terminal event");
+        }
+        return Ok(Some(snapshot));
+    }
+    Ok(Some(legacy_projection(event)))
 }
 
 /// Rebuild missing JSONL projections from durable provider terminal WAL rows.
@@ -2084,6 +2178,179 @@ mod tests {
                 unattributed_tokens: 13,
             })
         );
+    }
+
+    fn frozen_terminal_fixture() -> (UsageEvent, serde_json::Value) {
+        let mut event = provider_terminal_event(
+            100, "openai_api", "gpt-4o", Some(100), Some(50), 3, true,
+            Some(0), Some(0), true, &"a".repeat(64), "complete", "test.frozen_usage",
+            Some("test"), Some("direct"), false,
+            Some(crate::tokens::budget::PromptTax::default()),
+        );
+        // Deliberately differs from today's lookup: replay must retain the
+        // amount recorded by the old producer, not recompute current prices.
+        event.cost_usd = Some(1.2345678901234567);
+        event.cache_savings_usd = Some(-0.25);
+        let payload = serde_json::json!({
+            "usage_projection_schema": "neoth.provider-usage.v3",
+            "usage_snapshot": terminal_usage_snapshot(&event).unwrap(),
+            "invocation_id": event.invocation_id, "provider": event.provider,
+            "wire_model": event.model, "ok": event.ok, "terminal_kind": event.outcome,
+            "ts_unix": event.ts_unix, "latency_ms": event.latency_ms,
+            "input_tokens": event.input_tokens, "output_tokens": event.output_tokens,
+            "cache_creation_tokens": event.cache_creation_tokens,
+            "cache_read_tokens": event.cache_read_tokens, "automated": event.automated,
+            "call_scope": event.call_scope, "source": event.source,
+            "call_type": event.call_type, "streaming": event.streaming, "prompt_tax": event.prompt_tax,
+        });
+        (event, payload)
+    }
+
+    fn decode_terminal(value: &serde_json::Value) -> anyhow::Result<Option<UsageEvent>> {
+        usage_event_from_terminal_payload(&serde_json::to_vec(value).unwrap())
+    }
+
+    #[test]
+    fn terminal_v3_preserves_original_amount_bits_instead_of_current_rates() {
+        let (event, payload) = frozen_terminal_fixture();
+        let frozen_without_pricing = usage_event_from_terminal_payload_with_legacy(
+            &serde_json::to_vec(&payload).unwrap(),
+            |_| panic!("v3 replay must not invoke the current-price projection"),
+        ).unwrap().unwrap();
+        assert_eq!(frozen_without_pricing, event);
+        let restored = decode_terminal(&payload).unwrap().unwrap();
+        assert_eq!(restored, event);
+        assert_eq!(restored.cost_usd.unwrap().to_bits(), event.cost_usd.unwrap().to_bits());
+        assert_eq!(restored.cache_savings_usd.unwrap().to_bits(), (-0.25_f64).to_bits());
+        let mut legacy = payload.clone();
+        legacy["usage_projection_schema"] = "neoth.provider-usage.v2".into();
+        legacy.as_object_mut().unwrap().remove("usage_snapshot");
+        let recomputed = decode_terminal(&legacy).unwrap().unwrap();
+        assert_ne!(restored.cost_usd, recomputed.cost_usd);
+        assert_eq!(recomputed.cost_usd, Some(crate::providers::cost::actual_cost_usd(
+            "openai_api", "gpt-4o", 100, 50,
+        )));
+    }
+
+    #[test]
+    fn terminal_v3_keeps_unknown_amounts_distinct_from_known_zero() {
+        for amount in [None, Some(0.0)] {
+            let (mut event, mut payload) = frozen_terminal_fixture();
+            event.cost_usd = amount;
+            event.cache_savings_usd = None;
+            payload["usage_snapshot"] = terminal_usage_snapshot(&event).unwrap();
+            let restored = decode_terminal(&payload).unwrap().unwrap();
+            assert_eq!(restored.cost_usd, amount);
+            assert_eq!(restored.cache_savings_usd, None);
+        }
+    }
+
+    #[test]
+    fn terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions() {
+        let (_, payload) = frozen_terminal_fixture();
+        for field in payload["usage_snapshot"].as_object().unwrap().keys() {
+            let mut changed = payload.clone();
+            changed["usage_snapshot"].as_object_mut().unwrap().remove(field);
+            assert!(decode_terminal(&changed).is_err(), "snapshot field {field}");
+        }
+        for field in payload["usage_snapshot"]["event_metadata"].as_object().unwrap().keys() {
+            let mut changed = payload.clone();
+            changed["usage_snapshot"]["event_metadata"].as_object_mut().unwrap().remove(field);
+            assert!(decode_terminal(&changed).is_err(), "event field {field}");
+        }
+        for version in [serde_json::Value::Null, "neoth.provider-usage.v2".into(), "neoth.provider-usage.v99".into()] {
+            let mut changed = payload.clone();
+            changed["usage_projection_schema"] = version;
+            assert!(decode_terminal(&changed).is_err());
+        }
+        let mut changed = payload.clone();
+        changed.as_object_mut().unwrap().remove("usage_projection_schema");
+        assert!(decode_terminal(&changed).is_err());
+        changed.as_object_mut().unwrap().remove("usage_snapshot");
+        assert_eq!(decode_terminal(&changed).unwrap(), None);
+        let mut changed = payload.clone();
+        changed.as_object_mut().unwrap().remove("usage_snapshot");
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload;
+        changed["usage_snapshot"]["extra"] = true.into();
+        assert!(decode_terminal(&changed).is_err());
+    }
+
+    #[test]
+    fn terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values() {
+        let (_, payload) = frozen_terminal_fixture();
+        for invalid in ["7ff8000000000000", "7ff0000000000000", "fff0000000000000", "bff0000000000000", "8000000000000000", "3FF0000000000000", "1", "gggggggggggggggg"] {
+            let mut changed = payload.clone();
+            changed["usage_snapshot"]["cost_usd_bits"] = invalid.into();
+            assert!(decode_terminal(&changed).is_err(), "{invalid}");
+        }
+        for invalid in ["7ff8000000000000", "7ff0000000000000", "fff0000000000000"] {
+            let mut changed = payload.clone();
+            changed["usage_snapshot"]["cache_savings_usd_bits"] = invalid.into();
+            assert!(decode_terminal(&changed).is_err());
+        }
+        let mut changed = payload.clone();
+        changed["usage_snapshot"]["cost_usd_bits"] = 123.into();
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload;
+        changed["usage_snapshot"]["event_metadata"]["cost_usd"] = 1.0.into();
+        assert!(decode_terminal(&changed).is_err());
+    }
+
+    #[test]
+    fn terminal_v3_refuses_outer_identity_usage_and_context_mismatches() {
+        let (_, payload) = frozen_terminal_fixture();
+        for (field, value) in [
+            ("invocation_id", serde_json::json!("b".repeat(64))),
+            ("provider", "local_ouro".into()), ("wire_model", "other-model".into()),
+            ("terminal_kind", "stream_done".into()), ("source", "other-source".into()),
+            ("call_scope", "other.scope".into()), ("call_type", "other-call".into()),
+            ("input_tokens", 101.into()), ("output_tokens", 51.into()),
+            ("cache_creation_tokens", 1.into()), ("cache_read_tokens", 1.into()),
+            ("latency_ms", 4.into()), ("ts_unix", 101.into()),
+            ("automated", false.into()), ("streaming", true.into()),
+            ("prompt_tax", serde_json::Value::Null),
+        ] {
+            let mut changed = payload.clone();
+            changed[field] = value;
+            assert!(decode_terminal(&changed).is_err(), "{field}");
+        }
+    }
+
+    #[test]
+    fn terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts() {
+        let (event, payload) = frozen_terminal_fixture();
+        for conflict in [false, true] {
+            let home = tempdir().unwrap();
+            let mut segment = crate::wal::segment_header::SegmentHeader::new(
+                1, 1, 1, 100_000_000_000, [0; 16],
+            ).to_le_bytes().to_vec();
+            let mut second = payload.clone();
+            if conflict {
+                second["usage_snapshot"]["cost_usd_bits"] = format!("{:016x}", 2.0_f64.to_bits()).into();
+            }
+            for record in [&payload, &second] {
+                let bytes = serde_json::to_vec(record).unwrap();
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE, &bytes,
+                ).build();
+                segment.extend_from_slice(&crate::wal::frame::encode_frame(&header, &bytes));
+            }
+            let wal = home.path().join("wal");
+            fs::create_dir_all(&wal).unwrap();
+            fs::write(wal.join("frozen-usage-000001.wal"), segment).unwrap();
+            if conflict {
+                assert!(repair_from_terminal_wal(home.path()).is_err());
+                assert!(!usage_dir(home.path()).exists());
+            } else {
+                assert_eq!(repair_from_terminal_wal(home.path()).unwrap(), 1);
+                assert_eq!(repair_from_terminal_wal(home.path()).unwrap(), 0);
+                let text = fs::read_to_string(jsonl_file_for_ts(home.path(), event.ts_unix)).unwrap();
+                assert_eq!(text.lines().count(), 1);
+                let restored: UsageEvent = serde_json::from_str(text.trim()).unwrap();
+                assert_eq!(restored, event);
+            }
+        }
     }
 
     #[test]

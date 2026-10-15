@@ -1,0 +1,62 @@
+{
+  "schema": "neoth.gold-wave2603.v1",
+  "date": "2026-10-15",
+  "adoption": "ADOPT-20261012-A02",
+  "base": "e4cf3eb575168610a1a4392e260f8cf97f8cd694",
+  "status": "MAIN_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Freeze already-computed usage amounts in existing terminal WAL v3 using exact nullable f64 bit strings",
+    "Validate complete snapshot metadata against the same outer invocation, model, counters, timestamp and context before replay",
+    "Keep explicit legacy v2 recomputation while preventing mixed-version fallback",
+    "Retain existing canonical WAL, settlement and idempotent JSONL repair; no extra provider call or debit"
+  ],
+  "tests": [
+    "daemon::usage_log::tests::terminal_v3_keeps_unknown_amounts_distinct_from_known_zero",
+    "daemon::usage_log::tests::terminal_v3_preserves_original_amount_bits_instead_of_current_rates",
+    "daemon::usage_log::tests::terminal_v3_refuses_outer_identity_usage_and_context_mismatches",
+    "daemon::usage_log::tests::terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values",
+    "daemon::usage_log::tests::terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions",
+    "daemon::usage_log::tests::terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts",
+    "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently"
+  ],
+  "newTests": 6,
+  "newPortableRegistrations": 7,
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/daemon/usage_log.rs",
+      "sha256": "3BEEBBE8164B3CFC1EDA089D3F9A14CFC9C87F596CE8D89F0A9D87DA23000424"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sha256": "202F61741A08DCD3A601EACB7782B864A59AE2B648D69AA630D107089754BB91"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "9EED29DD6F3A855FB917AB02ED2EBB140113BC23DD761F5F5A312E8FFCD093BD"
+    }
+  ],
+  "review": {
+    "agent": "/root/interop_ci_budget_review",
+    "method": "Prompt-only field-flow, scope and test review",
+    "result": "Reviewed candidate; compiler and runtime proof pending"
+  },
+  "limitations": [
+    "Immutable original amounts apply only to new v3 terminals; legacy v2 retains current-rate recomputation",
+    "No historic PriceRow/FX version or provider-measurement confidence is manufactured",
+    "Seven-category attribution, tokenizer provenance, remainder and operator presentation remain open",
+    "Parser preserves existing WAL scan and custody path; schema checks do not authenticate coordinated rewritten records"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedFormatAccepted": false,
+  "hostedCompileAccepted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "prerequisiteDocumentAdmission": {
+    "producer": "e4cf3eb575168610a1a4392e260f8cf97f8cd694",
+    "run": "38776658313",
+    "exactPassed": 33,
+    "proof": "work/gold-20260906/wave2601-combined-document-batch/document33-e4cf3eb5-admission/ROOT_ADMISSION.json",
+    "sha256": "8A9FB107B7E31AA0283FEA143754C9819933E3C2A1AE0DFF5EC39B66B4D8D2E4",
+    "notFinalProducerAcceptance": true
+  }
+}

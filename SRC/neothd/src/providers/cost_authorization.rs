@@ -911,6 +911,11 @@ impl ProviderCallAuditTicket {
                 crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
             }
         };
+        // Freeze the same usage event projected below. The base payload samples
+        // its own clock, so bind the outer terminal to this event's timestamp.
+        payload.insert("ts_unix".into(), usage_event.ts_unix.into());
+        payload.insert("usage_projection_schema".into(), "neoth.provider-usage.v3".into());
+        payload.insert("usage_snapshot".into(), crate::daemon::usage_log::terminal_usage_snapshot(&usage_event)?);
         let payload = serde_json::to_vec(&payload).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
                 "provider terminal WAL serialization failed for `{}`: {error}",
@@ -7894,7 +7899,7 @@ mod tests {
         std::fs::write(&usage_blocker, b"not a directory").unwrap();
         let segment = wal_dir.join("repair-usage-000001.wal");
         let (writer, join) =
-            crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let provider = SensitiveSuccessProvider {
             calls: AtomicUsize::new(0),
         };
@@ -7915,6 +7920,11 @@ mod tests {
         drop(writer);
         join.await.unwrap();
         assert!(usage_blocker.is_file());
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].1["usage_projection_schema"], "neoth.provider-usage.v2");
+        assert!(frames[0].1.get("usage_snapshot").is_none());
+        assert_eq!(frames[1].1["usage_projection_schema"], "neoth.provider-usage.v3");
 
         std::fs::remove_file(&usage_blocker).unwrap();
         assert_eq!(
@@ -7930,6 +7940,9 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].outcome.as_deref(), Some("complete"));
         assert_eq!(events[0].provider, "local_ouro");
+        assert_eq!(frames[1].1["usage_snapshot"], crate::daemon::usage_log::terminal_usage_snapshot(&events[0]).unwrap());
+        assert_eq!(frames[1].1["ts_unix"], events[0].ts_unix);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     }
 
     fn wal_frames(segment: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
