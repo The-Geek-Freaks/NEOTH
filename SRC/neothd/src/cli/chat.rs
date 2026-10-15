@@ -1034,12 +1034,15 @@ impl LoopRouteTrigger {
 
 /// Exact dispatch leaf chosen for one turn before optional MCP catalogue I/O.
 ///
-/// `McpDispatch` is the only variant allowed to inject the trusted MCP protocol
+/// `McpDispatch` and `StreamingMcp` may inject the trusted MCP protocol
 /// and untrusted catalogue data. `RefineLoop` still uses the loop engine, but
 /// receives an empty MCP registry and therefore must stay protocol-free.
 #[derive(Debug, Clone)]
 pub(crate) enum TurnDispatchRoute {
     Streaming,
+    StreamingMcp {
+        autoroute: crate::mcp::config::AutorouteDecision,
+    },
     CouncilMif {
         message: String,
     },
@@ -1078,15 +1081,19 @@ impl TurnDispatchRoute {
     }
 
     pub(crate) const fn uses_mcp_catalogue(&self) -> bool {
-        matches!(self, Self::McpDispatch { .. })
+        matches!(self, Self::McpDispatch { .. } | Self::StreamingMcp { .. })
     }
 
     pub(crate) const fn uses_loop(&self) -> bool {
-        matches!(self, Self::McpDispatch { .. } | Self::RefineLoop { .. })
+        matches!(
+            self,
+            Self::McpDispatch { .. } | Self::StreamingMcp { .. } | Self::RefineLoop { .. }
+        )
     }
 
     pub(crate) const fn loop_trigger(&self) -> Option<LoopRouteTrigger> {
         match self {
+            Self::StreamingMcp { .. } => Some(LoopRouteTrigger::new(false, false)),
             Self::McpDispatch { loop_trigger, .. } | Self::RefineLoop { loop_trigger } => {
                 Some(*loop_trigger)
             }
@@ -1096,9 +1103,25 @@ impl TurnDispatchRoute {
 
     pub(crate) fn autoroute_reason(&self) -> Option<&'static str> {
         match self {
-            Self::McpDispatch { autoroute, .. } => Some(autoroute.reason()),
+            Self::McpDispatch { autoroute, .. } | Self::StreamingMcp { autoroute } => {
+                Some(autoroute.reason())
+            }
             _ => None,
         }
+    }
+}
+
+/// Only an authenticated activity observer can select the combined companion
+/// route. MCP opt-out and the already-resolved tool scope still take priority.
+fn select_stream_dispatch_route(
+    autoroute: crate::mcp::config::AutorouteDecision,
+    mcp_catalogue_allowed: bool,
+    authenticated_activity: bool,
+) -> TurnDispatchRoute {
+    if authenticated_activity && mcp_catalogue_allowed && autoroute.is_on() {
+        TurnDispatchRoute::StreamingMcp { autoroute }
+    } else {
+        TurnDispatchRoute::Streaming
     }
 }
 
@@ -6221,14 +6244,20 @@ pub(super) async fn resolve_chat_turn_route(
     mcp_servers: &crate::mcp::McpServers,
     skill_loop_trigger: bool,
     mcp_catalogue_allowed: bool,
+    authenticated_activity: bool,
 ) -> TurnRouteResolution {
     let loop_trigger = LoopRouteTrigger::new(
         skill_loop_trigger,
         args.loop_mode || (config.loop_config.enabled && config.loop_config.max_rounds > 1),
     );
     if args.stream && !loop_trigger.is_active() {
+        let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
         return TurnRouteResolution {
-            route: TurnDispatchRoute::Streaming,
+            route: select_stream_dispatch_route(
+                mcp_servers.autoroute_decision(autoroute_env.as_deref()),
+                mcp_catalogue_allowed,
+                authenticated_activity,
+            ),
             council_skip: Some(CouncilSkipAudit {
                 prompt_hash: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
                 reason: "streaming_mode_disables_council".to_string(),
@@ -6580,6 +6609,18 @@ pub(super) async fn dispatch_provider(
     let guarded_orchestration_provider = CanaryGuardedProvider {
         inner: provider,
         canary,
+    };
+    // Retain the same authorized leaf boundary and the same canary quarantine.
+    // Only the combined companion route consumes SSE for every MCP round.
+    let streamed_mcp_provider = super::companion_mcp_stream::StreamedMcpProvider { inner: provider };
+    let guarded_streamed_mcp_provider = CanaryGuardedProvider {
+        inner: &streamed_mcp_provider,
+        canary,
+    };
+    let mcp_provider: &dyn Provider = if matches!(&route, TurnDispatchRoute::StreamingMcp { .. }) {
+        &guarded_streamed_mcp_provider
+    } else {
+        &guarded_orchestration_provider
     };
 
     // Dispatch runs in one inner scope so every `?`, stream error and explicit
@@ -7484,7 +7525,7 @@ pub(super) async fn dispatch_provider(
                     let mut compaction_budget =
                         crate::mcp::dispatch_loop::CompactionBudget::default();
                     match run_mcp_dispatch_loop_with_activity(
-                        &guarded_orchestration_provider,
+                        mcp_provider,
                         req.clone(),
                         route_mcp_servers,
                         &config.autonomy_policy(),
@@ -18449,6 +18490,75 @@ mod tests {
             Err(error) => error,
         };
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[tokio::test]
+    async fn companion_streamed_mcp_uses_one_stream_and_quarantines_split_canary() {
+        struct StreamOnly {
+            body: String,
+            opened: std::sync::atomic::AtomicUsize,
+        }
+        #[async_trait]
+        impl Provider for StreamOnly {
+            fn name(&self) -> &'static str { "companion-stream-test" }
+            async fn complete(&self, _req: Request) -> Result<Completion> {
+                panic!("combined companion route must not switch to non-stream completion")
+            }
+            async fn stream(&self, _req: Request) -> Result<crate::providers::ChunkStream> {
+                self.opened.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let split = self.body.len() / 2;
+                let identity = crate::providers::CompletionIdentity {
+                    provider: self.name().into(),
+                    wire_model: "test-stream".into(),
+                    dispatch_route: Vec::new(),
+                };
+                Ok(Box::pin(futures_util::stream::iter(vec![
+                    Ok(crate::providers::CompletionChunk {
+                        delta: self.body[..split].into(),
+                        identity: identity.clone(),
+                        ..Default::default()
+                    }),
+                    Ok(crate::providers::CompletionChunk {
+                        delta: self.body[split..].into(),
+                        identity,
+                        done: true,
+                        ..Default::default()
+                    }),
+                ])))
+            }
+        }
+        let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
+        let inner = StreamOnly {
+            body: canary.as_context_literal().to_string(),
+            opened: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let streamed = super::super::companion_mcp_stream::StreamedMcpProvider { inner: &inner };
+        let guarded = CanaryGuardedProvider { inner: &streamed, canary: &canary };
+        let error = guarded.complete(Request::default()).await.unwrap_err();
+        assert!(!error.to_string().contains(&inner.body));
+        assert_eq!(inner.opened.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn companion_stream_route_requires_authenticated_activity_and_mcp_authority() {
+        use crate::mcp::config::AutorouteDecision;
+        let combined = select_stream_dispatch_route(AutorouteDecision::AutoOn, true, true);
+        assert!(matches!(combined, TurnDispatchRoute::StreamingMcp { .. }));
+        assert!(combined.uses_mcp_catalogue());
+        assert!(combined.uses_loop());
+        assert!(!combined.loop_trigger().unwrap().is_active());
+        assert!(!combined.supports_single_leaf_recovery());
+        for (decision, catalogue, activity) in [
+            (AutorouteDecision::AutoOn, false, true),
+            (AutorouteDecision::AutoOn, true, false),
+            (AutorouteDecision::ForcedOff, true, true),
+            (AutorouteDecision::AutoOff, true, true),
+        ] {
+            let route = select_stream_dispatch_route(decision, catalogue, activity);
+            assert!(matches!(route, TurnDispatchRoute::Streaming));
+            assert!(!route.uses_mcp_catalogue());
+            assert!(!route.uses_loop());
+        }
     }
 
     #[test]

@@ -172,7 +172,13 @@
         "daemon::companion_protocol::capability_inventory_tests::jm_ex_05_activity_v2_rejects_invented_reasons_and_invalid_rows",
         "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
         "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
-        "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses"
+        "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses",
+        "cli::chat::tests::companion_stream_route_requires_authenticated_activity_and_mcp_authority",
+        "cli::chat::tests::companion_streamed_mcp_uses_one_stream_and_quarantines_split_canary",
+        "cli::companion_mcp_stream::tests::streamed_mcp_collects_exact_body_and_reported_zero_cache_usage",
+        "cli::companion_mcp_stream::tests::streamed_mcp_rejects_unbound_or_changed_identity",
+        "cli::companion_mcp_stream::tests::streamed_mcp_requires_done_and_discards_private_transport_errors",
+        "cli::companion_mcp_stream::tests::streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences"
       ]
     },
     "no_cluster": {
@@ -336,7 +342,9 @@
     "apps/neoth_companion/test/secure_store_conversation_test.dart",
     "apps/neoth_companion/test/activity_reason_test.dart",
     "apps/neoth_companion/lib/companion_activity_presentation.dart",
-    "SRC/neothd/src/channels/whatsapp_baileys.rs"
+    "SRC/neothd/src/channels/whatsapp_baileys.rs",
+    "SRC/neothd/src/cli/companion_mcp_stream.rs",
+    "SRC/neothd/src/cli/mod.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

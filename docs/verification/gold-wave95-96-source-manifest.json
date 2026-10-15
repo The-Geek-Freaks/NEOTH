@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-13T17:09:29.0284067Z",
-  "validationStatus": "RTF_BOUNDARY_SOURCE_CANDIDATE_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-15T09:30:29.9836608Z",
+  "validationStatus": "W2586 candidate; hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 27511,
-      "sha256": "4CF5316F6DFFFDE5FAED6EB5959A4C4B1946BC08EDA640CDAAB741BA3021C355"
+      "bytes": 28214,
+      "sha256": "1CD59664A740F1C87E2C93217D83E7A522690EE8A6601EFE1C73B3C9538D7C8A"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
@@ -74,7 +74,7 @@
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
       "bytes": 11356,
-      "sha256": "F9F4B44BD12D8BF2AA06FAF323C2960CD73785CD0CAF78FC22C99A4419D92F1C"
+      "sha256": "85A456528BB0452E6671E38C06C5F9E8C7971EEA6E07C325BFB85F5434C4B044"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -203,8 +203,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 21920,
-      "sha256": "A104FEBF47846EC507EE900F2B3213CA2F95C9B5D21F674BDEF310D380531E57"
+      "bytes": 22461,
+      "sha256": "355AD5AE2FCAC38522218A29587CFF34A18676B7860F4A815F1F08BAB892A2A0"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -4467,6 +4467,11 @@
       "sha256": "2D1D370CB81CAE59C249F31D4ADAA7E56268444AEA18098FE2B56E7666948556"
     },
     {
+      "path": "docs/verification/gold-wave2586-mobile-streamed-tools.json",
+      "bytes": 3054,
+      "sha256": "5048A5C20492FAC77292EFB04FE6F85D4C5B4DBC491C9B7CF01B1D90D81C0481"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5643,8 +5648,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2624263,
-      "sha256": "05A9F66D5F919A62455BE52513D4F18D0C4F1A49403DA282BE53A40E51427210"
+      "bytes": 2626206,
+      "sha256": "30B1FBEA52AF916C9C709F7BC39C391B8A3D3445CA2A70924521ADAAA0F631A3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6583,8 +6588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 176092,
-      "sha256": "47FF179A45AA18995A72689426EA523E1777283F3AA2D36E66E12625080E75B5"
+      "bytes": 176130,
+      "sha256": "345AA0F78E606D939074D77981BC6B620A6283FF0525A9170F55C73A70355431"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -6593,8 +6598,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1224543,
-      "sha256": "B1A174C20C8DCF6B614C17FD8A356345B023B0BEC5DA86FA78874ECDBD9C7DAD"
+      "bytes": 1229544,
+      "sha256": "42D10CCA716C485245629795E7B4A2D36C36975CCCFF8E6ED54EC380FC8F65AA"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -6620,6 +6625,11 @@
       "path": "SRC/neothd/src/cli/code.rs",
       "bytes": 148618,
       "sha256": "7E5B83619217B67C57FA4B73CA7516AF01AE7DFEDABEB60EF4BFCA34FE931DC2"
+    },
+    {
+      "path": "SRC/neothd/src/cli/companion_mcp_stream.rs",
+      "bytes": 6958,
+      "sha256": "28CFB4B94EFDCFD4DC26F9299773A72AAB04DD564BDFABCD3A22E1F03822704C"
     },
     {
       "path": "SRC/neothd/src/cli/companion.rs",
@@ -6843,8 +6853,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 130717,
-      "sha256": "D3711DD474FEBC100FDAA433CF63B64FF478B881513EBB8E25B2E884FF25BFCD"
+      "bytes": 130743,
+      "sha256": "7013732CAB79F369891D8A6470D0A9EF7577B40011656B49E213364E92186217"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",

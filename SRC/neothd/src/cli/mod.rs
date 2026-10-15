@@ -48,6 +48,7 @@ pub mod code;
 pub mod code_intel;
 pub mod code_map;
 pub mod companion;
+mod companion_mcp_stream;
 pub mod completions;
 pub mod computer_use;
 pub mod connect;

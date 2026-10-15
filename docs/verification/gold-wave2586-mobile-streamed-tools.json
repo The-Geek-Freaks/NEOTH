@@ -1,0 +1,51 @@
+{
+  "schema": "neoth.gold-wave2586.v1",
+  "date": "2026-10-15",
+  "base": "e068755c29b57b056371e453a114b4b6998e196c",
+  "status": "Implemented candidate; hosted formatting, compilation and exact product journey pending",
+  "failedRun": 38439147222,
+  "failedProducer": "e068755c29b57b056371e453a114b4b6998e196c",
+  "diagnosis": [
+    "V4 always requests streaming plus optional activity V2; the streaming route previously bypassed MCP even with an authenticated activity sink",
+    "Actual held-error journey stopped before expected Failed reason and corrective second model response",
+    "Core exact tests consumed roughly fourteen and a half minutes compiling within a fifteen-minute execution step; observed completed cases passed before runner timeout"
+  ],
+  "changes": [
+    "Admitted stream plus activity selects StreamingMcp only with allowed catalogue and enabled MCP autoroute",
+    "Use existing MCP dispatch with a stream-collecting adapter over the same cost-authorized provider; no duplicate authorization, automatic fallback or repeated send",
+    "Buffer each model round up to 64 KiB; require stable bound identity and done; reject errors, refusal and truncation before canary quarantine and MCP parsing",
+    "Preserve live activity ownership, isError feedback, permissions, hooks, terminal framing and revoke/drain",
+    "Split core compile (25 minutes) from exact-case execution (15 minutes); job cap90; one build job remains"
+  ],
+  "proofBounds": [
+    "Combined route emits the accepted final body as one stream delta; no token-by-token combined-route preview claim",
+    "No change to V4 held-error fixture, ABI or assertions",
+    "Original separate V3 streaming acceptance retained",
+    "No local runtime, no Slint edits, no native/device/release acceptance"
+  ],
+  "newTests": [
+    "cli::chat::tests::companion_stream_route_requires_authenticated_activity_and_mcp_authority",
+    "cli::chat::tests::companion_streamed_mcp_uses_one_stream_and_quarantines_split_canary",
+    "cli::companion_mcp_stream::tests::streamed_mcp_collects_exact_body_and_reported_zero_cache_usage",
+    "cli::companion_mcp_stream::tests::streamed_mcp_rejects_unbound_or_changed_identity",
+    "cli::companion_mcp_stream::tests::streamed_mcp_requires_done_and_discards_private_transport_errors",
+    "cli::companion_mcp_stream::tests::streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences"
+  ],
+  "expected": {
+    "rustExact": 188,
+    "core": 117,
+    "collector": 32,
+    "conversationObserver": 9,
+    "interopSourceBindings": 86,
+    "portableRegistered": 2942
+  },
+  "graph": {
+    "producer": "dc52a371c5fddeb5a5f1d7dd224172a7ad1fd286",
+    "index": "work/gold-20260906/wave2582-graphify-navigation/admitted/file-navigation.json",
+    "usage": "Inspected chat, companion owner and dispatch-loop neighbors, then verified actual route and source calls; missing inferred edges not treated as proof"
+  },
+  "localExecutableValidationRan": false,
+  "hostedRuntimeAccepted": false,
+  "releaseAccepted": false,
+  "goldCheckboxesClosed": 0
+}

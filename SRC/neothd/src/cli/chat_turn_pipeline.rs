@@ -1189,6 +1189,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         mcp_servers,
         skill_loop_trigger,
         mcp_catalogue_slot.is_some(),
+        tool_activity_sink.is_some(),
     )
     .await;
     // Replay is one provider turn, never a council, MCP, or refinement route.
