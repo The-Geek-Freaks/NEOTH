@@ -1,0 +1,28 @@
+{
+  "schema": "neoth.gold-wave2588.v1",
+  "date": "2026-10-15",
+  "base": "ab0647d1a5ee69d28107492f5d946a3f4d958436",
+  "status": "SOURCE_REPAIR_HOSTED_VALIDATION_PENDING",
+  "failedRun": 38715237542,
+  "failedJob": 116356213898,
+  "failure": "Ten deliberately rejected response variants shared one process-global openai_api breaker; variant six was rejected by the circuit before decoding.",
+  "changes": [
+    "Test-only unique breaker domain allocated once per adapter",
+    "Complete and stream reuse the same per-instance domain in tests",
+    "Non-test builds retain the existing provider-name global breaker key",
+    "Exact regression proves six HTTP requests: five failures then blocked complete and stream, plus one independent adapter request"
+  ],
+  "tests": [
+    "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip",
+    "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
+    "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal"
+  ],
+  "interopRustCases": 189,
+  "coreCases": 118,
+  "selectionWeakened": false,
+  "productionBreakerDisabled": false,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "nativeDispatchAllowed": false,
+  "goldCheckboxesClosed": 0
+}

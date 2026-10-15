@@ -178,7 +178,8 @@
         "cli::companion_mcp_stream::tests::streamed_mcp_collects_exact_body_and_reported_zero_cache_usage",
         "cli::companion_mcp_stream::tests::streamed_mcp_rejects_unbound_or_changed_identity",
         "cli::companion_mcp_stream::tests::streamed_mcp_requires_done_and_discards_private_transport_errors",
-        "cli::companion_mcp_stream::tests::streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences"
+        "cli::companion_mcp_stream::tests::streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences",
+        "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip"
       ]
     },
     "no_cluster": {

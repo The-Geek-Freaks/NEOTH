@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T09:33:37.0500601Z",
-  "validationStatus": "W2586 hosted format imported; runtime pending",
+  "capturedUtc": "2026-10-15T10:26:49.1848200Z",
+  "validationStatus": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 28214,
-      "sha256": "1CD59664A740F1C87E2C93217D83E7A522690EE8A6601EFE1C73B3C9538D7C8A"
+      "bytes": 28326,
+      "sha256": "105EE87A4B2825888728FB87512C705AC972F3B52120080E3AE4751DCC88A750"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
@@ -4472,6 +4472,11 @@
       "sha256": "A0ABDD8920CA12DCD0BC02240801AD1B0C3028F9387DF87DCDD2EEB6FFF357AA"
     },
     {
+      "path": "docs/verification/gold-wave2588-interop-breaker-isolation.json",
+      "bytes": 1317,
+      "sha256": "A18511E00126F48C01DF2537A774EF3FFE61D638381FD198417CC64B58FEB8CC"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5648,8 +5653,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2626206,
-      "sha256": "30B1FBEA52AF916C9C709F7BC39C391B8A3D3445CA2A70924521ADAAA0F631A3"
+      "bytes": 2627336,
+      "sha256": "266AC1CD414AABE828380AD4EC08ED7EDBFDA3A11F70CF7B19AC37ED0AB659F4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8878,8 +8883,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/openai_api.rs",
-      "bytes": 165892,
-      "sha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B"
+      "bytes": 168217,
+      "sha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54"
     },
     {
       "path": "SRC/neothd/src/providers/ouro/adapter.rs",

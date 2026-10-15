@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2586 hosted format imported; runtime pending",
+  "status": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 426175,
-    "sha256": "C6C7A64AD6D816A36A1E0E09EFE461AAED6B9D227EDAE177C04D7715EE69A295"
+    "bytes": 426372,
+    "sha256": "678E59C519C4F144E9FF78716ADE629C25D71F1E3055F43B675661783A479C56"
   },
-  "sourceInputs": 2324,
+  "sourceInputs": 2325,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -6054,7 +6054,7 @@
     {
       "test": "providers::openai_api::tests::mock_401_auth_fail_returns_descriptive_error",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
@@ -9162,13 +9162,13 @@
     {
       "test": "providers::openai_api::tests::custom_openai_endpoint_has_a_distinct_unknown_pricing_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::only_the_exact_official_openai_origin_and_v1_path_keep_official_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
@@ -17587,19 +17587,19 @@
     {
       "test": "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "92E930E1479FEED05DF2DFC94F34C2EFB0E5882D82CEE5D72C3A03EAE15B6B1B",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     },
     {
@@ -17678,6 +17678,12 @@
       "test": "cli::companion_mcp_stream::tests::streamed_mcp_rejects_overflow_refusal_and_truncated_tool_fences",
       "sourcePath": "SRC/neothd/src/cli/companion_mcp_stream.rs",
       "sourceSha256": "6A3AF1624CC5F665D533961FFD31CFD50473EA7C69A4893D7C1A9F4E69E0AC57",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip",
+      "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
+      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
       "junitClass": "neoth"
     }
   ],
@@ -83697,6 +83703,38 @@
       }
     ],
     "note": "Original format receipt38713770285 bound to02fb3408; two Rust paths only; no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2588": {
+    "base": "ab0647d1a5ee69d28107492f5d946a3f4d958436",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 28326,
+        "sha256": "105EE87A4B2825888728FB87512C705AC972F3B52120080E3AE4751DCC88A750",
+        "blob": "b8d76c9bebd821dd19c65779b3fa2655c01fb0fa"
+      },
+      {
+        "path": "docs/verification/gold-wave2588-interop-breaker-isolation.json",
+        "bytes": 1317,
+        "sha256": "A18511E00126F48C01DF2537A774EF3FFE61D638381FD198417CC64B58FEB8CC",
+        "blob": "41cded8e88c87c67e58472a290548ea6a3d66041"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2627336,
+        "sha256": "266AC1CD414AABE828380AD4EC08ED7EDBFDA3A11F70CF7B19AC37ED0AB659F4",
+        "blob": "72f4d22c78dd2ba400b5533b9aa2184626eeed46"
+      },
+      {
+        "path": "SRC/neothd/src/providers/openai_api.rs",
+        "bytes": 168217,
+        "sha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+        "blob": "a8e757f2af7a03577a0b2623a607002a3594562e"
+      }
+    ],
+    "note": "Test-only adapter breaker isolation; production key unchanged; interop requires 189 exact cases. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

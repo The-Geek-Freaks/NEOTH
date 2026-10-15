@@ -275,6 +275,9 @@ pub struct OpenAiAdapter {
     /// alias to identify itself differently from upstream OpenAI even though
     /// the wire protocol is identical.
     name: &'static str,
+    /// Independent mock adapters must not inherit another fixture's failures.
+    #[cfg(test)]
+    test_breaker_id: String,
     /// Exact compatible wire/vendor profile. `None` denotes native OpenAI or
     /// Copilot rather than an OpenAI-compatible binding.
     compat_profile: Option<OpenAiCompatibleProfile>,
@@ -354,9 +357,26 @@ impl OpenAiAdapter {
             default_model,
             http,
             name,
+            #[cfg(test)]
+            test_breaker_id: {
+                static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                format!("{name}::test::{id}")
+            },
             compat_profile,
             openrouter_metadata,
         })
+    }
+
+    fn breaker_id(&self) -> &str {
+        #[cfg(test)]
+        {
+            &self.test_breaker_id
+        }
+        #[cfg(not(test))]
+        {
+            self.name
+        }
     }
 
     #[cfg(test)]
@@ -480,7 +500,7 @@ impl Provider for OpenAiAdapter {
         // GR-04: wrap in circuit breaker so persistent provider
         // outages stop hammering the upstream + surface as a fast
         // local error after the failure threshold trips.
-        crate::providers::circuit_breaker::run_with_breaker(self.name, async {
+        crate::providers::circuit_breaker::run_with_breaker(self.breaker_id(), async {
             let started = Instant::now();
             let model = req
                 .model
@@ -784,7 +804,7 @@ impl Provider for OpenAiAdapter {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
-        crate::providers::circuit_breaker_stream::run_stream_with_breaker(self.name, async {
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker(self.breaker_id(), async {
             let model = req
                 .model
                 .clone()
@@ -2492,6 +2512,47 @@ mod tests {
             }
         }
         choices
+    }
+
+    #[tokio::test]
+    async fn mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [unsupported_native_tool_choices().remove(0)]
+            })))
+            .expect(6)
+            .mount(&mock)
+            .await;
+        let first = build_adapter_against(&mock.uri());
+        let second = build_adapter_against(&mock.uri());
+        assert_eq!(first.name(), "openai_api");
+        assert_eq!(first.name(), second.name());
+        assert_ne!(first.breaker_id(), second.breaker_id());
+
+        for _ in 0..5 {
+            let error = first.complete(Request::default()).await.unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "openai_api returned an unsupported native tool call"
+            );
+        }
+        let complete_error = first.complete(Request::default()).await.unwrap_err();
+        assert!(complete_error.to_string().contains("circuit breaker open"));
+        let stream_error = first
+            .stream(Request::default())
+            .await
+            .err()
+            .expect("the same adapter's streaming circuit is also open");
+        assert!(stream_error.to_string().contains("circuit breaker open"));
+
+        let independent_error = second.complete(Request::default()).await.unwrap_err();
+        assert_eq!(
+            independent_error.to_string(),
+            "openai_api returned an unsupported native tool call"
+        );
+        mock.verify().await;
     }
 
     #[tokio::test]
