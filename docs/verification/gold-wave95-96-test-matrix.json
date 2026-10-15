@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 426768,
-    "sha256": "4E58B3124E2C5E20949BECF20F3D9390F1512465E84434AB412FDB3D4A810DC0"
+    "sha256": "6DFC7CF0A31E1D22E60A849739F5E1B4A247825D57908217DE9A52AA1E6111BD"
   },
   "sourceInputs": 2327,
   "requiredNativeTests": [
@@ -17689,25 +17689,25 @@
     {
       "test": "cli::recipe::tests::retry_does_not_replay_after_inconclusive_check",
       "sourcePath": "SRC/neothd/src/cli/recipe.rs",
-      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "sourceSha256": "F689345EA0F9A4EB377910EC5288F60FE3794F975D41610962DA350519AAAC55",
       "junitClass": "neoth"
     },
     {
       "test": "cli::recipe::tests::retry_replays_only_after_verified_false_then_stops_on_true",
       "sourcePath": "SRC/neothd/src/cli/recipe.rs",
-      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "sourceSha256": "F689345EA0F9A4EB377910EC5288F60FE3794F975D41610962DA350519AAAC55",
       "junitClass": "neoth"
     },
     {
       "test": "cli::recipe::tests::retry_does_not_run_check_when_recipe_attempt_fails",
       "sourcePath": "SRC/neothd/src/cli/recipe.rs",
-      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "sourceSha256": "F689345EA0F9A4EB377910EC5288F60FE3794F975D41610962DA350519AAAC55",
       "junitClass": "neoth"
     },
     {
       "test": "cli::recipe::tests::retry_preserves_exhaustion_for_verified_failures",
       "sourcePath": "SRC/neothd/src/cli/recipe.rs",
-      "sourceSha256": "70837711696E93A4C45C037841A213B85212F3F7E460E53F604CAC0324FF193E",
+      "sourceSha256": "F689345EA0F9A4EB377910EC5288F60FE3794F975D41610962DA350519AAAC55",
       "junitClass": "neoth"
     },
     {
@@ -83843,6 +83843,26 @@
       }
     ],
     "note": "Inconclusive success verification stops recipe replay; reviewed document provenance retained. Main frozen on interop producer4792a80c. Runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2589Format": {
+    "base": "6d6f43f115335e5cf2ff74cf93e47e80164f14c1",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2589-recipe-inconclusive-check.json",
+        "bytes": 2144,
+        "sha256": "6995A271629DAEA5FA8F04AA27D158C9E7BCC3DE0EAC908C64B8E122D64985DC",
+        "blob": "b4df28b344bc7d44050aca5bc9113dd7fcbb6e6a"
+      },
+      {
+        "path": "SRC/neothd/src/cli/recipe.rs",
+        "bytes": 30609,
+        "sha256": "F689345EA0F9A4EB377910EC5288F60FE3794F975D41610962DA350519AAAC55",
+        "blob": "7e19a7458d11065495c147732675e5b1b9187d75"
+      }
+    ],
+    "note": "Imported verified hosted rustfmt-only signature layout patch from38721860958. No local rustfmt or tests.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

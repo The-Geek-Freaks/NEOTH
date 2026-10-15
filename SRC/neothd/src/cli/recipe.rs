@@ -371,7 +371,10 @@ fn shell_check_succeeds(cmd: &str) -> Result<bool> {
     classify_success_check_exit(cmd, command.status().map(|status| status.code()))
 }
 
-fn classify_success_check_exit(command: &str, result: std::io::Result<Option<i32>>) -> Result<bool> {
+fn classify_success_check_exit(
+    command: &str,
+    result: std::io::Result<Option<i32>>,
+) -> Result<bool> {
     match result {
         Ok(Some(0)) => Ok(true),
         Ok(Some(_)) => Ok(false),

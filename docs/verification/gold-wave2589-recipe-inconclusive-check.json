@@ -31,5 +31,14 @@
     "Hosted Rust formatting and compilation",
     "Hosted execution of four retry control regressions and existing recipe cases",
     "Overall A01 workflow adoption remains open"
-  ]
+  ],
+  "hostedFormat": {
+    "run": 38721860958,
+    "producer": "6d6f43f115335e5cf2ff74cf93e47e80164f14c1",
+    "artifact": 11967175746,
+    "originalZipSha256": "4275EE5DACDA631CA7BA7474F5612E89B841894F9EDC8D24BC0BCC4D4B2358E1",
+    "patchSha256": "73C0F221490AE25A5E0BB004708DB14CC175A8F39F6D9B44033FA2166458267C",
+    "memberHashesVerified": true,
+    "localRustfmtExecuted": false
+  }
 }
