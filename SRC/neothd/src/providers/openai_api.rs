@@ -804,7 +804,8 @@ impl Provider for OpenAiAdapter {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
-        crate::providers::circuit_breaker_stream::run_stream_with_breaker(self.breaker_id(), async {
+        let breaker_id = self.breaker_id();
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker(breaker_id, async {
             let model = req
                 .model
                 .clone()

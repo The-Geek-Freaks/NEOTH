@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T10:26:49.1848200Z",
+  "capturedUtc": "2026-10-15T10:29:46.1313525Z",
   "validationStatus": "W2588_STATIC_BREAKER_ISOLATION_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -8883,8 +8883,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/openai_api.rs",
-      "bytes": 168217,
-      "sha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54"
+      "bytes": 168254,
+      "sha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F"
     },
     {
       "path": "SRC/neothd/src/providers/ouro/adapter.rs",

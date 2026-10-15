@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 426372,
-    "sha256": "678E59C519C4F144E9FF78716ADE629C25D71F1E3055F43B675661783A479C56"
+    "sha256": "102E2DCFF0240373CF73C66B823ED33A54E8213079AF7CBADC750E6A61262B05"
   },
   "sourceInputs": 2325,
   "requiredNativeTests": [
@@ -6054,7 +6054,7 @@
     {
       "test": "providers::openai_api::tests::mock_401_auth_fail_returns_descriptive_error",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
@@ -9162,13 +9162,13 @@
     {
       "test": "providers::openai_api::tests::custom_openai_endpoint_has_a_distinct_unknown_pricing_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::only_the_exact_official_openai_origin_and_v1_path_keep_official_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
@@ -17587,19 +17587,19 @@
     {
       "test": "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     },
     {
@@ -17683,7 +17683,7 @@
     {
       "test": "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "A4B050D6E4CFC3008271FAAEF7BD00D80CE44E101D75C2497557B5C27BB85B54",
+      "sourceSha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
       "junitClass": "neoth"
     }
   ],
@@ -83735,6 +83735,20 @@
       }
     ],
     "note": "Test-only adapter breaker isolation; production key unchanged; interop requires 189 exact cases. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2588Format": {
+    "base": "0f077db3271a08c1cb498945ef0bd6f1832f334b",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/providers/openai_api.rs",
+        "bytes": 168254,
+        "sha256": "CC8CB860D9276C36E7CC559F0E8D18DC7EAA78BC4BEB12838000F4796BE4095F",
+        "blob": "01b480a30050b72aa64b973720edfc118266d9e7"
+      }
+    ],
+    "note": "Hosted Preflight38720718462 identified only wrapper line length; bind local breaker key to retain existing body layout without local rustfmt.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
