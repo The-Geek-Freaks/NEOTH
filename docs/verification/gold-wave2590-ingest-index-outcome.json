@@ -1,0 +1,30 @@
+{
+  "schema": "neoth.gold-wave2590.v1",
+  "date": "2026-10-15",
+  "base": "a848801900cfff54179dded8ee34d8e00e747099",
+  "adoption": "ADOPT-20261012-A03",
+  "status": "SOURCE_CANDIDATE_HOSTED_VALIDATION_PENDING",
+  "problem": "Ingest reports collapsed intentional skips and store/index failures into chunk_count null.",
+  "changes": [
+    "Add closed typed index_outcome to existing JSON/JSONL extraction report",
+    "Preserve legacy chunk_count, existing index transaction owner and nonfatal index error behavior",
+    "Explain explicit skip/failure reason in table output",
+    "Mark extraction cap truncation as partial without claiming full-source indexing"
+  ],
+  "tests": [
+    "cli::ingest::tests::ingest_index_outcome_distinguishes_disabled_and_empty_without_opening_store",
+    "cli::ingest::tests::ingest_index_outcome_reports_committed_chunks_and_preserves_legacy_count",
+    "cli::ingest::tests::ingest_index_outcome_reports_open_failure_without_private_error_payload",
+    "cli::ingest::tests::ingest_index_outcome_reports_failed_replacement_and_retains_prior_document"
+  ],
+  "rollbackBoundary": "Existing ctx transaction deletes/replaces source and both FTS projections, then commits before returning success. Injected source-insert failure regression requires prior source id and both FTS contents to remain.",
+  "nonclaims": [
+    "Index provenance is not persisted",
+    "No new database schema or owner",
+    "No actual hosted Rust regression execution accepted yet",
+    "No A03 or Gold completion"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

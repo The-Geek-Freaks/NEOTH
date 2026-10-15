@@ -59,6 +59,16 @@ if !no_audit && no live daemon:
 print IngestReport { path, kind, text_bytes, preview, embed_status, embed_persisted, metadata }
 ```
 
+### Index result in extraction reports
+
+JSON/JSONL reports retain `chunk_count` and add `index_outcome`:
+
+- `{"status":"indexed","chunk_count":N}` means the extracted text was committed to the existing ctx index.
+- `{"status":"skipped","reason":"disabled"}` identifies `--no-index`; `empty_text` identifies an empty extraction.
+- `{"status":"failed","stage":"open_store"}` or `write_index` identifies an indexing failure. The extraction report remains available, preserving the existing nonfatal index-error contract; automation must inspect this field before claiming indexing succeeded.
+
+`chunk_count` remains `null` for skipped/failed indexing. The outcome contains fixed status codes, not database errors or private paths. Table output explains the outcome and marks `metadata.truncated: true` as a partial extraction. Successful indexing covers the returned text only; it does not assert that extraction covered the entire source or that document provenance was persisted in `sources`.
+
 ### WAL concurrency contract
 
 `neoth ingest` never opens the daemon's active transport. When `neoth serve`

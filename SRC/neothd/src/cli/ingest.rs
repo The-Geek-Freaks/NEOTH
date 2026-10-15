@@ -305,44 +305,14 @@ async fn run_ingest_with_context(
     // entries queryable by `neoth recall` / `neoth ctx`. Best-effort: errors
     // are logged and logged but never abort the ingest (operator still gets the
     // extraction report). Mirrors the pattern in omi_ingest_task + arxiv_ingest_task.
-    let chunk_count: Option<usize> = if !args.no_index && !extraction.text.is_empty() {
-        let db_path = args
-            .db
-            .clone()
-            .unwrap_or_else(|| neoth_home.join("views.db"));
-        match store::open(&db_path) {
-            Ok(mut conn) => {
-                let req = IndexRequest {
-                    label: source_ref.clone(),
-                    content: extraction.text.clone(),
-                    file_path: path.as_ref().map(|path| path.display().to_string()),
-                    content_type: "prose".to_string(),
-                    source_category: Some("ingest".to_string()),
-                    event_id: None,
-                };
-                match index_document(&mut conn, &req) {
-                    Ok(IndexReport { chunk_count, .. }) => {
-                        tracing::debug!(
-                            chunks = chunk_count,
-                            source_ref = %source_ref,
-                            "ingest: indexed into ctx memory store"
-                        );
-                        Some(chunk_count)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "ingest ctx index failed (non-fatal)");
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "ingest: could not open views.db for ctx index (non-fatal)");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let index_outcome = index_extracted_text(
+        &args,
+        &extraction,
+        &source_ref,
+        path.as_deref(),
+        neoth_home,
+    );
+    let chunk_count = index_outcome.chunk_count();
 
     let report = IngestReport {
         path: source_ref.clone(),
@@ -355,6 +325,7 @@ async fn run_ingest_with_context(
             .to_string(),
         embed_persisted: persisted,
         chunk_count,
+        index_outcome,
         metadata: extraction.metadata.clone(),
     };
 
@@ -490,9 +461,92 @@ struct IngestReport {
     embed_status: String,
     embed_persisted: bool,
     /// Number of ctx/recall memory chunks written for this document.
-    /// `None` when `--no-index` is set or when the extracted text is empty.
+    /// `None` when indexing is skipped or fails; `index_outcome` explains why.
     chunk_count: Option<usize>,
+    index_outcome: IngestIndexOutcome,
     metadata: serde_json::Value,
+}
+
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum IngestIndexOutcome {
+    Indexed { chunk_count: usize },
+    Skipped { reason: IndexSkipReason },
+    Failed { stage: IndexFailureStage },
+}
+
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum IndexSkipReason {
+    Disabled,
+    EmptyText,
+}
+
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum IndexFailureStage {
+    OpenStore,
+    WriteIndex,
+}
+
+impl IngestIndexOutcome {
+    fn chunk_count(&self) -> Option<usize> {
+        match self {
+            Self::Indexed { chunk_count } => Some(*chunk_count),
+            Self::Skipped { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    fn summary(&self) -> &'static str {
+        match self {
+            Self::Indexed { .. } => "indexed extracted text",
+            Self::Skipped { reason: IndexSkipReason::Disabled } => "skipped (--no-index)",
+            Self::Skipped { reason: IndexSkipReason::EmptyText } => "skipped (empty text)",
+            Self::Failed { stage: IndexFailureStage::OpenStore } => "failed to open index store",
+            Self::Failed { stage: IndexFailureStage::WriteIndex } => "index write did not complete",
+        }
+    }
+}
+
+fn index_extracted_text(
+    args: &IngestArgs,
+    extraction: &Extraction,
+    source_ref: &str,
+    path: Option<&Path>,
+    neoth_home: &Path,
+) -> IngestIndexOutcome {
+    if args.no_index {
+        return IngestIndexOutcome::Skipped { reason: IndexSkipReason::Disabled };
+    }
+    if extraction.text.is_empty() {
+        return IngestIndexOutcome::Skipped { reason: IndexSkipReason::EmptyText };
+    }
+    let db_path = args.db.clone().unwrap_or_else(|| neoth_home.join("views.db"));
+    let mut conn = match store::open(&db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::warn!(error = %error, "ingest: could not open views.db for ctx index (non-fatal)");
+            return IngestIndexOutcome::Failed { stage: IndexFailureStage::OpenStore };
+        }
+    };
+    let request = IndexRequest {
+        label: source_ref.to_string(),
+        content: extraction.text.clone(),
+        file_path: path.map(|path| path.display().to_string()),
+        content_type: "prose".to_string(),
+        source_category: Some("ingest".to_string()),
+        event_id: None,
+    };
+    match index_document(&mut conn, &request) {
+        Ok(IndexReport { chunk_count, .. }) => {
+            tracing::debug!(chunks = chunk_count, source_ref, "ingest: indexed into ctx memory store");
+            IngestIndexOutcome::Indexed { chunk_count }
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "ingest ctx index failed (non-fatal)");
+            IngestIndexOutcome::Failed { stage: IndexFailureStage::WriteIndex }
+        }
+    }
 }
 
 fn print_table(r: &IngestReport) {
@@ -504,6 +558,10 @@ fn print_table(r: &IngestReport) {
     }
     println!("embed status: {}", r.embed_status);
     println!("persisted   : {}", r.embed_persisted);
+    println!("index       : {}", r.index_outcome.summary());
+    if r.metadata["truncated"].as_bool() == Some(true) {
+        println!("extraction  : partial (extraction cap reached)");
+    }
     match r.chunk_count {
         Some(n) => println!("chunks      : {n}"),
         None => println!("chunks      : (not indexed)"),
@@ -784,6 +842,168 @@ pub(crate) fn default_backends(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    fn index_fixture_args(db: &Path, no_index: bool) -> IngestArgs {
+        IngestArgs {
+            path: Some(PathBuf::from("document.rtf")),
+            video_url: None,
+            db: Some(db.to_path_buf()),
+            wal_segment: None,
+            no_persist: true,
+            no_audit: true,
+            no_index,
+            analyze_video_frames: false,
+            output: OutputFormat::Json,
+        }
+    }
+
+    fn index_fixture_extraction(text: &str) -> Extraction {
+        Extraction {
+            text: text.to_string(),
+            metadata: serde_json::json!({"extractor": "document", "truncated": false}),
+        }
+    }
+
+    #[test]
+    fn ingest_index_outcome_distinguishes_disabled_and_empty_without_opening_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("not-a-directory");
+        std::fs::write(&blocked, b"retain").unwrap();
+        let db = blocked.join("views.db");
+        for (disabled, text, reason) in [
+            (true, "body", "disabled"),
+            (false, "", "empty_text"),
+        ] {
+            let outcome = index_extracted_text(
+                &index_fixture_args(&db, disabled),
+                &index_fixture_extraction(text),
+                "doc",
+                None,
+                dir.path(),
+            );
+            assert_eq!(outcome.chunk_count(), None);
+            assert_eq!(
+                serde_json::to_value(outcome).unwrap(),
+                serde_json::json!({"status": "skipped", "reason": reason})
+            );
+        }
+        assert_eq!(std::fs::read(blocked).unwrap(), b"retain");
+    }
+
+    #[test]
+    fn ingest_index_outcome_reports_committed_chunks_and_preserves_legacy_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let mut extraction = index_fixture_extraction("durable indexed body");
+        extraction.metadata["truncated"] = serde_json::json!(true);
+        let outcome = index_extracted_text(
+            &index_fixture_args(&db, false),
+            &extraction,
+            "doc",
+            None,
+            dir.path(),
+        );
+        assert_eq!(outcome, IngestIndexOutcome::Indexed { chunk_count: 1 });
+        let report = IngestReport {
+            path: "doc".into(),
+            kind: "document".into(),
+            text_bytes: extraction.text.len(),
+            text_preview: preview(&extraction.text, 200),
+            embed_status: "n/a".into(),
+            embed_persisted: false,
+            chunk_count: outcome.chunk_count(),
+            index_outcome: outcome,
+            metadata: extraction.metadata,
+        };
+        let encoded = serde_json::to_value(report).unwrap();
+        assert_eq!(encoded["chunk_count"], 1);
+        assert_eq!(
+            encoded["index_outcome"],
+            serde_json::json!({"status": "indexed", "chunk_count": 1})
+        );
+        assert_eq!(encoded["metadata"]["truncated"], true);
+        let conn = store::open(&db).unwrap();
+        let stored: (i64, String) = conn.query_row(
+            "SELECT sources.chunk_count, chunks.content FROM sources \
+             JOIN chunks ON chunks.source_id = sources.id WHERE sources.label = 'doc'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(stored, (1, "durable indexed body".to_string()));
+    }
+
+    #[test]
+    fn ingest_index_outcome_reports_open_failure_without_private_error_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked = dir.path().join("private-file");
+        std::fs::write(&blocked, b"retain").unwrap();
+        let outcome = index_extracted_text(
+            &index_fixture_args(&blocked.join("views.db"), false),
+            &index_fixture_extraction("retained extraction"),
+            "doc",
+            None,
+            dir.path(),
+        );
+        assert_eq!(outcome.chunk_count(), None);
+        assert_eq!(
+            serde_json::to_value(outcome).unwrap(),
+            serde_json::json!({"status": "failed", "stage": "open_store"})
+        );
+        assert_eq!(std::fs::read(blocked).unwrap(), b"retain");
+    }
+
+    #[test]
+    fn ingest_index_outcome_reports_failed_replacement_and_retains_prior_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let args = index_fixture_args(&db, false);
+        let initial = index_extracted_text(
+            &args,
+            &index_fixture_extraction("original durable content"),
+            "doc",
+            None,
+            dir.path(),
+        );
+        assert_eq!(initial, IngestIndexOutcome::Indexed { chunk_count: 1 });
+        let conn = store::open(&db).unwrap();
+        let original_id: i64 = conn.query_row(
+            "SELECT id FROM sources WHERE label = 'doc'", [], |row| row.get(0)
+        ).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_replacement BEFORE INSERT ON sources \
+             BEGIN SELECT RAISE(ABORT, 'private fixture write failure'); END;"
+        ).unwrap();
+        drop(conn);
+        let failed = index_extracted_text(
+            &args,
+            &index_fixture_extraction("replacement must not remain"),
+            "doc",
+            None,
+            dir.path(),
+        );
+        assert_eq!(failed.chunk_count(), None);
+        assert_eq!(
+            serde_json::to_value(failed).unwrap(),
+            serde_json::json!({"status": "failed", "stage": "write_index"})
+        );
+        let reopened = store::open(&db).unwrap();
+        let retained: (i64, i64) = reopened.query_row(
+            "SELECT id, chunk_count FROM sources WHERE label = 'doc'", [],
+            |row| Ok((row.get(0)?, row.get(1)?))
+        ).unwrap();
+        assert_eq!(retained, (original_id, 1));
+        for table in ["chunks", "chunks_trigram"] {
+            let content: String = reopened.query_row(
+                &format!("SELECT content FROM {table} WHERE source_id = ?1"),
+                [original_id], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(content, "original durable content");
+            let count: i64 = reopened.query_row(
+                &format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)
+            ).unwrap();
+            assert_eq!(count, 1);
+        }
+    }
 
     #[test]
     fn detect_kind_returns_image_for_known_extensions() {

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2589_RECIPE_AND_W2587_DOCUMENT_STATIC_HOSTED_PENDING",
+  "status": "W2590_INGEST_INDEX_OUTCOME_STATIC_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 426768,
-    "sha256": "6DFC7CF0A31E1D22E60A849739F5E1B4A247825D57908217DE9A52AA1E6111BD"
+    "bytes": 427117,
+    "sha256": "45356DD99D1BA9C23EC5A196780CCA6FB4EB108585D4D9ACC85CB326F9159AC7"
   },
-  "sourceInputs": 2327,
+  "sourceInputs": 2329,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -8838,25 +8838,25 @@
     {
       "test": "cli::ingest::tests::cli_accepts_exactly_one_local_path_or_video_url",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "65DA2BAF85651C60509584FECCC04E82D8DB1672E1FBCD33BFC7CF71E3DD78ED",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::no_audit_rejects_url_before_any_managed_binary_or_transport",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "65DA2BAF85651C60509584FECCC04E82D8DB1672E1FBCD33BFC7CF71E3DD78ED",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_ctx_indexes_document_chunks",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "65DA2BAF85651C60509584FECCC04E82D8DB1672E1FBCD33BFC7CF71E3DD78ED",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_no_index_skips_ctx_write",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "65DA2BAF85651C60509584FECCC04E82D8DB1672E1FBCD33BFC7CF71E3DD78ED",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
       "junitClass": "neoth"
     },
     {
@@ -17726,6 +17726,30 @@
       "test": "media::document::tests::provenance_hashes_unicode_safe_capped_text_with_visible_marker",
       "sourcePath": "SRC/neothd/src/media/document.rs",
       "sourceSha256": "5483FFAAA3A20B06BAE4CF44EC48B1B1E141556F6665935A9B8DA850729E571E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::ingest::tests::ingest_index_outcome_distinguishes_disabled_and_empty_without_opening_store",
+      "sourcePath": "SRC/neothd/src/cli/ingest.rs",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::ingest::tests::ingest_index_outcome_reports_committed_chunks_and_preserves_legacy_count",
+      "sourcePath": "SRC/neothd/src/cli/ingest.rs",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::ingest::tests::ingest_index_outcome_reports_open_failure_without_private_error_payload",
+      "sourcePath": "SRC/neothd/src/cli/ingest.rs",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::ingest::tests::ingest_index_outcome_reports_failed_replacement_and_retains_prior_document",
+      "sourcePath": "SRC/neothd/src/cli/ingest.rs",
+      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
       "junitClass": "neoth"
     }
   ],
@@ -83863,6 +83887,38 @@
       }
     ],
     "note": "Imported verified hosted rustfmt-only signature layout patch from38721860958. No local rustfmt or tests.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2590": {
+    "base": "a848801900cfff54179dded8ee34d8e00e747099",
+    "sources": [
+      {
+        "path": "docs/CODEMAPS/cli-ingest.md",
+        "bytes": 5350,
+        "sha256": "F451C6206DC746347A48EB2277C3D1FAB7C299050214CF6C9B7AD4AD08A83F23",
+        "blob": "4eaa0ac1ab1d5269c02c7d2c5efc617eda880b2b"
+      },
+      {
+        "path": "docs/verification/gold-wave2590-ingest-index-outcome.json",
+        "bytes": 1621,
+        "sha256": "30EF4155E35956BD8E6A3FDF8E458EFCE17D5DAD52F70ED7BBCCD2FA69AAD2B7",
+        "blob": "a234f00dfa26d08596cdfa80406ce7c20ba2d31a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2631643,
+        "sha256": "97A9F73D64C68FB8FDCF2043813D59578D566F7CC1F4456CDB46B89BB519BA1B",
+        "blob": "7deb44c4f7ca7d783a2d4e32250ec19de16359ba"
+      },
+      {
+        "path": "SRC/neothd/src/cli/ingest.rs",
+        "bytes": 47670,
+        "sha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+        "blob": "8949147f201bd00403f8b68edaccf23a03146eeb"
+      }
+    ],
+    "note": "Explicit index outcome and retained extraction report; four real store/rollback regressions authored, not locally executed. Main frozen4792a80c.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

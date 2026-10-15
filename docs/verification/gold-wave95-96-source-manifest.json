@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T10:40:42.6823877Z",
-  "validationStatus": "W2589_RECIPE_AND_W2587_DOCUMENT_STATIC_HOSTED_PENDING",
+  "capturedUtc": "2026-10-15T10:48:10.7796186Z",
+  "validationStatus": "W2590_INGEST_INDEX_OUTCOME_STATIC_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -715,6 +715,11 @@
       "path": "docs/code-map-lifecycle.md",
       "bytes": 7513,
       "sha256": "DCBFAD1A4CF0DA2B270521F845CB45A4A45972D3F8D1AF996A813904BFD3BD72"
+    },
+    {
+      "path": "docs/CODEMAPS/cli-ingest.md",
+      "bytes": 5350,
+      "sha256": "F451C6206DC746347A48EB2277C3D1FAB7C299050214CF6C9B7AD4AD08A83F23"
     },
     {
       "path": "docs/configuration.md",
@@ -4487,6 +4492,11 @@
       "sha256": "6995A271629DAEA5FA8F04AA27D158C9E7BCC3DE0EAC908C64B8E122D64985DC"
     },
     {
+      "path": "docs/verification/gold-wave2590-ingest-index-outcome.json",
+      "bytes": 1621,
+      "sha256": "30EF4155E35956BD8E6A3FDF8E458EFCE17D5DAD52F70ED7BBCCD2FA69AAD2B7"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5663,8 +5673,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2630456,
-      "sha256": "817ACB4C08873B6525F65073B1D17C8452537C2A1D0A10BD9820CE96AD540E96"
+      "bytes": 2631643,
+      "sha256": "97A9F73D64C68FB8FDCF2043813D59578D566F7CC1F4456CDB46B89BB519BA1B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6788,8 +6798,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/ingest.rs",
-      "bytes": 39540,
-      "sha256": "65DA2BAF85651C60509584FECCC04E82D8DB1672E1FBCD33BFC7CF71E3DD78ED"
+      "bytes": 47670,
+      "sha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B"
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",
