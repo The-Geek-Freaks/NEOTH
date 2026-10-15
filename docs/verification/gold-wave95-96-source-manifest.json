@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T16:14:51.2595405Z",
+  "capturedUtc": "2026-10-15T16:32:51.3626337Z",
   "validationStatus": "W2599_W2602_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 42168,
-      "sha256": "426A209E3ECD6575DC0E3472FFBF368E11FC258F8B8263FD8BBE7E88B5AF9499"
+      "bytes": 42313,
+      "sha256": "89E7E92D67AC4847A10D315598911524325E0D15567FF123CBFD5F51F0713D27"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4529,12 +4529,12 @@
     {
       "path": "docs/verification/gold-wave2600-document-structure-persistence.json",
       "bytes": 4488,
-      "sha256": "62217A61D2A46EDAEF2D1D8F5E982B94E38AD57316BD1925FEEA1B87A61B9FE7"
+      "sha256": "9812D23E541B723F9315B04271A44E970BC45BB8AF12016D2813A7C500439C65"
     },
     {
       "path": "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
-      "bytes": 6326,
-      "sha256": "2786FFE49272289CF2E10C8EC2E34E015C7AD49C383227F7975A9105D60A77F6"
+      "bytes": 7924,
+      "sha256": "15E77285CCBB6AD7BF1B34F3F6E8D9612EBA4FB2A204B7678AA667FA433F869B"
     },
     {
       "path": "docs/verification/gold-wave2602-vault-note-recovery.json",
@@ -5718,8 +5718,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2646426,
-      "sha256": "243BBAFD444D8A282AB36D82BF63ABBD2C9FDC713AD30F0403A73CCD4D01A859"
+      "bytes": 2647595,
+      "sha256": "CDA2B0B6356A0DD77A52BB99A463D21FA753B724E83AB12104A09547C14CDC02"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8633,8 +8633,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 204234,
-      "sha256": "60EF539E8A84592D7B5C037AF5E57C70573BED7F75E1A63D126603DD55F524F8"
+      "bytes": 205342,
+      "sha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",

@@ -8,8 +8,9 @@
     "Save an optional bounded post-doctest/pre-GUI Linux checkpoint after successful prerequisite compilation",
     "Use producer-qualified completed cache keys with current-producer checkpoint preference and legacy completed/partial fallbacks",
     "Repair the exact observed CLI v3 and v41/v42 historical migration fixtures; preserve all behavior assertions and strict production failure handling",
-    "Add an opt-in 32-case exact document regression lane to the existing hosted CLI-reference workflow before the expensive full platform matrix",
-    "Restore same-OS/same-lock live-audio Cargo fallback for cold main platform and CLI-reference jobs; preserve all compilation and acceptance checks"
+    "Add an opt-in 33-case exact document regression lane to the existing hosted CLI-reference workflow before the expensive full platform matrix",
+    "Restore same-OS/same-lock live-audio Cargo fallback for cold main platform and CLI-reference jobs; preserve all compilation and acceptance checks",
+    "Repair the Unix no-follow migration fixture by removing v46 claim ledger, v47 provenance columns and v49 structure before stamping v42; retain path-swap and unchanged-views assertions"
   ],
   "observedFailure": {
     "run": "38742366323",
@@ -54,7 +55,11 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "sha256": "426A209E3ECD6575DC0E3472FFBF368E11FC258F8B8263FD8BBE7E88B5AF9499"
+      "sha256": "89E7E92D67AC4847A10D315598911524325E0D15567FF123CBFD5F51F0713D27"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "sha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333"
     }
   ],
   "performanceImprovementMeasured": false,
@@ -78,19 +83,20 @@
   "focusedValidation": {
     "workflow": ".github/workflows/cli-reference.yml",
     "input": "document_regressions=true",
-    "exactCases": 32,
+    "exactCases": 33,
     "newCases": 28,
-    "observedFailureCases": 4,
-    "sourceSelection": "Canonical native matrix cross-checked against the four batch reports",
-    "admissionRequires": "Original artifact/API digest and raw producer source bindings, numeric job identity, successful exact discovery/execution for all32 and successful workflow terminal status",
+    "observedFailureCases": 5,
+    "sourceSelection": "Canonical portable and Linux native matrix cross-checked against four batch reports; one existing Unix identity is not counted as a new portable registration",
+    "admissionRequires": "Original artifact/API digest and raw producer source bindings, numeric job identity, successful exact discovery/execution for all33 and successful workflow terminal status",
     "localRuntimeExecuted": false,
-    "hostedAccepted": false
+    "hostedAccepted": false,
+    "additionalPlatformCases": 1
   },
   "validationSequence": [
     "Publish reviewed main batch while immutable old full run completes; overlap only fast automatic source/format checks",
     "Finish old full-run macOS triage and integrate every required repair before new heavy validation",
     "Freeze final producer after any hosted format repair and source rebind",
-    "Run32 exact document cases on final producer",
+    "Run33 exact document cases on final producer",
     "Run full platform CI on that same producer",
     "Run Mobile-Interop on that same producer",
     "Run native validation consuming accepted same-producer interop proof"
@@ -102,7 +108,8 @@
     "source": "https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache",
     "rawEvidence": "work/gold-20260906/wave2598-document-integration/CACHE_SCOPE_DIAGNOSIS.json",
     "speedupMeasured": false,
-    "actualCurrentRestoreMissNeedsTerminalLog": true
+    "actualCurrentRestoreMissNeedsTerminalLog": false,
+    "currentRunRestoreMissConfirmed": true
   },
   "sequenceOptimization": {
     "oldFullRun": "38742366323",
@@ -132,7 +139,29 @@
     "zipSha256": "C6031F9CC10BA3DF014FF02EDEA979CE1904C907B73B3A626B3B10262E4E4E18",
     "patchSha256": "708EC58310D5950AB343DB0B4F342C7AD1EFD5D0E840728C8A21EFCFD3DAEA4D",
     "applied": true,
-    "newProducerPreflightPending": true,
-    "localFormatterExecuted": false
+    "newProducerPreflightPending": false,
+    "localFormatterExecuted": false,
+    "acceptedPreflightRun": 38767742167
+  },
+  "focusedAdditionalTests": [
+    "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path"
+  ],
+  "observedMacOS": {
+    "run": 38742366323,
+    "job": 116447068629,
+    "producer": "0195f03613de812ac7a999fae415a212fdad07d6",
+    "runTests": 19484,
+    "passed": 19479,
+    "failed": 5,
+    "skipped": 35,
+    "failures": [
+      "cli::migrate::tests::run_reaches_target",
+      "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+      "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
+      "memory::migrations::tests::v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens",
+      "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path"
+    ],
+    "additionalFailureCause": "Synthetic v42 store retained later schema objects and failed before intended no-follow rebind",
+    "proof": "work/gold-20260906/wave2598-document-integration/MACOS_JUNIT_CUSTODY.json"
   }
 }

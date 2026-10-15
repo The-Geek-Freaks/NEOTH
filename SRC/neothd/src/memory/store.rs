@@ -3631,6 +3631,30 @@ mod tests {
         // object, but neither W209 challenge table.  Stamping an older version
         // on a current schema leaves later tables behind and makes migration
         // fail before this test can exercise the final no-follow rebind.
+        if SCHEMA_VERSION >= 49 {
+            legacy
+                .execute_batch("ALTER TABLE sources DROP COLUMN document_structure_json;")
+                .unwrap();
+        }
+        if SCHEMA_VERSION >= 47 {
+            legacy
+                .execute_batch(
+                    "ALTER TABLE sources DROP COLUMN document_text_truncated;\
+                     ALTER TABLE sources DROP COLUMN document_text_encoding;\
+                     ALTER TABLE sources DROP COLUMN document_text_bytes;\
+                     ALTER TABLE sources DROP COLUMN document_text_sha256;\
+                     ALTER TABLE sources DROP COLUMN document_source_bytes;\
+                     ALTER TABLE sources DROP COLUMN document_source_sha256;\
+                     ALTER TABLE sources DROP COLUMN document_parser_version;\
+                     ALTER TABLE sources DROP COLUMN document_provenance_schema;",
+                )
+                .unwrap();
+        }
+        if SCHEMA_VERSION >= 46 {
+            legacy
+                .execute_batch("DROP TABLE b7_applied_document_claim;")
+                .unwrap();
+        }
         if SCHEMA_VERSION >= 45 {
             legacy
                 .execute_batch(

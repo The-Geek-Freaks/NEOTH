@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 429886,
-    "sha256": "DCF0CC0BD5ACF4D10ACD98612100FFFCF6CC5FD51083B76487F1BBF5757295FD"
+    "sha256": "0FB27F184D4F6F1E5BBCC09E429037F0EF8BC6F38823DDB60B1584659668B812"
   },
   "sourceInputs": 2344,
   "requiredNativeTests": [
@@ -6312,7 +6312,7 @@
     {
       "test": "memory::store::tests::fresh_v45_schema_has_tier_trust_defaults_and_dream_phase_tables",
       "sourcePath": "SRC/neothd/src/memory/store.rs",
-      "sourceSha256": "60EF539E8A84592D7B5C037AF5E57C70573BED7F75E1A63D126603DD55F524F8",
+      "sourceSha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333",
       "junitClass": "neoth"
     },
     {
@@ -20118,7 +20118,7 @@
       {
         "test": "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path",
         "sourcePath": "SRC/neothd/src/memory/store.rs",
-        "sourceSha256": "60EF539E8A84592D7B5C037AF5E57C70573BED7F75E1A63D126603DD55F524F8",
+        "sourceSha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333",
         "junitClass": "neoth"
       },
       {
@@ -20564,7 +20564,7 @@
       {
         "test": "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path",
         "sourcePath": "SRC/neothd/src/memory/store.rs",
-        "sourceSha256": "60EF539E8A84592D7B5C037AF5E57C70573BED7F75E1A63D126603DD55F524F8",
+        "sourceSha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333",
         "junitClass": "neoth"
       },
       {
@@ -84520,7 +84520,7 @@
   },
   "wave2601DocumentRegressions": {
     "schema": "neoth.wave2601.document-regression-selection.v1",
-    "requiredCount": 32,
+    "requiredCount": 33,
     "requiredTests": [
       "cli::migrate::tests::run_reaches_target",
       "cli::proactive::tests::document_vault_note_post_effect_recovery_preserves_terminal_state_and_operator_custody",
@@ -84553,7 +84553,8 @@
       "memory::migrations::tests::v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens",
       "memory::migrations::tests::v48_to_v49_requires_the_source_owner_and_rejects_column_collision",
       "memory::migrations::tests::v48_to_v49_retains_legacy_rows_and_matches_fresh_source_columns",
-      "memory::migrations::tests::v48_to_v49_version_write_failure_rolls_back_the_column_and_retries"
+      "memory::migrations::tests::v48_to_v49_version_write_failure_rolls_back_the_column_and_retries",
+      "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path"
     ],
     "workflow": ".github/workflows/cli-reference.yml",
     "input": "document_regressions",
@@ -84752,6 +84753,44 @@
       }
     ],
     "note": "Imported original verified rustfmt receipt38767201195 from8cd67887;7 owned Rust files; report/source/registration bindings refreshed; no local compiler or formatter; final native/runtime proof pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2601UnixFixtureFollowup": {
+    "base": "b42ffdbaa9b6ceb0e9f6ee8dc7d0874a08d39ae7",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 42313,
+        "sha256": "89E7E92D67AC4847A10D315598911524325E0D15567FF123CBFD5F51F0713D27",
+        "blob": "21a4c05bd1d5d462e0c4ff4c4acefefd7c01297c"
+      },
+      {
+        "path": "docs/verification/gold-wave2600-document-structure-persistence.json",
+        "bytes": 4488,
+        "sha256": "9812D23E541B723F9315B04271A44E970BC45BB8AF12016D2813A7C500439C65",
+        "blob": "ac0e834d6bc260938ab7ca5faa8a6adb3bb1f478"
+      },
+      {
+        "path": "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
+        "bytes": 7924,
+        "sha256": "15E77285CCBB6AD7BF1B34F3F6E8D9612EBA4FB2A204B7678AA667FA433F869B",
+        "blob": "2958bc68ab9df7166034354d871a353d275df8b7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2647595,
+        "sha256": "CDA2B0B6356A0DD77A52BB99A463D21FA753B724E83AB12104A09547C14CDC02",
+        "blob": "e56b4978913a60c89afd338e1635936defeee6a7"
+      },
+      {
+        "path": "SRC/neothd/src/memory/store.rs",
+        "bytes": 205342,
+        "sha256": "74AD6CDD3949373643C6303647D1DFACAB35AB47A6BCF998EDC99B23B2A2E333",
+        "blob": "efb9e829093786a609cc44cc8fa77e33a469ec99"
+      }
+    ],
+    "note": "Old full CI completed; fifth observed Unix fixture repaired. Exact focused selection33; portable3006 unchanged; all runtime acceptance pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
