@@ -135,7 +135,11 @@ impl State {
         } else {
             offset
         };
-        self.omit("entry_tail", reason, [start.min(self.out.entry_bytes), self.out.entry_bytes]);
+        self.omit(
+            "entry_tail",
+            reason,
+            [start.min(self.out.entry_bytes), self.out.entry_bytes],
+        );
         self.out.scan_complete = false;
     }
 
@@ -170,7 +174,10 @@ impl State {
             } else {
                 let supported = self.stack.len() == 2 && parent_is(b"body");
                 self.table = Some(BuildingTable {
-                    value: Table { source_range: [start, 0], rows: Vec::new() },
+                    value: Table {
+                        source_range: [start, 0],
+                        rows: Vec::new(),
+                    },
                     depth: self.stack.len(),
                     reason: (!supported).then_some("unsupported_table_context"),
                 });
@@ -180,10 +187,21 @@ impl State {
         {
             if !word {
                 table.reason = Some("foreign_table_structure");
-            } else if matches!(local,
-                b"gridSpan" | b"vMerge" | b"hMerge" | b"gridBefore" | b"gridAfter"
-                | b"cellMerge" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
-                | b"ins" | b"del" | b"moveFrom" | b"moveTo"
+            } else if matches!(
+                local,
+                b"gridSpan"
+                    | b"vMerge"
+                    | b"hMerge"
+                    | b"gridBefore"
+                    | b"gridAfter"
+                    | b"cellMerge"
+                    | b"tblPrChange"
+                    | b"trPrChange"
+                    | b"tcPrChange"
+                    | b"ins"
+                    | b"del"
+                    | b"moveFrom"
+                    | b"moveTo"
             ) {
                 table.reason = Some("unsupported_table_semantics");
             } else {
@@ -193,7 +211,10 @@ impl State {
                         if self.rows > self.limits.rows {
                             table.reason = Some("row_limit");
                         } else {
-                            table.value.rows.push(Row { source_range: [start, 0], cells: Vec::new() });
+                            table.value.rows.push(Row {
+                                source_range: [start, 0],
+                                cells: Vec::new(),
+                            });
                         }
                         true
                     }
@@ -202,7 +223,10 @@ impl State {
                         if self.cells > self.limits.cells {
                             table.reason = Some("cell_limit");
                         } else if let Some(row) = table.value.rows.last_mut() {
-                            row.cells.push(Cell { source_range: [start, 0], paragraph_source_ranges: Vec::new() });
+                            row.cells.push(Cell {
+                                source_range: [start, 0],
+                                paragraph_source_ranges: Vec::new(),
+                            });
                         } else {
                             table.reason = Some("invalid_table_hierarchy");
                         }
@@ -212,7 +236,12 @@ impl State {
                         self.paragraphs += 1;
                         if self.paragraphs > self.limits.paragraphs {
                             table.reason = Some("paragraph_limit");
-                        } else if let Some(cell) = table.value.rows.last_mut().and_then(|row| row.cells.last_mut()) {
+                        } else if let Some(cell) = table
+                            .value
+                            .rows
+                            .last_mut()
+                            .and_then(|row| row.cells.last_mut())
+                        {
                             cell.paragraph_source_ranges.push([start, 0]);
                         } else {
                             table.reason = Some("invalid_table_hierarchy");
@@ -222,15 +251,33 @@ impl State {
                     // Structural nodes are never accepted inside opaque properties.
                     b"tr" | b"tc" | b"p" | b"document" | b"body" => false,
                     _ if properties => true,
-                    b"tblPr" | b"tblGrid" if parent_is(b"tbl") => { properties = true; true }
-                    b"trPr" if parent_is(b"tr") => { properties = true; true }
-                    b"tcPr" if parent_is(b"tc") => { properties = true; true }
-                    b"pPr" if parent_is(b"p") => { properties = true; true }
-                    b"rPr" if parent_is(b"r") => { properties = true; true }
+                    b"tblPr" | b"tblGrid" if parent_is(b"tbl") => {
+                        properties = true;
+                        true
+                    }
+                    b"trPr" if parent_is(b"tr") => {
+                        properties = true;
+                        true
+                    }
+                    b"tcPr" if parent_is(b"tc") => {
+                        properties = true;
+                        true
+                    }
+                    b"pPr" if parent_is(b"p") => {
+                        properties = true;
+                        true
+                    }
+                    b"rPr" if parent_is(b"r") => {
+                        properties = true;
+                        true
+                    }
                     b"r" if parent_is(b"p") || parent_is(b"hyperlink") => true,
                     b"t" | b"tab" | b"br" | b"cr" if parent_is(b"r") => true,
                     b"hyperlink" | b"bookmarkStart" | b"bookmarkEnd" | b"proofErr"
-                        if parent_is(b"p") => true,
+                        if parent_is(b"p") =>
+                    {
+                        true
+                    }
                     _ => false,
                 };
                 if !valid {
@@ -238,13 +285,19 @@ impl State {
                 }
             }
         }
-        self.stack.push(Frame { local: local.to_vec(), word, properties });
+        self.stack.push(Frame {
+            local: local.to_vec(),
+            word,
+            properties,
+        });
         Ok(())
     }
 
     fn end(&mut self, end: usize) -> Result<(), &'static str> {
         let frame = self.stack.pop().ok_or("invalid_xml_hierarchy")?;
-        let Some(table) = &mut self.table else { return Ok(()); };
+        let Some(table) = &mut self.table else {
+            return Ok(());
+        };
         if frame.is(b"tbl") && self.stack.len() == table.depth {
             let mut table = self.table.take().ok_or("invalid_table_hierarchy")?;
             table.value.source_range[1] = end;
@@ -258,13 +311,23 @@ impl State {
             }
         } else if table.reason.is_none() {
             if frame.is(b"tr") {
-                if let Some(row) = table.value.rows.last_mut() { row.source_range[1] = end; }
+                if let Some(row) = table.value.rows.last_mut() {
+                    row.source_range[1] = end;
+                }
             } else if frame.is(b"tc") {
-                if let Some(cell) = table.value.rows.last_mut().and_then(|row| row.cells.last_mut()) {
+                if let Some(cell) = table
+                    .value
+                    .rows
+                    .last_mut()
+                    .and_then(|row| row.cells.last_mut())
+                {
                     cell.source_range[1] = end;
                 }
             } else if frame.is(b"p")
-                && let Some(paragraph) = table.value.rows.last_mut()
+                && let Some(paragraph) = table
+                    .value
+                    .rows
+                    .last_mut()
                     .and_then(|row| row.cells.last_mut())
                     .and_then(|cell| cell.paragraph_source_ranges.last_mut())
             {
@@ -283,10 +346,18 @@ pub(super) fn project(xml: &str, source_sha256: &str, source_bytes: usize) -> se
     project_with_limits(xml, source_sha256, source_bytes, LIMITS)
 }
 
-fn project_with_limits(xml: &str, source_sha256: &str, source_bytes: usize, limits: Limits) -> serde_json::Value {
+fn project_with_limits(
+    xml: &str,
+    source_sha256: &str,
+    source_bytes: usize,
+    limits: Limits,
+) -> serde_json::Value {
     let mut state = State {
         out: Projection {
-            source_document: SourceDocument { sha256: source_sha256.to_owned(), bytes: source_bytes },
+            source_document: SourceDocument {
+                sha256: source_sha256.to_owned(),
+                bytes: source_bytes,
+            },
             schema: "neoth.document-structure.v1",
             parser_version: "docx-table-ranges/v1",
             scope: "physical-table-source-ranges",
@@ -301,8 +372,15 @@ fn project_with_limits(xml: &str, source_sha256: &str, source_bytes: usize, limi
             tables: Vec::new(),
             omissions: Vec::new(),
         },
-        stack: Vec::new(), table: None, rows: 0, cells: 0, paragraphs: 0,
-        root_seen: false, body_seen: false, declaration_seen: false, limits,
+        stack: Vec::new(),
+        table: None,
+        rows: 0,
+        cells: 0,
+        paragraphs: 0,
+        root_seen: false,
+        body_seen: false,
+        declaration_seen: false,
+        limits,
     };
     if xml.len() > limits.entry_bytes {
         state.stop("entry_scan_limit", 0);
@@ -311,23 +389,33 @@ fn project_with_limits(xml: &str, source_sha256: &str, source_bytes: usize, limi
     }
     // The fixed metadata header plus bounded diagnostics fits within the production
     // cap even when every table is omitted. This measures the actual JSON encoding.
-    if serde_json::to_vec(&state.out).expect("range projection is JSON-safe").len() > limits.metadata_bytes {
+    if serde_json::to_vec(&state.out)
+        .expect("range projection is JSON-safe")
+        .len()
+        > limits.metadata_bytes
+    {
         state.out.omitted_tables_observed += state.out.tables.len();
         state.out.tables.clear();
         state.out.complete = false;
         // Keep the summary first so trimming detailed records cannot erase why
         // otherwise valid tables disappeared. Production always allows 64 records.
-        state.out.omissions.insert(0, Omission {
-            scope: "entry",
-            reason: "metadata_limit",
-            source_range: [0, xml.len()],
-        });
+        state.out.omissions.insert(
+            0,
+            Omission {
+                scope: "entry",
+                reason: "metadata_limit",
+                source_range: [0, xml.len()],
+            },
+        );
         if state.out.omissions.len() > limits.omissions.max(1) {
             state.out.omissions.truncate(limits.omissions.max(1));
             state.out.omissions_limited = true;
         }
         while state.out.omissions.len() > 1
-            && serde_json::to_vec(&state.out).expect("range projection is JSON-safe").len() > limits.metadata_bytes
+            && serde_json::to_vec(&state.out)
+                .expect("range projection is JSON-safe")
+                .len()
+                > limits.metadata_bytes
         {
             state.out.omissions.pop();
             state.out.omissions_limited = true;
@@ -345,7 +433,10 @@ fn scan(xml: &str, state: &mut State) {
         let start = reader.buffer_position() as usize;
         let (namespace, event) = match reader.read_resolved_event() {
             Ok(event) => event,
-            Err(_) => { state.stop("malformed_xml", start); return; }
+            Err(_) => {
+                state.stop("malformed_xml", start);
+                return;
+            }
         };
         let word = matches!(&namespace, ResolveResult::Bound(ns) if ns.as_ref() == WORD || ns.as_ref() == STRICT_WORD);
         if matches!(namespace, ResolveResult::Unknown(_)) {
@@ -359,25 +450,44 @@ fn scan(xml: &str, state: &mut State) {
                 let mut attributes_valid = true;
                 let mut foreign_attributes = false;
                 for (index, attribute) in element.attributes().enumerate() {
-                    let Ok(attribute) = attribute else { attributes_valid = false; break; };
-                    if index >= 64 || attribute.key.as_ref().len() > 256 || attribute.value.len() > 4_096 {
+                    let Ok(attribute) = attribute else {
                         attributes_valid = false;
                         break;
-                    }
-                    let Ok(value) = std::str::from_utf8(attribute.value.as_ref()) else { attributes_valid = false; break; };
-                    if !value.chars().all(legal_xml_char)
-                        || !quick_xml::escape::unescape(value).is_ok_and(|value| value.chars().all(legal_xml_char))
+                    };
+                    if index >= 64
+                        || attribute.key.as_ref().len() > 256
+                        || attribute.value.len() > 4_096
                     {
                         attributes_valid = false;
                         break;
                     }
-                    if attribute.key.as_ref() != b"xmlns" && !attribute.key.as_ref().starts_with(b"xmlns:") {
+                    let Ok(value) = std::str::from_utf8(attribute.value.as_ref()) else {
+                        attributes_valid = false;
+                        break;
+                    };
+                    if !value.chars().all(legal_xml_char)
+                        || !quick_xml::escape::unescape(value)
+                            .is_ok_and(|value| value.chars().all(legal_xml_char))
+                    {
+                        attributes_valid = false;
+                        break;
+                    }
+                    if attribute.key.as_ref() != b"xmlns"
+                        && !attribute.key.as_ref().starts_with(b"xmlns:")
+                    {
                         let (namespace, _) = reader.resolver().resolve_attribute(attribute.key);
                         match namespace {
-                            ResolveResult::Unknown(_) => { attributes_valid = false; break; }
-                            ResolveResult::Bound(ns) if ns.as_ref() != WORD
-                                && ns.as_ref() != STRICT_WORD
-                                && ns.as_ref() != b"http://www.w3.org/XML/1998/namespace" => foreign_attributes = true,
+                            ResolveResult::Unknown(_) => {
+                                attributes_valid = false;
+                                break;
+                            }
+                            ResolveResult::Bound(ns)
+                                if ns.as_ref() != WORD
+                                    && ns.as_ref() != STRICT_WORD
+                                    && ns.as_ref() != b"http://www.w3.org/XML/1998/namespace" =>
+                            {
+                                foreign_attributes = true
+                            }
                             _ => {}
                         }
                     }
@@ -385,38 +495,60 @@ fn scan(xml: &str, state: &mut State) {
                 if !attributes_valid {
                     Err("invalid_or_unbounded_attributes")
                 } else {
-                    state.begin(element.local_name().as_ref(), word, start).and_then(|()| {
-                        if foreign_attributes { state.reject_table("foreign_attribute_semantics"); }
-                        if empty { state.end(end) } else { Ok(()) }
-                    })
+                    state
+                        .begin(element.local_name().as_ref(), word, start)
+                        .and_then(|()| {
+                            if foreign_attributes {
+                                state.reject_table("foreign_attribute_semantics");
+                            }
+                            if empty { state.end(end) } else { Ok(()) }
+                        })
                 }
             }
             Event::End(_) => state.end(end),
             Event::DocType(_) => Err("unsupported_doctype"),
             Event::PI(_) => Err("unsupported_processing_instruction"),
             Event::Decl(declaration) => {
-                let valid = !state.declaration_seen && !state.root_seen
-                    && declaration.version().is_ok_and(|value| value.as_ref() == b"1.0")
-                    && declaration.encoding().is_none_or(|value| value.is_ok_and(|name| name.eq_ignore_ascii_case(b"utf-8")));
+                let valid = !state.declaration_seen
+                    && !state.root_seen
+                    && declaration
+                        .version()
+                        .is_ok_and(|value| value.as_ref() == b"1.0")
+                    && declaration.encoding().is_none_or(|value| {
+                        value.is_ok_and(|name| name.eq_ignore_ascii_case(b"utf-8"))
+                    });
                 state.declaration_seen = true;
-                if valid { Ok(()) } else { Err("unsupported_xml_declaration") }
+                if valid {
+                    Ok(())
+                } else {
+                    Err("unsupported_xml_declaration")
+                }
             }
             Event::Text(text) => {
-                let valid = std::str::from_utf8(text.as_ref()).is_ok_and(|value| value.chars().all(legal_xml_char));
-                if !valid { Err("invalid_xml_text") }
-                else if state.stack.is_empty() && !text.as_ref().iter().all(u8::is_ascii_whitespace) { Err("text_outside_root") }
-                else {
+                let valid = std::str::from_utf8(text.as_ref())
+                    .is_ok_and(|value| value.chars().all(legal_xml_char));
+                if !valid {
+                    Err("invalid_xml_text")
+                } else if state.stack.is_empty()
+                    && !text.as_ref().iter().all(u8::is_ascii_whitespace)
+                {
+                    Err("text_outside_root")
+                } else {
                     if state.table.is_some()
                         && !state.stack.last().is_some_and(|frame| frame.is(b"t"))
                         && !text.as_ref().iter().all(u8::is_ascii_whitespace)
-                    { state.reject_table("unsupported_text_position"); }
+                    {
+                        state.reject_table("unsupported_text_position");
+                    }
                     Ok(())
                 }
             }
             Event::CData(data) => {
                 if state.stack.is_empty() {
                     Err("cdata_outside_root")
-                } else if !std::str::from_utf8(data.as_ref()).is_ok_and(|value| value.chars().all(legal_xml_char)) {
+                } else if !std::str::from_utf8(data.as_ref())
+                    .is_ok_and(|value| value.chars().all(legal_xml_char))
+                {
                     Err("invalid_xml_text")
                 } else {
                     state.reject_table("unsupported_cdata");
@@ -426,17 +558,30 @@ fn scan(xml: &str, state: &mut State) {
             Event::GeneralRef(reference) => {
                 let valid = match reference.resolve_char_ref() {
                     Ok(Some(ch)) => legal_xml_char(ch),
-                    Ok(None) => matches!(reference.as_ref(), b"amp" | b"lt" | b"gt" | b"apos" | b"quot"),
+                    Ok(None) => matches!(
+                        reference.as_ref(),
+                        b"amp" | b"lt" | b"gt" | b"apos" | b"quot"
+                    ),
                     Err(_) => false,
                 };
-                if !valid { Err("unsupported_entity") } else if state.stack.is_empty() { Err("text_outside_root") } else {
-                    if !state.stack.last().is_some_and(|frame| frame.is(b"t")) { state.reject_table("unsupported_text_position"); }
+                if !valid {
+                    Err("unsupported_entity")
+                } else if state.stack.is_empty() {
+                    Err("text_outside_root")
+                } else {
+                    if !state.stack.last().is_some_and(|frame| frame.is(b"t")) {
+                        state.reject_table("unsupported_text_position");
+                    }
                     Ok(())
                 }
             }
             Event::Comment(_) => Ok(()),
             Event::Eof => {
-                if state.root_seen && state.body_seen && state.stack.is_empty() && state.table.is_none() {
+                if state.root_seen
+                    && state.body_seen
+                    && state.stack.is_empty()
+                    && state.table.is_none()
+                {
                     state.out.scan_complete = true;
                 } else {
                     state.stop("incomplete_document", start);
@@ -444,7 +589,10 @@ fn scan(xml: &str, state: &mut State) {
                 return;
             }
         };
-        if let Err(reason) = result { state.stop(reason, start); return; }
+        if let Err(reason) = result {
+            state.stop(reason, start);
+            return;
+        }
     }
     state.stop("event_limit", reader.buffer_position() as usize);
 }
@@ -457,7 +605,10 @@ mod tests {
     const SOURCE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
     fn wrap(body: &str) -> String {
-        format!("<w:document xmlns:w=\"{}\"><w:body>{body}</w:body></w:document>", std::str::from_utf8(WORD).unwrap())
+        format!(
+            "<w:document xmlns:w=\"{}\"><w:body>{body}</w:body></w:document>",
+            std::str::from_utf8(WORD).unwrap()
+        )
     }
 
     fn table(body: &str) -> String {
@@ -475,7 +626,8 @@ mod tests {
     fn slice<'a>(xml: &'a str, range: &Value) -> &'a str {
         let start = range[0].as_u64().unwrap() as usize;
         let end = range[1].as_u64().unwrap() as usize;
-        xml.get(start..end).expect("range is on exact UTF-8 boundaries")
+        xml.get(start..end)
+            .expect("range is on exact UTF-8 boundaries")
     }
 
     #[test]
@@ -485,12 +637,18 @@ mod tests {
         let p3 = paragraph("right");
         let row = format!("<w:tr><w:tc>{p1}{p2}</w:tc><w:tc>{p3}</w:tc></w:tr>");
         let tbl = format!("<w:tbl>{row}</w:tbl>");
-        let xml = format!("\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n{}", wrap(&tbl));
+        let xml = format!(
+            "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n{}",
+            wrap(&tbl)
+        );
         let out = view(&xml);
         assert_eq!(out["complete"], true);
         assert_eq!(out["scan_complete"], true);
         assert_eq!(out["entry_bytes"], xml.len());
-        assert_eq!(out["entry_sha256"], hex::encode(Sha256::digest(xml.as_bytes())));
+        assert_eq!(
+            out["entry_sha256"],
+            hex::encode(Sha256::digest(xml.as_bytes()))
+        );
         assert_eq!(out["source_document"]["sha256"], SOURCE);
         assert_eq!(out["source_document"]["bytes"], 123);
         let t = &out["tables"][0];
@@ -498,7 +656,10 @@ mod tests {
         assert_eq!(slice(&xml, &t["rows"][0]["source_range"]), row);
         let cells = t["rows"][0]["cells"].as_array().unwrap();
         assert_eq!(cells.len(), 2);
-        assert_eq!(slice(&xml, &cells[0]["source_range"]), format!("<w:tc>{p1}{p2}</w:tc>"));
+        assert_eq!(
+            slice(&xml, &cells[0]["source_range"]),
+            format!("<w:tc>{p1}{p2}</w:tc>")
+        );
         assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][0]), p1);
         assert_eq!(slice(&xml, &cells[0]["paragraph_source_ranges"][1]), p2);
         assert_eq!(slice(&xml, &cells[1]["paragraph_source_ranges"][0]), p3);
@@ -508,13 +669,23 @@ mod tests {
     fn docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables() {
         for namespace in [WORD, STRICT_WORD] {
             let uri = std::str::from_utf8(namespace).unwrap();
-            let aliased = format!("<x:document xmlns:x=\"{uri}\"><x:body><x:tbl><x:tr><x:tc><x:p/></x:tc></x:tr></x:tbl></x:body></x:document>");
-            let default_ns = format!("<document xmlns=\"{uri}\"><body><tbl><tr><tc><p/></tc></tr></tbl></body></document>");
+            let aliased = format!(
+                "<x:document xmlns:x=\"{uri}\"><x:body><x:tbl><x:tr><x:tc><x:p/></x:tc></x:tr></x:tbl></x:body></x:document>"
+            );
+            let default_ns = format!(
+                "<document xmlns=\"{uri}\"><body><tbl><tr><tc><p/></tc></tr></tbl></body></document>"
+            );
             for xml in [aliased, default_ns] {
                 let out = view(&xml);
                 assert_eq!(out["complete"], true);
                 assert_eq!(out["tables"].as_array().unwrap().len(), 1);
-                assert!(slice(&xml, &out["tables"][0]["rows"][0]["cells"][0]["paragraph_source_ranges"][0]).ends_with("/>"));
+                assert!(
+                    slice(
+                        &xml,
+                        &out["tables"][0]["rows"][0]["cells"][0]["paragraph_source_ranges"][0]
+                    )
+                    .ends_with("/>")
+                );
             }
         }
         let xml = wrap("<f:tbl xmlns:f=\"urn:foreign\"><f:tr><f:tc/></f:tr></f:tbl>");
@@ -551,10 +722,14 @@ mod tests {
         let valid = table(&paragraph("valid"));
         for unsupported in [
             table(&table(&paragraph("inner"))),
-            table("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice><w:p/></mc:Choice></mc:AlternateContent>"),
+            table(
+                "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice><w:p/></mc:Choice></mc:AlternateContent>",
+            ),
             table("<w:p xmlns:w=\"urn:foreign\"><w:r><w:t>foreign</w:t></w:r></w:p>"),
             format!("<w:sdt>{valid}</w:sdt>"),
-            table("<w:p><w:r><w:t x:flag=\"1\" xmlns:x=\"urn:foreign\">foreign attribute</w:t></w:r></w:p>"),
+            table(
+                "<w:p><w:r><w:t x:flag=\"1\" xmlns:x=\"urn:foreign\">foreign attribute</w:t></w:r></w:p>",
+            ),
         ] {
             let xml = wrap(&format!("{unsupported}{valid}"));
             let out = view(&xml);
@@ -569,7 +744,10 @@ mod tests {
     #[test]
     fn docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries() {
         for xml in [
-            format!("<!DOCTYPE w:document [<!ENTITY x SYSTEM \"file:///never-read\">]>{}", wrap(&table(&paragraph("&x;")))),
+            format!(
+                "<!DOCTYPE w:document [<!ENTITY x SYSTEM \"file:///never-read\">]>{}",
+                wrap(&table(&paragraph("&x;")))
+            ),
             wrap(&table(&paragraph("&not_declared;"))),
             wrap(&table(&paragraph("&#0;"))),
             wrap("<w:tbl><w:tr></w:tbl>"),
@@ -582,7 +760,10 @@ mod tests {
             assert_eq!(out["complete"], false, "{xml}");
             assert_eq!(out["scan_complete"], false);
             assert!(!out["omissions"].as_array().unwrap().is_empty());
-            assert_eq!(out["entry_sha256"], hex::encode(Sha256::digest(xml.as_bytes())));
+            assert_eq!(
+                out["entry_sha256"],
+                hex::encode(Sha256::digest(xml.as_bytes()))
+            );
         }
     }
 
@@ -631,20 +812,35 @@ mod tests {
         assert_eq!(out["tables"].as_array().unwrap().len(), 1);
         assert_eq!(slice(&xml, &out["tables"][0]["source_range"]), good);
         assert_eq!(out["omissions"][0]["scope"], "entry_tail");
-        assert_eq!(out["omissions"][0]["source_range"][0], xml.find(malformed).unwrap());
+        assert_eq!(
+            out["omissions"][0]["source_range"][0],
+            xml.find(malformed).unwrap()
+        );
     }
 
     #[test]
     fn docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables() {
         let xml = wrap(&table(&format!("{}{}", paragraph("one"), paragraph("two"))));
         for limits in [
-            Limits { entry_bytes: 8, ..LIMITS },
-            Limits { events: 4, ..LIMITS },
+            Limits {
+                entry_bytes: 8,
+                ..LIMITS
+            },
+            Limits {
+                events: 4,
+                ..LIMITS
+            },
             Limits { depth: 3, ..LIMITS },
-            Limits { tables: 0, ..LIMITS },
+            Limits {
+                tables: 0,
+                ..LIMITS
+            },
             Limits { rows: 0, ..LIMITS },
             Limits { cells: 0, ..LIMITS },
-            Limits { paragraphs: 1, ..LIMITS },
+            Limits {
+                paragraphs: 1,
+                ..LIMITS
+            },
         ] {
             let out = project_with_limits(&xml, SOURCE, 123, limits);
             assert_eq!(out["complete"], false);
@@ -656,17 +852,43 @@ mod tests {
     #[test]
     fn docx_ranges_cap_actual_serialized_metadata_including_source_binding() {
         let xml = wrap(&table(&paragraph("x").repeat(100)));
-        let out = project_with_limits(&xml, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        let out = project_with_limits(
+            &xml,
+            SOURCE,
+            123,
+            Limits {
+                metadata_bytes: 1_024,
+                ..LIMITS
+            },
+        );
         assert_eq!(out["complete"], false);
         assert_eq!(out["scan_complete"], true);
         assert_eq!(out["omitted_tables_observed"], 1);
         assert!(out["tables"].as_array().unwrap().is_empty());
-        assert!(out["omissions"].as_array().unwrap().iter().any(|value| value["reason"] == "metadata_limit"));
+        assert!(
+            out["omissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value["reason"] == "metadata_limit")
+        );
         assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
         assert_eq!(out["source_document"]["sha256"], SOURCE);
         let unsupported = table("<w:tcPr><w:vMerge/></w:tcPr><w:p/>");
-        let xml = wrap(&format!("{}{}", unsupported.repeat(12), table(&paragraph("x").repeat(100))));
-        let out = project_with_limits(&xml, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        let xml = wrap(&format!(
+            "{}{}",
+            unsupported.repeat(12),
+            table(&paragraph("x").repeat(100))
+        ));
+        let out = project_with_limits(
+            &xml,
+            SOURCE,
+            123,
+            Limits {
+                metadata_bytes: 1_024,
+                ..LIMITS
+            },
+        );
         assert_eq!(out["complete"], false);
         assert_eq!(out["scan_complete"], true);
         assert_eq!(out["omitted_tables_observed"], 13);

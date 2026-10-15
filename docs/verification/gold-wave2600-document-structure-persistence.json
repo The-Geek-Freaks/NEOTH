@@ -31,11 +31,11 @@
   "sourceFiles": [
     {
       "path": "SRC/neothd/src/memory/document_provenance.rs",
-      "sha256": "8933239743A7E1F8EE36AD2CA1BF371F67802C7A5A603F041C3D70F16CF683E2"
+      "sha256": "9C080FDD5730C7A81D3F0D1B27B47A662D376B2E5E485457393E831699A0561A"
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "sha256": "01196B1683B2369ADA94A1DFAC69D47CB612770137CB74A11A20A47807DCB049"
+      "sha256": "B0892B1BE326AC7C67152903E4BE91612D33BBC88EBC71E01DD1DC6C77C5F04F"
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
@@ -47,11 +47,11 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sha256": "164D72E62E63B7E0296FE34EC522D9C1778B1D8A230B71CCC7A1D423A86BD842"
+      "sha256": "84576D3644D6C60629A6B8CE2569D534FC54D57F2BC6A98CDFA9CE1D48812399"
     },
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
-      "sha256": "E63B9C0F2DDCF5D457F06EC1DA0F3BE13AB4B00FFC4749F07F351888C5C7A696"
+      "sha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8"
     }
   ],
   "review": {
@@ -68,5 +68,15 @@
   "hostedFormatAccepted": false,
   "hostedCompileAccepted": false,
   "hostedRuntimeAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormatting": {
+    "run": 38767201195,
+    "producer": "8cd6788796e5cd321a3454ee0d4708e00d3fee09",
+    "artifact": 11988274110,
+    "zipSha256": "C6031F9CC10BA3DF014FF02EDEA979CE1904C907B73B3A626B3B10262E4E4E18",
+    "patchSha256": "708EC58310D5950AB343DB0B4F342C7AD1EFD5D0E840728C8A21EFCFD3DAEA4D",
+    "applied": true,
+    "newProducerPreflightPending": true,
+    "localFormatterExecuted": false
+  }
 }

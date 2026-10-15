@@ -26,7 +26,7 @@
   "sourceFiles": [
     {
       "path": "SRC/neothd/src/media/document.rs",
-      "sha256": "C3C685623071C8A17A8C775B596F3C4BE7307447E855DE1A6DEDDE83BA7CF36A"
+      "sha256": "EE319CEC6C1C88C09321A444FF51D827396916D5D955944AD377643C72AE7C7E"
     },
     {
       "path": "SRC/neothd/src/media/mod.rs",
@@ -34,7 +34,7 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "sha256": "A17E063C9D0F1AFE3D5B67244548AA9694D1AF2B2429D5F838BAB776F5E2AC61"
+      "sha256": "D1EAE3D4A892C9C97ED9B35A779FFB6788E9F8D88E0C97AD51AD0FB54FA9081D"
     }
   ],
   "review": {
@@ -50,5 +50,15 @@
   "hostedFormatAccepted": false,
   "hostedCompileAccepted": false,
   "hostedRuntimeAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormatting": {
+    "run": 38767201195,
+    "producer": "8cd6788796e5cd321a3454ee0d4708e00d3fee09",
+    "artifact": 11988274110,
+    "zipSha256": "C6031F9CC10BA3DF014FF02EDEA979CE1904C907B73B3A626B3B10262E4E4E18",
+    "patchSha256": "708EC58310D5950AB343DB0B4F342C7AD1EFD5D0E840728C8A21EFCFD3DAEA4D",
+    "applied": true,
+    "newProducerPreflightPending": true,
+    "localFormatterExecuted": false
+  }
 }

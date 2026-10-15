@@ -2606,8 +2606,12 @@ mod tests {
                 .query_map([], |row| (0..6).map(|column| row.get(column)).collect())
                 .unwrap();
             // The v47 contract predates the separately tested optional v49 column.
-            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap().into_iter()
-                .filter(|row| row[1] != rusqlite::types::Value::Text("document_structure_json".into()))
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+                .into_iter()
+                .filter(|row| {
+                    row[1] != rusqlite::types::Value::Text("document_structure_json".into())
+                })
                 .collect()
         }
         let dir = tempfile::tempdir().unwrap();
@@ -2621,7 +2625,8 @@ mod tests {
         let mut conn = legacy_document_sources();
         migrate(&mut conn, 46, 47).unwrap();
         // v48 changes vocabulary only; its source columns equal v47 exactly.
-        conn.execute("UPDATE meta SET value='48' WHERE key='schema_version'", []).unwrap();
+        conn.execute("UPDATE meta SET value='48' WHERE key='schema_version'", [])
+            .unwrap();
         conn
     }
 
@@ -2629,17 +2634,26 @@ mod tests {
     fn v48_to_v49_retains_legacy_rows_and_matches_fresh_source_columns() {
         let mut conn = v48_source_fixture();
         assert_eq!(migrate(&mut conn, 48, 49).unwrap(), 49);
-        let retained: (String, String, bool) = conn.query_row(
-            "SELECT label,content_hash,document_structure_json IS NULL FROM sources", [],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
-        ).unwrap();
+        let retained: (String, String, bool) = conn
+            .query_row(
+                "SELECT label,content_hash,document_structure_json IS NULL FROM sources",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(retained, ("legacy".into(), "retained-hash".into(), true));
         let dir = tempfile::tempdir().unwrap();
         let fresh = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
         let shape = |db: &Connection| {
             let mut stmt = db.prepare("PRAGMA table_info(sources)").unwrap();
-            stmt.query_map([], |row| (0..6).map(|column| row.get(column)).collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>())
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+            stmt.query_map([], |row| {
+                (0..6)
+                    .map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
         assert_eq!(shape(&conn), shape(&fresh));
         assert_eq!(migrate(&mut conn, 49, 49).unwrap(), 49);
@@ -2648,13 +2662,20 @@ mod tests {
     #[test]
     fn v48_to_v49_version_write_failure_rolls_back_the_column_and_retries() {
         let mut conn = v48_source_fixture();
-        conn.execute_batch("CREATE TRIGGER reject_structure_version BEFORE INSERT ON meta
+        conn.execute_batch(
+            "CREATE TRIGGER reject_structure_version BEFORE INSERT ON meta
             WHEN NEW.key='schema_version' AND NEW.value='49'
-            BEGIN SELECT RAISE(ABORT, 'injected version failure'); END;").unwrap();
+            BEGIN SELECT RAISE(ABORT, 'injected version failure'); END;",
+        )
+        .unwrap();
         assert!(migrate(&mut conn, 48, 49).is_err());
         assert_eq!(current_version(&conn).unwrap(), 48);
-        assert!(conn.prepare("SELECT document_structure_json FROM sources").is_err());
-        conn.execute_batch("DROP TRIGGER reject_structure_version").unwrap();
+        assert!(
+            conn.prepare("SELECT document_structure_json FROM sources")
+                .is_err()
+        );
+        conn.execute_batch("DROP TRIGGER reject_structure_version")
+            .unwrap();
         assert_eq!(migrate(&mut conn, 48, 49).unwrap(), 49);
     }
 
@@ -2664,7 +2685,9 @@ mod tests {
         assert!(migrate(&mut missing, 48, 49).is_err());
         assert_eq!(current_version(&missing).unwrap(), 48);
         let mut collision = v48_source_fixture();
-        collision.execute_batch("ALTER TABLE sources ADD COLUMN document_structure_json TEXT;").unwrap();
+        collision
+            .execute_batch("ALTER TABLE sources ADD COLUMN document_structure_json TEXT;")
+            .unwrap();
         assert!(migrate(&mut collision, 48, 49).is_err());
         assert_eq!(current_version(&collision).unwrap(), 48);
     }

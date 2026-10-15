@@ -101,7 +101,10 @@ impl DocumentProvenance {
         require_exact_keys(source, &["sha256", "bytes"])?;
         let text = required_object(provenance, "extracted_text")?;
         require_exact_keys(text, &["sha256", "bytes", "encoding"])?;
-        let structure = metadata.get("document_structure").map(DocumentStructure::from_value).transpose()?;
+        let structure = metadata
+            .get("document_structure")
+            .map(DocumentStructure::from_value)
+            .transpose()?;
         if structure.is_some() && metadata.get("format").and_then(Value::as_str) != Some("docx") {
             bail!("DOCX structure requires a DOCX extractor result");
         }
@@ -135,7 +138,8 @@ impl DocumentProvenance {
         let structure = match row.get_ref(start + 8)? {
             rusqlite::types::ValueRef::Null => None,
             rusqlite::types::ValueRef::Text(bytes) => Some(
-                DocumentStructure::from_json_bytes(bytes).map_err(|_| persisted_error(start + 8))?,
+                DocumentStructure::from_json_bytes(bytes)
+                    .map_err(|_| persisted_error(start + 8))?,
             ),
             _ => return Err(persisted_error(start + 8)),
         };
@@ -344,25 +348,39 @@ mod tests {
     fn document_metadata_retains_only_source_bound_docx_structure() {
         let mut metadata = document_metadata();
         metadata["format"] = serde_json::json!("docx");
-        metadata["document_structure"] = super::super::document_structure::test_structure_value(&"a".repeat(64), 12);
-        let provenance = DocumentProvenance::from_extraction_metadata(&metadata).unwrap().unwrap();
+        metadata["document_structure"] =
+            super::super::document_structure::test_structure_value(&"a".repeat(64), 12);
+        let provenance = DocumentProvenance::from_extraction_metadata(&metadata)
+            .unwrap()
+            .unwrap();
         provenance.validate_for_content("über").unwrap();
         assert!(provenance.structure.is_some());
         for (pointer, replacement) in [
-            ("/document_structure/source_document/sha256", serde_json::json!("c".repeat(64))),
-            ("/document_structure/source_document/bytes", serde_json::json!(13)),
+            (
+                "/document_structure/source_document/sha256",
+                serde_json::json!("c".repeat(64)),
+            ),
+            (
+                "/document_structure/source_document/bytes",
+                serde_json::json!(13),
+            ),
             ("/format", serde_json::json!("rtf")),
             ("/document_structure", serde_json::Value::Null),
         ] {
             let mut bad = metadata.clone();
             *bad.pointer_mut(pointer).unwrap() = replacement;
-            assert!(DocumentProvenance::from_extraction_metadata(&bad).is_err(), "{pointer}");
+            assert!(
+                DocumentProvenance::from_extraction_metadata(&bad).is_err(),
+                "{pointer}"
+            );
         }
     }
 
     #[test]
     fn legacy_provenance_json_defaults_to_no_structure_without_fabricating_ranges() {
-        let provenance = DocumentProvenance::from_extraction_metadata(&document_metadata()).unwrap().unwrap();
+        let provenance = DocumentProvenance::from_extraction_metadata(&document_metadata())
+            .unwrap()
+            .unwrap();
         let json = serde_json::to_value(&provenance).unwrap();
         assert!(json.get("structure").is_none());
         let decoded: DocumentProvenance = serde_json::from_value(json).unwrap();

@@ -223,14 +223,14 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
         },
     });
     let mut metadata = serde_json::json!({
-            "extractor": "document",
-            "format": fmt.as_str(),
-            "char_count": stats.0,
-            "word_count": stats.1,
-            "line_count": stats.2,
-            "truncated": truncated,
-            "provenance": provenance,
-        });
+        "extractor": "document",
+        "format": fmt.as_str(),
+        "char_count": stats.0,
+        "word_count": stats.1,
+        "line_count": stats.2,
+        "truncated": truncated,
+        "provenance": provenance,
+    });
     if let Some(structure) = document_structure {
         metadata["document_structure"] = structure;
     }
@@ -1161,7 +1161,6 @@ mod tests {
         assert_eq!(out.metadata["truncated"], false);
     }
 
-
     #[test]
     fn docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member() {
         let xml = concat!(
@@ -1176,20 +1175,52 @@ mod tests {
         let expected_source_bytes = bytes.len();
         let out = extract_blocking(&doc_asset(DOCX_MIME, bytes)).unwrap();
         assert_eq!(out.text, xml_body_text(xml, DOCX_BREAKS));
-        assert_eq!(out.metadata["provenance"]["source"]["sha256"], expected_source_hash);
-        assert_eq!(out.metadata["provenance"]["source"]["bytes"], expected_source_bytes);
-        assert_eq!(out.metadata["provenance"]["extracted_text"]["sha256"], hex::encode(Sha256::digest(out.text.as_bytes())));
+        assert_eq!(
+            out.metadata["provenance"]["source"]["sha256"],
+            expected_source_hash
+        );
+        assert_eq!(
+            out.metadata["provenance"]["source"]["bytes"],
+            expected_source_bytes
+        );
+        assert_eq!(
+            out.metadata["provenance"]["extracted_text"]["sha256"],
+            hex::encode(Sha256::digest(out.text.as_bytes()))
+        );
         let structure = &out.metadata["document_structure"];
-        assert_eq!(structure["source_document"], out.metadata["provenance"]["source"]);
-        assert_eq!(structure["entry_sha256"], hex::encode(Sha256::digest(xml.as_bytes())));
+        assert_eq!(
+            structure["source_document"],
+            out.metadata["provenance"]["source"]
+        );
+        assert_eq!(
+            structure["entry_sha256"],
+            hex::encode(Sha256::digest(xml.as_bytes()))
+        );
         assert_eq!(structure["entry_bytes"], xml.len());
         assert_eq!(structure["complete"], true);
-        let cells = structure["tables"][0]["rows"][0]["cells"].as_array().unwrap();
+        let cells = structure["tables"][0]["rows"][0]["cells"]
+            .as_array()
+            .unwrap();
         assert_eq!(cells.len(), 2);
-        assert_eq!(cells[0]["paragraph_source_ranges"].as_array().unwrap().len(), 2);
-        assert_eq!(cells[1]["paragraph_source_ranges"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            cells[0]["paragraph_source_ranges"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            cells[1]["paragraph_source_ranges"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(serde_json::to_vec(structure).unwrap().len() <= 256 * 1024);
-        let index_provenance = crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
+        let index_provenance =
+            crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(
+                &out.metadata,
+            )
             .unwrap()
             .unwrap();
         index_provenance.validate_for_content(&out.text).unwrap();
@@ -1204,8 +1235,16 @@ mod tests {
             "<w:p><w:r><w:t>Still readable</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
             "</w:body></w:document>"
         );
-        let first = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", xml)]))).unwrap();
-        let second = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", xml), ("unused.txt", "revision")]))).unwrap();
+        let first = extract_blocking(&doc_asset(
+            DOCX_MIME,
+            make_zip(&[("word/document.xml", xml)]),
+        ))
+        .unwrap();
+        let second = extract_blocking(&doc_asset(
+            DOCX_MIME,
+            make_zip(&[("word/document.xml", xml), ("unused.txt", "revision")]),
+        ))
+        .unwrap();
         for out in [&first, &second] {
             assert_eq!(out.text, xml_body_text(xml, DOCX_BREAKS));
             let structure = &out.metadata["document_structure"];
@@ -1213,36 +1252,67 @@ mod tests {
             assert_eq!(structure["scan_complete"], true);
             assert_eq!(structure["omitted_tables_observed"], 1);
             assert!(structure["tables"].as_array().unwrap().is_empty());
-            assert_eq!(structure["source_document"], out.metadata["provenance"]["source"]);
-            crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
-                .unwrap()
-                .unwrap()
-                .validate_for_content(&out.text)
-                .unwrap();
-        }
-        assert_eq!(first.metadata["document_structure"]["entry_sha256"], second.metadata["document_structure"]["entry_sha256"]);
-        assert_ne!(first.metadata["document_structure"]["source_document"]["sha256"], second.metadata["document_structure"]["source_document"]["sha256"]);
-        assert_eq!(first.metadata["provenance"]["extracted_text"], second.metadata["provenance"]["extracted_text"]);
-        let malformed = xml.replace("</w:body>", "<w:tbl><w:tr></w:tbl></w:body>");
-        let out = extract_blocking(&doc_asset(DOCX_MIME, make_zip(&[("word/document.xml", &malformed)]))).unwrap();
-        assert_eq!(out.text, xml_body_text(&malformed, DOCX_BREAKS));
-        assert_eq!(out.metadata["document_structure"]["complete"], false);
-        assert_eq!(out.metadata["document_structure"]["scan_complete"], false);
-        assert_eq!(out.metadata["provenance"]["extracted_text"]["sha256"], hex::encode(Sha256::digest(out.text.as_bytes())));
-        crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(&out.metadata)
+            assert_eq!(
+                structure["source_document"],
+                out.metadata["provenance"]["source"]
+            );
+            crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(
+                &out.metadata,
+            )
             .unwrap()
             .unwrap()
             .validate_for_content(&out.text)
             .unwrap();
+        }
+        assert_eq!(
+            first.metadata["document_structure"]["entry_sha256"],
+            second.metadata["document_structure"]["entry_sha256"]
+        );
+        assert_ne!(
+            first.metadata["document_structure"]["source_document"]["sha256"],
+            second.metadata["document_structure"]["source_document"]["sha256"]
+        );
+        assert_eq!(
+            first.metadata["provenance"]["extracted_text"],
+            second.metadata["provenance"]["extracted_text"]
+        );
+        let malformed = xml.replace("</w:body>", "<w:tbl><w:tr></w:tbl></w:body>");
+        let out = extract_blocking(&doc_asset(
+            DOCX_MIME,
+            make_zip(&[("word/document.xml", &malformed)]),
+        ))
+        .unwrap();
+        assert_eq!(out.text, xml_body_text(&malformed, DOCX_BREAKS));
+        assert_eq!(out.metadata["document_structure"]["complete"], false);
+        assert_eq!(out.metadata["document_structure"]["scan_complete"], false);
+        assert_eq!(
+            out.metadata["provenance"]["extracted_text"]["sha256"],
+            hex::encode(Sha256::digest(out.text.as_bytes()))
+        );
+        crate::memory::document_provenance::DocumentProvenance::from_extraction_metadata(
+            &out.metadata,
+        )
+        .unwrap()
+        .unwrap()
+        .validate_for_content(&out.text)
+        .unwrap();
     }
 
     #[test]
     fn non_docx_documents_do_not_claim_docx_structure() {
-        let rtf = extract_blocking(&doc_asset("application/rtf", br"{\rtf1 hello}".to_vec())).unwrap();
-        let odt = extract_blocking(&doc_asset("application/vnd.oasis.opendocument.text", make_zip(&[("content.xml", "<p>hello</p>")]))).unwrap();
+        let rtf =
+            extract_blocking(&doc_asset("application/rtf", br"{\rtf1 hello}".to_vec())).unwrap();
+        let odt = extract_blocking(&doc_asset(
+            "application/vnd.oasis.opendocument.text",
+            make_zip(&[("content.xml", "<p>hello</p>")]),
+        ))
+        .unwrap();
         for out in [rtf, odt] {
             assert_eq!(out.metadata.get("document_structure"), None);
-            assert_eq!(out.metadata["provenance"]["parser_version"], DOCUMENT_PARSER_VERSION);
+            assert_eq!(
+                out.metadata["provenance"]["parser_version"],
+                DOCUMENT_PARSER_VERSION
+            );
         }
     }
 

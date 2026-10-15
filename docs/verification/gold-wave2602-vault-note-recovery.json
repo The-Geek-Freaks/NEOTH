@@ -16,7 +16,7 @@
   "sourceFiles": [
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
-      "sha256": "37EB6AC65C2F865CC1974954A782AEAB4908EF752AF395280B9B2B8C07720F48"
+      "sha256": "1212B6B52C976A641831836048B0061D57EA860E9A798A8B448CADECF8798312"
     }
   ],
   "review": {
@@ -32,5 +32,15 @@
   ],
   "localRuntimeExecuted": false,
   "hostedRuntimeAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormatting": {
+    "run": 38767201195,
+    "producer": "8cd6788796e5cd321a3454ee0d4708e00d3fee09",
+    "artifact": 11988274110,
+    "zipSha256": "C6031F9CC10BA3DF014FF02EDEA979CE1904C907B73B3A626B3B10262E4E4E18",
+    "patchSha256": "708EC58310D5950AB343DB0B4F342C7AD1EFD5D0E840728C8A21EFCFD3DAEA4D",
+    "applied": true,
+    "newProducerPreflightPending": true,
+    "localFormatterExecuted": false
+  }
 }

@@ -1262,10 +1262,14 @@ mod tests {
                 DocumentStagingRoute::Wiki {
                     vault_root: vault_path.display().to_string(),
                     subdir: "NEOTH".to_owned(),
-                    note_markdown: "# Retained document\n\nOne approved note survives audit recovery.".to_owned(),
+                    note_markdown:
+                        "# Retained document\n\nOne approved note survives audit recovery."
+                            .to_owned(),
                 },
             );
-            let draft = crate::proactive::document_staging::parse_approved_document_staging(&proposal).unwrap();
+            let draft =
+                crate::proactive::document_staging::parse_approved_document_staging(&proposal)
+                    .unwrap();
             let proposal_path = save_proposal(&home_path, &proposal).unwrap();
             let wal_path = home_path.join("wal");
             let obstruction = b"owned post-note audit obstruction";
@@ -1275,7 +1279,10 @@ mod tests {
             let result = accept_document(&home_path, &proposal.id);
             if fail_audit {
                 let error = result.expect_err("outer audit must fail after note publication");
-                assert!(format!("{error:#}").contains("route effect committed"), "{error:#}");
+                assert!(
+                    format!("{error:#}").contains("route effect committed"),
+                    "{error:#}"
+                );
                 assert_eq!(std::fs::read(&wal_path).unwrap(), obstruction.to_vec());
             } else {
                 result.expect("publish and audit the approved note");
@@ -1287,16 +1294,28 @@ mod tests {
             let paths = note_paths(&note_dir);
             assert_eq!(paths.len(), 1);
             let note_path = &paths[0];
-            assert_eq!(note_path.file_name().unwrap().to_str().unwrap(), format!("{}.md", hex::encode(Sha256::digest(proposal.id.as_bytes()))));
+            assert_eq!(
+                note_path.file_name().unwrap().to_str().unwrap(),
+                format!("{}.md", hex::encode(Sha256::digest(proposal.id.as_bytes())))
+            );
             let note_bytes = std::fs::read(note_path).unwrap();
-            let (_, body) = std::str::from_utf8(&note_bytes).unwrap().split_once("\n---\n\n").unwrap();
-            assert_eq!(body, "# Retained document\n\nOne approved note survives audit recovery.");
+            let (_, body) = std::str::from_utf8(&note_bytes)
+                .unwrap()
+                .split_once("\n---\n\n")
+                .unwrap();
+            assert_eq!(
+                body,
+                "# Retained document\n\nOne approved note survives audit recovery."
+            );
             let audits = if fail_audit {
                 // The exact regular-file obstruction above precludes a WAL
                 // directory or any audit segment; the helper requires a directory.
                 Vec::new()
             } else {
-                document_audit_payloads(&home_path, crate::wal::events::ExtendedSubtype::DocumentNoteApplied)
+                document_audit_payloads(
+                    &home_path,
+                    crate::wal::events::ExtendedSubtype::DocumentNoteApplied,
+                )
             };
             assert_eq!(audits.len(), usize::from(!fail_audit));
 
@@ -1306,7 +1325,8 @@ mod tests {
                     note: "cannot reverse a published note".to_owned(),
                 },
                 home: Some(home_path.clone()),
-            }).expect_err("approved document cannot be rejected after note publication");
+            })
+            .expect_err("approved document cannot be rejected after note publication");
             assert!(format!("{error:#}").contains("already has terminal status approved"));
             assert_eq!(load_proposal(&home_path, &proposal.id).unwrap(), approved);
             assert_eq!(std::fs::read(&proposal_path).unwrap(), approved_bytes);
@@ -1316,19 +1336,32 @@ mod tests {
                 assert_eq!(std::fs::read(&wal_path).unwrap(), obstruction.to_vec());
                 std::fs::remove_file(&wal_path).unwrap();
             } else {
-                assert_eq!(document_audit_payloads(&home_path, crate::wal::events::ExtendedSubtype::DocumentNoteApplied), audits);
+                assert_eq!(
+                    document_audit_payloads(
+                        &home_path,
+                        crate::wal::events::ExtendedSubtype::DocumentNoteApplied
+                    ),
+                    audits
+                );
             }
 
-            accept_document(&home_path, &proposal.id).expect("reaccept reconciles the already published note before audit");
+            accept_document(&home_path, &proposal.id)
+                .expect("reaccept reconciles the already published note before audit");
             assert_eq!(std::fs::read(&proposal_path).unwrap(), approved_bytes);
             assert_eq!(note_paths(&note_dir), paths);
             assert_eq!(std::fs::read(note_path).unwrap(), note_bytes);
-            let reconciled = document_audit_payloads(&home_path, crate::wal::events::ExtendedSubtype::DocumentNoteApplied);
+            let reconciled = document_audit_payloads(
+                &home_path,
+                crate::wal::events::ExtendedSubtype::DocumentNoteApplied,
+            );
             assert_eq!(reconciled.len(), audits.len() + 1);
             for audit in &audits {
                 assert!(reconciled.contains(audit));
             }
-            let fresh = reconciled.iter().filter(|audit| !audits.contains(audit)).collect::<Vec<_>>();
+            let fresh = reconciled
+                .iter()
+                .filter(|audit| !audits.contains(audit))
+                .collect::<Vec<_>>();
             assert_eq!(fresh.len(), 1);
             let audit = fresh[0];
             assert_eq!(audit["proposal_id"], proposal.id);
@@ -1338,8 +1371,14 @@ mod tests {
             assert_eq!(audit["route"], "vault_note");
             assert_eq!(audit["reconciled"], true);
             let encoded_path = serde_json::to_string(note_path.to_str().unwrap()).unwrap();
-            assert_eq!(audit["target_identity_sha256"], hex::encode(Sha256::digest(encoded_path.as_bytes())));
-            assert_eq!(audit["route_content_sha256"], hex::encode(Sha256::digest(&note_bytes)));
+            assert_eq!(
+                audit["target_identity_sha256"],
+                hex::encode(Sha256::digest(encoded_path.as_bytes()))
+            );
+            assert_eq!(
+                audit["route_content_sha256"],
+                hex::encode(Sha256::digest(&note_bytes))
+            );
             let encoded_audit = serde_json::to_string(audit).unwrap();
             assert!(!encoded_audit.contains(&encoded_path));
             assert!(!encoded_audit.contains("One approved note survives audit recovery."));
@@ -1349,12 +1388,22 @@ mod tests {
             let operator_bytes = b"operator-owned note after recovery\n";
             assert_ne!(operator_bytes.as_slice(), note_bytes.as_slice());
             std::fs::write(note_path, operator_bytes).unwrap();
-            let error = accept_document(&home_path, &proposal.id).expect_err("operator edit must prevent note reconciliation");
-            assert!(format!("{error:#}").contains("existing document note differs and is preserved"), "{error:#}");
+            let error = accept_document(&home_path, &proposal.id)
+                .expect_err("operator edit must prevent note reconciliation");
+            assert!(
+                format!("{error:#}").contains("existing document note differs and is preserved"),
+                "{error:#}"
+            );
             assert_eq!(std::fs::read(note_path).unwrap(), operator_bytes.to_vec());
             assert_eq!(note_paths(&note_dir), paths);
             assert_eq!(std::fs::read(&proposal_path).unwrap(), approved_bytes);
-            assert_eq!(document_audit_payloads(&home_path, crate::wal::events::ExtendedSubtype::DocumentNoteApplied), reconciled);
+            assert_eq!(
+                document_audit_payloads(
+                    &home_path,
+                    crate::wal::events::ExtendedSubtype::DocumentNoteApplied
+                ),
+                reconciled
+            );
         }
     }
 
