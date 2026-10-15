@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-15T10:48:10.7796186Z",
+  "capturedUtc": "2026-10-15T10:52:05.6390492Z",
   "validationStatus": "W2590_INGEST_INDEX_OUTCOME_STATIC_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -4493,8 +4493,8 @@
     },
     {
       "path": "docs/verification/gold-wave2590-ingest-index-outcome.json",
-      "bytes": 1621,
-      "sha256": "30EF4155E35956BD8E6A3FDF8E458EFCE17D5DAD52F70ED7BBCCD2FA69AAD2B7"
+      "bytes": 2137,
+      "sha256": "8802D5D71F8AA9BF097E31CCFD837E726DAB72CEBF1D581F9BDD20D62B87BB7E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6798,8 +6798,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/ingest.rs",
-      "bytes": 47670,
-      "sha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B"
+      "bytes": 48154,
+      "sha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17"
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",

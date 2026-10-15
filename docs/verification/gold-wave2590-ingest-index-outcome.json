@@ -26,5 +26,15 @@
   ],
   "localRuntimeExecuted": false,
   "hostedRuntimeAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormat": {
+    "run": 38723191716,
+    "producer": "ad0f5119d5b9b99c7cf75e7a786800fcf73b9d7b",
+    "artifact": 11965629433,
+    "originalZipSha256": "D3F6E028DD46A191AF4123DF6B8E99B7EB5B4FC4C1EA21403E2E480E7C55522A",
+    "patchSha256": "BD79915E84A282D313EE69BA5D22326065F841A06C43113B53B403FE6D88F3B4",
+    "memberHashesVerified": true,
+    "review": "Root inspected layout, optional trailing commas and expression-closure braces; exact reverse application checked",
+    "localRustfmtExecuted": false
+  }
 }

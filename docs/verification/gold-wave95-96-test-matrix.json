@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 427117,
-    "sha256": "45356DD99D1BA9C23EC5A196780CCA6FB4EB108585D4D9ACC85CB326F9159AC7"
+    "sha256": "C368B8C5D2F2FCFBB0F38789FA68C9A188C9700B6BA9D8566DF438FC0801B358"
   },
   "sourceInputs": 2329,
   "requiredNativeTests": [
@@ -8838,25 +8838,25 @@
     {
       "test": "cli::ingest::tests::cli_accepts_exactly_one_local_path_or_video_url",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::no_audit_rejects_url_before_any_managed_binary_or_transport",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_ctx_indexes_document_chunks",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_no_index_skips_ctx_write",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
@@ -17731,25 +17731,25 @@
     {
       "test": "cli::ingest::tests::ingest_index_outcome_distinguishes_disabled_and_empty_without_opening_store",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_index_outcome_reports_committed_chunks_and_preserves_legacy_count",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_index_outcome_reports_open_failure_without_private_error_payload",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ingest::tests::ingest_index_outcome_reports_failed_replacement_and_retains_prior_document",
       "sourcePath": "SRC/neothd/src/cli/ingest.rs",
-      "sourceSha256": "6920145359F7189664C8EECF608B85E26D34A4B1FF8408FA0C8D6DCC8E357C1B",
+      "sourceSha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
       "junitClass": "neoth"
     }
   ],
@@ -83919,6 +83919,26 @@
       }
     ],
     "note": "Explicit index outcome and retained extraction report; four real store/rollback regressions authored, not locally executed. Main frozen4792a80c.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2590Format": {
+    "base": "ad0f5119d5b9b99c7cf75e7a786800fcf73b9d7b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2590-ingest-index-outcome.json",
+        "bytes": 2137,
+        "sha256": "8802D5D71F8AA9BF097E31CCFD837E726DAB72CEBF1D581F9BDD20D62B87BB7E",
+        "blob": "d6650289f2717a8e613f56e75b9c9f6518391419"
+      },
+      {
+        "path": "SRC/neothd/src/cli/ingest.rs",
+        "bytes": 48154,
+        "sha256": "C6F46C5DBD8AAE9050576687FDFD1C765D1373E19F4E56B5A3AF9696CD625D17",
+        "blob": "f45d1e37b4240aa9c43d677e04250ab043cc6de3"
+      }
+    ],
+    "note": "Verified hosted rustfmt original archive and members; inspected and imported exact layout/optional comma/closure-brace patch. No local rustfmt or executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
