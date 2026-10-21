@@ -1129,13 +1129,15 @@ mod tests {
         )
         .expect("write fan-out config");
 
+        // Exercise provider refusal and writer cleanup, not the dispatcher deadline.
+        // Match the bounded ownership fixtures below for the real WAL path.
         run_fan_out(
             home.path(),
             &agent_dir,
             vec!["planner".into(), "critic".into()],
             "bounded fan-out writer-finalization fixture".into(),
             2,
-            1,
+            30,
             false,
             &OutputFormat::Json,
         )

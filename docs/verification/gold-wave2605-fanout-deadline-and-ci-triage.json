@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2605.fanout-fixture-and-ci-triage.v1",
+  "capturedUtc": "2026-10-21T05:52:42.7926704Z",
+  "baseProducer": "efdeaad9825789575cc793a18bc78be43de1e92c",
+  "fullRun": 38862628498,
+  "baselineAttempt": 1,
+  "baselineConclusion": "failure",
+  "successfulJobs": 17,
+  "totalJobs": 20,
+  "linux": {
+    "job": 116848185901,
+    "formatClippyDoctests": "success",
+    "interruptedStep": "Prepare Linux GUI callback runtime prerequisites",
+    "annotation": "The hosted runner lost communication with the server.",
+    "cause": "unresolved; no OOM, timeout or source-code cause established",
+    "logUnavailable": true,
+    "recovery": "Single existing Linux job rerun requested after active-run inventory; same producer; no source or workflow change in that attempt"
+  },
+  "macos": {
+    "job": 116848185943,
+    "run": 19518,
+    "passed": 19517,
+    "failed": 1,
+    "skipped": 35,
+    "failedIdentity": "cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release",
+    "observed": "Expected provider-refusal envelope, observed parallel worker timeout after 1s"
+  },
+  "repair": {
+    "path": "SRC/neothd/src/cli/agents.rs",
+    "change": "Only this writer-finalization fixture deadline: 1s to 30s, matching adjacent ownership fixtures",
+    "productionChanged": false,
+    "assertionsPreserved": true,
+    "timeoutRegressionUnchanged": "sub_agents::parallel::tests::timeout_synthesizes_blocked_when_worker_too_slow",
+    "retriesAdded": false,
+    "review": "Independent prompt-only Rust review approved; no runtime proof",
+    "hostedStatus": "pending on repaired producer"
+  },
+  "roadmap": {
+    "rawOpenRows": 259,
+    "semantics": "Historical and nested raw rows; not unique features or percentage",
+    "rawPlanSha256": "45DC90EBFBACB6140FB2BB3EA2AD251BE7A41C3FEA360B099DB8A418E0C844B3",
+    "existingIndex": "work/gold-20260906/wave2603-terminal-usage-snapshot/current-navigation/OPEN_BACKLOG_INDEX.json",
+    "goldCheckboxesClosed": 0
+  },
+  "acceleration": [
+    "One closing product chain per active implementation batch, with CLI/migration/negative-path proof; no growth of half-finished scratch batches",
+    "Use existing Graphify bindings and bounded Xerj passages; extend only the affected slice and verify source identity before reuse",
+    "Independent prompt-only diagnosis/review can overlap; Root retains all local execution, main integration and one heavy hosted CI stream",
+    "Use existing focused gates before full integration; never promote an old producer proof to a changed producer",
+    "Finish classification against exact raw roadmap rows incrementally; preserve every original row"
+  ],
+  "evidence": [
+    {
+      "path": "work/gold-20260906/wave2603-terminal-usage-snapshot/full-efdeaad9/status-20261021.json",
+      "sha256": "CEADD79C2BF049BC4F44C9510B368F2FAE2A1EDEF402A5586E67F4414AD9A886"
+    },
+    {
+      "path": "work/gold-20260906/wave2603-terminal-usage-snapshot/full-efdeaad9/linux-job.json",
+      "sha256": "F31BD9C918714B05A36366738CFF72B8B1BE5F8D6B68798349F076FA0CA84433"
+    },
+    {
+      "path": "work/gold-20260906/wave2603-terminal-usage-snapshot/full-efdeaad9/linux-annotations.json",
+      "sha256": "4B66F840D29AC3525DCB00F02D5F3F1CA486ADA01DAF43115FAB1A39D8E55DA4"
+    },
+    {
+      "path": "work/gold-20260906/wave2603-terminal-usage-snapshot/full-efdeaad9/macos-tests.log",
+      "sha256": "14425EEF03F0C957B0B95EF1782EC8A41AB6CA39EDB6B419D62B3500AB81D3D8"
+    }
+  ],
+  "localCompilerOrTestExecuted": false,
+  "xerjNavigation": {
+    "executed": true,
+    "indexedFiles": 14,
+    "sourceBytesVerified": true,
+    "stoppedAfterQuery": true,
+    "listenerPortsClosed": true
+  },
+  "goldAccepted": false
+}
