@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2606_STATIC_IMPLEMENTED_HOSTED_PENDING",
+  "status": "W2606_WORKFLOW_CONTEXT_FIXED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 430462,
-    "sha256": "1634A3F2F4185CEE8D9930A144E17A374836F451BA90A35C9E1CDEFF415C30BD"
+    "bytes": 430466,
+    "sha256": "A5220AB3C4456C5106341D3ECB445F778EAB2741B0649D2334FDAD9E8B0E0BE2"
   },
   "sourceInputs": 2347,
   "requiredNativeTests": [
@@ -85066,6 +85066,32 @@
       }
     ],
     "note": "Independent prompt-only review approved exact-version hosted dependency candidate and custody gates; local Cargo.lock preserved; no runtime or Gold acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2606WorkflowContextFix": {
+    "base": "65e836a88bbfd5cb9a61e65df077dfff5a395b6b",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 30194,
+        "sha256": "8C0714AABD2A7BE958067F8A9308DFFD333302E6D104B196580614FC6FA67B4E",
+        "blob": "85bca16e280d30b0966f448f2e644436001b1121"
+      },
+      {
+        "path": "docs/verification/gold-wave2606-hosted-dependency-candidate.json",
+        "bytes": 3340,
+        "sha256": "EBE51559586AC2A89E02F78F464D87DFB888EC5587DDF7FF7C04E4D2A8DA2EFB",
+        "blob": "594ef06174b8d4c72fbed6d03eef9dfd71eb3817"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2655598,
+        "sha256": "C75398167BDBEF2957C83F50EAD4EB1B2C3A96F5E5EB3871D467ED9741F2FE57",
+        "blob": "4415073b9af878303ebc69794c3916b75f2b85ac"
+      }
+    ],
+    "note": "Observed GitHub workflow context error corrected by step-level RUNNER_TEMP initialization; no candidate execution or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

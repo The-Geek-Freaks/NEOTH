@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2606.hosted-dependency-candidate.v1",
-  "capturedUtc": "2026-10-21T06:56:26.2011690Z",
+  "capturedUtc": "2026-10-21T06:56:26.201169Z",
   "baseProducer": "7be2faecbee0013d60b50211fbf3ad9c8c669085",
   "workflow": ".github/workflows/security-dependency-lock-reconcile.yml",
   "mode": "october_2026",
@@ -73,5 +73,12 @@
   "localExecutableValidationRan": false,
   "fullSecurityAccepted": false,
   "goldCheckboxesClosed": 0,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "hostedWorkflowCorrection": {
+    "run": 39558942188,
+    "producer": "65e836a88bbfd5cb9a61e65df077dfff5a395b6b",
+    "diagnostic": "Line283: runner.temp is not available in job env context",
+    "repair": "Initialize PROOF from RUNNER_TEMP in the first executing step and propagate through GITHUB_ENV",
+    "candidateExecuted": false
+  }
 }

@@ -280,7 +280,6 @@ jobs:
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
       CARGO_BUILD_JOBS: 1
-      PROOF: ${{ runner.temp }}/october-security-patches
     steps:
       - name: Check out exact main source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -295,6 +294,8 @@ jobs:
           test "$EXPECTED_HEAD" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test -z "$(git status --porcelain --untracked-files=no)"
+          export PROOF="$RUNNER_TEMP/october-security-patches"
+          printf 'PROOF=%s\n' "$PROOF" >> "$GITHUB_ENV"
           mkdir -p "$PROOF"
           printf '%s\n' "$EXPECTED_HEAD" > "$PROOF/source-head.txt"
           printf '%s\n' "$GITHUB_RUN_ID" > "$PROOF/run-id.txt"
