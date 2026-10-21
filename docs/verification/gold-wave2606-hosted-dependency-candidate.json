@@ -1,0 +1,77 @@
+{
+  "schema": "neoth.wave2606.hosted-dependency-candidate.v1",
+  "capturedUtc": "2026-10-21T06:56:26.2011690Z",
+  "baseProducer": "7be2faecbee0013d60b50211fbf3ad9c8c669085",
+  "workflow": ".github/workflows/security-dependency-lock-reconcile.yml",
+  "mode": "october_2026",
+  "status": "IMPLEMENTED_STATIC_REVIEW_HOSTED_PENDING",
+  "observedSecurityRun": 39246153890,
+  "targetAdvisories": 14,
+  "targets": [
+    {
+      "from": "0.5.0",
+      "name": "negentropy",
+      "to": "0.5.2"
+    },
+    {
+      "from": "0.11.15",
+      "name": "quinn-proto",
+      "to": "0.11.18"
+    },
+    {
+      "from": "0.23.45",
+      "name": "rustls",
+      "to": "0.23.46"
+    },
+    {
+      "from": "36.0.16",
+      "name": "wasmtime",
+      "to": "36.0.18"
+    },
+    {
+      "from": "1.1.4",
+      "name": "zip",
+      "to": "9.0.0"
+    }
+  ],
+  "custody": [
+    "Exact main SHA, clean hosted checkout, run and attempt binding",
+    "Manifest exact preimages; baseline and expected postimage retained",
+    "Version-qualified precise target resolution; no whole-workspace update",
+    "Exact registry checksums and all package-entry deltas retained for Root review",
+    "Locked all-feature metadata twice; lock and metadata stability required",
+    "Unchanged audit/deny policies; no target advisory may be ignored",
+    "Audit database revision and timestamp retained; fourteen-day age bound",
+    "Remaining vulnerabilities and warnings retained; no full-security acceptance claim",
+    "License notices regenerated and checked against candidate dependency graph",
+    "Only manifest, lock and notices allowed in final HEAD-relative candidate patch",
+    "Candidate or failure evidence uploaded; no automatic import, commit, push or product build"
+  ],
+  "zipCompatibility": {
+    "provenance": "Registry archive SHA256 verified against crates.io version metadata",
+    "sourceInspected": [
+      "media/document.rs",
+      "updater/self_update.rs",
+      "tools/managed_browser.rs",
+      "cli/ingest.rs"
+    ],
+    "conclusion": "Used ZipArchive, SimpleFileOptions and bounded member-read interfaces fit the inspected ZIP9 source; compilation still required",
+    "runtimeAccepted": false
+  },
+  "remaining": [
+    "zvariant and zvariant_derive require parent dependency migration to the maintained upstream line",
+    "Candidate resolver, notices and advisory results not yet run",
+    "Package delta requires independent Root admission before import",
+    "Affected Rust compilation and behavior tests remain required",
+    "CodeQL Rust analysis did not complete in the observed security run",
+    "Full, interop, native, device and release acceptance remain separate"
+  ],
+  "protectedWip": {
+    "SRC/Cargo.lock": "5F274ACA1AD7148414803ADFD6034BAD7F083B915BC8177D8319332AA683CE52",
+    ".gitignore": "338772D422D97241514BD764BEE748AE92FD9D9B2E1866299EB404CE43E59591"
+  },
+  "localExecutableValidationRan": false,
+  "fullSecurityAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "goldAccepted": false
+}

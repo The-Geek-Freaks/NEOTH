@@ -7,6 +7,11 @@ on:
         description: Exact main commit to reconcile
         required: true
         type: string
+      october_2026:
+        description: Prepare October security patches without product compilation
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,7 +22,7 @@ concurrency:
 
 jobs:
   reconcile:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.october_2026
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -214,7 +219,7 @@ jobs:
           retention-days: 14
 
   vendored-imbl-tests:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.october_2026
     needs: reconcile
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -267,3 +272,258 @@ jobs:
           CARGO_TARGET_DIR="$RUNNER_TEMP/imbl-target" cargo test --manifest-path "$test_root/Cargo.toml"
           CARGO_TARGET_DIR="$RUNNER_TEMP/imbl-target" cargo test --manifest-path "$test_root/Cargo.toml" --all-features
           git diff --exit-code -- SRC/vendor/imbl
+
+  october-security-patches:
+    if: github.ref == 'refs/heads/main' && inputs.october_2026
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+      PROOF: ${{ runner.temp }}/october-security-patches
+    steps:
+      - name: Check out exact main source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Bind baseline and preserve failure evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p "$PROOF"
+          printf '%s\n' "$EXPECTED_HEAD" > "$PROOF/source-head.txt"
+          printf '%s\n' "$GITHUB_RUN_ID" > "$PROOF/run-id.txt"
+          printf '%s\n' "$GITHUB_RUN_ATTEMPT" > "$PROOF/run-attempt.txt"
+          printf '%s\n' 'DIAGNOSTIC_ONLY_UNTIL_CANDIDATE_RECEIPT' > "$PROOF/STATUS.txt"
+          cp SRC/Cargo.lock "$PROOF/baseline-Cargo.lock"
+          cp SRC/neothd/Cargo.toml "$PROOF/baseline-neothd-Cargo.toml"
+          sha256sum SRC/.cargo/audit.toml SRC/deny.toml > "$PROOF/unchanged-policy.SHA256SUMS"
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Verify existing vendor source custody
+        run: |
+          python3 packaging/arrayref_provenance_gate.py
+          python3 packaging/imbl_provenance_gate.py --source-only
+      - name: Prepare only the two reviewed manifest requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          baseline = tomllib.loads((proof / "baseline-Cargo.lock").read_text())
+          for name, version in (("negentropy", "0.5.0"), ("quinn-proto", "0.11.15"), ("rustls", "0.23.45"), ("wasmtime", "36.0.16"), ("zip", "1.1.4")):
+              rows = [p for p in baseline["package"] if p["name"] == name]
+              if len(rows) != 1 or rows[0]["version"] != version:
+                  raise SystemExit(f"Baseline target absent or ambiguous: {name}@{version}")
+          path = Path("SRC/neothd/Cargo.toml")
+          source = path.read_text(encoding="utf-8")
+          for before, after in (
+              ('zip     = { version = "1", default-features = false, features = ["deflate"] }',
+               'zip     = { version = "=9.0.0", default-features = false, features = ["deflate"] }'),
+              ('wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }',
+               'wasmtime = { version = "=36.0.18", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
+          ):
+              if source.count(before) != 1:
+                  raise SystemExit("Reviewed manifest preimage absent or ambiguous")
+              source = source.replace(before, after)
+          path.write_text(source, encoding="utf-8", newline="\n")
+          (Path(os.environ["PROOF"]) / "manifest.expected-after.toml").write_bytes(path.read_bytes())
+          PY
+      - name: Resolve only the five exact patch targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, subprocess, tomllib
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          targets = (
+              ("negentropy", "0.5.0", "0.5.2"),
+              ("quinn-proto", "0.11.15", "0.11.18"),
+              ("rustls", "0.23.45", "0.23.46"),
+              ("wasmtime", "36.0.16", "36.0.18"),
+              ("zip", "1.1.4", "9.0.0"),
+          )
+          for name, before, after in targets:
+              lock = tomllib.loads(Path("SRC/Cargo.lock").read_text())
+              rows = [p for p in lock["package"] if p["name"] == name]
+              if len(rows) != 1 or rows[0]["version"] not in (before, after):
+                  raise SystemExit(f"Current target absent, ambiguous or unreviewed: {name}")
+              # Earlier resolution may already satisfy an exact manifest edit.
+              selector = f'{name}@{rows[0]["version"]}'
+              with (proof / f"resolve-{name}.log").open("w") as log:
+                  result = subprocess.run(
+                      ["cargo", "update", "--manifest-path", "SRC/Cargo.toml",
+                       "-p", selector, "--precise", after],
+                      stdout=log, stderr=subprocess.STDOUT,
+                  )
+              if result.returncode:
+                  raise SystemExit(f"Precise resolution failed: {selector}; see artifact log")
+          PY
+          cp SRC/Cargo.lock "$PROOF/Cargo.lock"
+          sha256sum SRC/Cargo.lock > "$PROOF/resolved-lock.SHA256SUMS"
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-1.json"
+          sha256sum -c "$PROOF/resolved-lock.SHA256SUMS"
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-2.json"
+          sha256sum -c "$PROOF/resolved-lock.SHA256SUMS"
+      - name: Prove exact versions and retain every package delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess, tomllib
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          baseline = tomllib.loads((proof / "baseline-Cargo.lock").read_text())
+          candidate = tomllib.loads((proof / "Cargo.lock").read_text())
+          targets = {
+              "negentropy": ("0.5.2", "a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec"),
+              "quinn-proto": ("0.11.18", "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"),
+              "rustls": ("0.23.46", "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"),
+              "wasmtime": ("36.0.18", "70095b9fe63cc2a87ed206729e11544610decc184c62898c5d201ff1d666d82e"),
+              "zip": ("9.0.0", "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e"),
+          }
+          registry = "registry+https://github.com/rust-lang/crates.io-index"
+          for name, (version, checksum) in targets.items():
+              rows = [p for p in candidate["package"] if p["name"] == name]
+              if len(rows) != 1 or rows[0]["version"] != version or rows[0].get("source") != registry or rows[0].get("checksum") != checksum:
+                  raise SystemExit(f"Unexpected exact package or provenance: {name}")
+          def keyed(packages):
+              result = {(p["name"], p["version"], p.get("source")): p for p in packages}
+              if len(result) != len(packages):
+                  raise SystemExit("Duplicate package identity")
+              return result
+          old, new = keyed(baseline["package"]), keyed(candidate["package"])
+          added = [p for key, p in new.items() if key not in old]
+          removed = [p for key, p in old.items() if key not in new]
+          changed = [{"before": old[key], "after": p} for key, p in new.items() if key in old and old[key] != p]
+          for package in added:
+              if package.get("source") != registry or not package.get("checksum"):
+                  raise SystemExit("New package has unreviewed non-registry provenance")
+          for change in changed:
+              if change["before"].get("checksum") != change["after"].get("checksum"):
+                  raise SystemExit("Checksum drift for unchanged package identity")
+          for package in removed:
+              if package.get("source") != registry:
+                  raise SystemExit("Existing local or Git dependency unexpectedly removed")
+          first = json.loads((proof / "metadata-1.json").read_text())
+          second = json.loads((proof / "metadata-2.json").read_text())
+          if first != second:
+              raise SystemExit("Locked metadata changed between resolutions")
+          for name, (version, _) in targets.items():
+              if [p["version"] for p in first["packages"] if p["name"] == name] != [version]:
+                  raise SystemExit(f"Exact target missing or duplicated in metadata: {name}")
+          if any(p["name"] in {"rsa", "bitmaps"} for p in first["packages"]):
+              raise SystemExit("Previously removed dependency reintroduced")
+          if Path("SRC/neothd/Cargo.toml").read_bytes() != (proof / "manifest.expected-after.toml").read_bytes():
+              raise SystemExit("Manifest drift after exact edit")
+          paths = set(subprocess.check_output(["git", "diff", "HEAD", "--name-only"], text=True).splitlines())
+          if paths != {"SRC/Cargo.lock", "SRC/neothd/Cargo.toml"}:
+              raise SystemExit(f"Unexpected candidate paths: {paths}")
+          delta = {"semantics": "lossless package-entry delta; upgrades appear as removed plus added", "added": added, "removed": removed, "changed": changed, "rootDeltaReviewRequired": True}
+          (proof / "package-delta.json").write_text(json.dumps(delta, indent=2) + "\n")
+          (proof / "metadata-normalized.sha256").write_text(hashlib.sha256(json.dumps(first, sort_keys=True, separators=(",", ":")).encode()).hexdigest() + "\n")
+          PY
+          sha256sum -c "$PROOF/unchanged-policy.SHA256SUMS"
+      - name: Install the pinned audit tool
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Require targeted advisories absent and retain remaining findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, json, os, re, subprocess
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          result = subprocess.run(["cargo", "audit", "--json"], cwd="SRC", capture_output=True, text=True)
+          (proof / "audit.json").write_text(result.stdout)
+          (proof / "audit.stderr.txt").write_text(result.stderr)
+          if result.returncode not in (0, 1):
+              raise SystemExit("Audit execution failed")
+          audit = json.loads(result.stdout)
+          findings = audit["vulnerabilities"]["list"]
+          expected_ids = {
+              "RUSTSEC-2026-0365", "RUSTSEC-2026-0341", "RUSTSEC-2026-0339",
+              "RUSTSEC-2026-0342", "RUSTSEC-2026-0340", "RUSTSEC-2026-0338",
+              "RUSTSEC-2026-0347", "RUSTSEC-2026-0348", "RUSTSEC-2026-0349",
+              "RUSTSEC-2026-0346", "RUSTSEC-2026-0363", "RUSTSEC-2026-0369",
+              "RUSTSEC-2026-0367", "RUSTSEC-2026-0368",
+          }
+          if len(expected_ids) != 14:
+              raise SystemExit("Expected exactly fourteen unique targeted advisory IDs")
+          (proof / "target-advisories.json").write_text(json.dumps(sorted(expected_ids), indent=2) + "\n")
+          if any(item["advisory"]["id"] in expected_ids for item in findings):
+              raise SystemExit("A targeted advisory remains")
+          if not isinstance(audit.get("database"), dict) or not isinstance(audit.get("warnings"), dict):
+              raise SystemExit("Incomplete audit result")
+          ignored = audit["settings"]["ignore"]
+          if not isinstance(ignored, list) or expected_ids.intersection(ignored):
+              raise SystemExit("Targeted advisory was ignored")
+          database = audit["database"]
+          revision = database.get("last-commit", "")
+          updated = datetime.datetime.fromisoformat(database["last-updated"])
+          now = datetime.datetime.now(datetime.timezone.utc)
+          if not re.fullmatch(r"[0-9a-f]{40}", revision) or updated.utcoffset() is None:
+              raise SystemExit("Audit database provenance missing")
+          age_seconds = (now - updated).total_seconds()
+          if not -300 <= age_seconds <= 14 * 24 * 60 * 60:
+              raise SystemExit("Audit database outside the 14-day freshness bound")
+          (proof / "audit-database.json").write_text(json.dumps({
+              "database": database, "checkedUtc": now.isoformat(),
+              "maxAgeDays": 14, "ageSeconds": age_seconds,
+              "fetchDiagnostics": "audit.stderr.txt",
+          }, indent=2) + "\n")
+          remaining = {"exitCode": result.returncode, "database": database, "vulnerabilities": findings, "warnings": audit["warnings"], "fullSecurityAccepted": False}
+          (proof / "remaining-findings.json").write_text(json.dumps(remaining, indent=2) + "\n")
+          PY
+      - name: Generate and verify notices for this candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/generate_rust_notices.py --write 2>&1 | tee "$PROOF/notices-write.log"
+          python3 packaging/generate_rust_notices.py --check 2>&1 | tee "$PROOF/notices-check.log"
+          sha256sum -c "$PROOF/resolved-lock.SHA256SUMS"
+          sha256sum -c "$PROOF/unchanged-policy.SHA256SUMS"
+          cp THIRD_PARTY_LICENSES "$PROOF/THIRD_PARTY_LICENSES"
+      - name: Seal review-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          paths = set(subprocess.check_output(["git", "diff", "HEAD", "--name-only"], text=True).splitlines())
+          if not {"SRC/Cargo.lock", "SRC/neothd/Cargo.toml"} <= paths <= {"SRC/Cargo.lock", "SRC/neothd/Cargo.toml", "THIRD_PARTY_LICENSES"}:
+              raise SystemExit(f"Unexpected final paths: {paths}")
+          receipt = {
+              "producer": os.environ["EXPECTED_HEAD"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "ROOT_REVIEW_REQUIRED",
+              "targetAdvisoriesRemoved": 14, "productCompiled": False,
+              "productTestsRun": False, "fullSecurityAccepted": False, "goldAccepted": False,
+          }
+          (proof / "candidate.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          (proof / "STATUS.txt").write_text("ROOT_REVIEW_REQUIRED_NO_PRODUCT_BUILD\n")
+          (proof / "candidate.patch").write_bytes(subprocess.check_output(["git", "diff", "HEAD", "--binary", "--full-index", "--", "SRC/Cargo.lock", "SRC/neothd/Cargo.toml", "THIRD_PARTY_LICENSES"]))
+          hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(proof.iterdir()) if p.is_file() and p.name != "artifact-hashes.json"}
+          (proof / "artifact-hashes.json").write_text(json.dumps(hashes, indent=2) + "\n")
+          PY
+      - name: Retain original candidate or diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: october-security-patches-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.PROOF }}
+          if-no-files-found: error
+          retention-days: 14

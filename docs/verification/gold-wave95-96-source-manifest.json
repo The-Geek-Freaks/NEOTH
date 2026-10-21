@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-21T05:52:55.2592907Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-21T06:57:04.2239485Z",
+  "validationStatus": "W2606_STATIC_IMPLEMENTED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -318,8 +318,8 @@
     },
     {
       "path": ".github/workflows/security-dependency-lock-reconcile.yml",
-      "bytes": 14623,
-      "sha256": "833DB70ACE90D1F3ED8B8784AE311B8E3A355D4C6B2D611AB00DA74DBCED99F9"
+      "bytes": 30132,
+      "sha256": "1B54DBCFDF13631F04E68523AC2CD6C4601921AF24A09455980B527DCEC4DEC8"
     },
     {
       "path": ".github/workflows/security.yml",
@@ -4552,6 +4552,11 @@
       "sha256": "E3BADEDEBC47401BCE6AA392DC25153B9340062049BDC220BBE0C0E628A9EB05"
     },
     {
+      "path": "docs/verification/gold-wave2606-hosted-dependency-candidate.json",
+      "bytes": 2999,
+      "sha256": "41CFB1A065CA573BBC23560BFE3D70D5DE12C734BCFC06DC224345035A436D05"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5728,8 +5733,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2653451,
-      "sha256": "39530BEC017590D2148751CFD5CCBCAB6AE0A0F4B6DD69D32D491380CCE63EAC"
+      "bytes": 2655189,
+      "sha256": "1B19CD90937873F41B167A13E08337D395F96C07FFE47AE824C95ED4ACAEF7E1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
