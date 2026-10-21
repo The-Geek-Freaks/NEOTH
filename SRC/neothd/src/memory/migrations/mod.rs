@@ -360,7 +360,32 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A03: retain validated source-level DOCX structure",
         run: migration_v48_to_v49,
     },
+    Migration {
+        from: 49,
+        to: 50,
+        description: "A03: explicit logical document revisions and purge-safe replay",
+        run: migration_v49_to_v50,
+    },
 ];
+
+pub(crate) fn migration_v49_to_v50(conn: &Connection) -> Result<()> {
+    for name in ["ctx_logical_state", "logical_documents", "logical_document_events",
+        "sources_logical_identity", "logical_document_events_owner"] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1)", [name], |row| row.get(0),
+        )?;
+        ensure!(!exists, "v49→v50: conflicting logical lifecycle object {name}");
+    }
+    conn.execute_batch(
+        "ALTER TABLE sources ADD COLUMN logical_id TEXT REFERENCES logical_documents(logical_id)
+             DEFERRABLE INITIALLY DEFERRED;
+         ALTER TABLE sources ADD COLUMN logical_revision TEXT
+             CHECK((logical_id IS NULL AND logical_revision IS NULL)
+                 OR (logical_id IS NOT NULL AND logical_revision IS NOT NULL));",
+    )?;
+    conn.execute_batch(crate::memory::ctx::logical::SCHEMA_SQL)
+        .context("v49→v50: explicit logical document lifecycle")
+}
 
 pub(crate) fn migration_v48_to_v49(conn: &Connection) -> Result<()> {
     conn.execute_batch("ALTER TABLE sources ADD COLUMN document_structure_json TEXT;")
@@ -2616,6 +2641,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let fresh = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        crate::memory::ctx::logical::remove_schema_for_legacy_fixture(&fresh).unwrap();
         let mut migrated = legacy_document_sources();
         migrate(&mut migrated, 46, 47).unwrap();
         assert_eq!(shape(&fresh), shape(&migrated));
@@ -2644,6 +2670,7 @@ mod tests {
         assert_eq!(retained, ("legacy".into(), "retained-hash".into(), true));
         let dir = tempfile::tempdir().unwrap();
         let fresh = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        crate::memory::ctx::logical::remove_schema_for_legacy_fixture(&fresh).unwrap();
         let shape = |db: &Connection| {
             let mut stmt = db.prepare("PRAGMA table_info(sources)").unwrap();
             stmt.query_map([], |row| {
@@ -2690,6 +2717,88 @@ mod tests {
             .unwrap();
         assert!(migrate(&mut collision, 48, 49).is_err());
         assert_eq!(current_version(&collision).unwrap(), 48);
+    }
+    fn v49_logical_fixture() -> Connection {
+        let mut conn = v48_source_fixture();
+        migrate(&mut conn, 48, 49).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn
+    }
+
+    fn logical_source_shape(conn: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
+        let mut stmt = conn.prepare("PRAGMA table_info(sources)").unwrap();
+        stmt.query_map([], |row| (0..6).map(|column| row.get(column))
+            .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>())
+            .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    }
+
+    #[test]
+    fn v49_to_v50_preserves_unbound_sources_and_matches_fresh_logical_contract() {
+        let mut conn = v49_logical_fixture();
+        assert_eq!(migrate(&mut conn, 49, 50).unwrap(), 50);
+        let retained: (String, String, bool) = conn.query_row(
+            "SELECT label,content_hash,logical_id IS NULL AND logical_revision IS NULL FROM sources",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(retained, ("legacy".into(), "retained-hash".into(), true));
+        assert_eq!(crate::memory::ctx::logical::epoch(&conn).unwrap(), 0);
+        for table in ["logical_documents", "logical_document_events"] {
+            assert_eq!(conn.query_row(&format!("SELECT count(*) FROM {table}"), [],
+                |row| row.get::<_, i64>(0)).unwrap(), 0);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        assert_eq!(logical_source_shape(&conn), logical_source_shape(&fresh));
+        assert!(conn.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+        assert_eq!(migrate(&mut conn, 50, 50).unwrap(), 50);
+    }
+
+    #[test]
+    fn v49_to_v50_version_failure_rolls_back_columns_objects_and_retries() {
+        let mut conn = v49_logical_fixture();
+        let before = logical_source_shape(&conn);
+        conn.execute_batch(
+            "CREATE TRIGGER reject_logical_version BEFORE INSERT ON meta
+             WHEN NEW.key='schema_version' AND NEW.value='50'
+             BEGIN SELECT RAISE(ABORT,'injected logical version failure'); END;"
+        ).unwrap();
+        assert!(migrate(&mut conn, 49, 50).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 49);
+        assert_eq!(logical_source_shape(&conn), before);
+        assert!(conn.prepare("SELECT epoch FROM ctx_logical_state").is_err());
+        assert!(conn.prepare("SELECT * FROM logical_documents").is_err());
+        assert!(conn.prepare("SELECT * FROM logical_document_events").is_err());
+        assert_eq!(conn.query_row("SELECT content_hash FROM sources WHERE label='legacy'", [],
+            |row| row.get::<_, String>(0)).unwrap(), "retained-hash");
+        conn.execute_batch("DROP TRIGGER reject_logical_version").unwrap();
+        assert_eq!(migrate(&mut conn, 49, 50).unwrap(), 50);
+    }
+
+    #[test]
+    fn v49_to_v50_rejects_missing_owner_columns_and_schema_object_collisions() {
+        let mut missing = open_with_meta(49);
+        assert!(migrate(&mut missing, 49, 50).is_err());
+        assert_eq!(current_version(&missing).unwrap(), 49);
+        for column in ["logical_id", "logical_revision"] {
+            let mut conn = v49_logical_fixture();
+            conn.execute_batch(&format!("ALTER TABLE sources ADD COLUMN {column} TEXT;")).unwrap();
+            let before = logical_source_shape(&conn);
+            assert!(migrate(&mut conn, 49, 50).is_err());
+            assert_eq!(logical_source_shape(&conn), before);
+            assert_eq!(current_version(&conn).unwrap(), 49);
+            assert!(conn.prepare("SELECT epoch FROM ctx_logical_state").is_err());
+        }
+        for object in ["ctx_logical_state", "logical_documents", "logical_document_events",
+            "sources_logical_identity", "logical_document_events_owner"] {
+            let mut conn = v49_logical_fixture();
+            conn.execute_batch(&format!("CREATE VIEW {object} AS SELECT 17 AS retained;")).unwrap();
+            let before = logical_source_shape(&conn);
+            assert!(migrate(&mut conn, 49, 50).is_err());
+            assert_eq!(logical_source_shape(&conn), before);
+            assert_eq!(current_version(&conn).unwrap(), 49);
+            assert_eq!(conn.query_row(&format!("SELECT retained FROM {object}"), [],
+                |row| row.get::<_, i64>(0)).unwrap(), 17);
+        }
     }
     fn open_v36_transcript_mining_db() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -5593,6 +5702,7 @@ mod tests {
         )
         .unwrap();
         crate::memory::embeddings::upsert(&conn, "episode", "88", "pre-v43-local", &[1.0]).unwrap();
+        crate::memory::ctx::logical::remove_schema_for_legacy_fixture(&conn).unwrap();
         conn.execute_batch(
             "INSERT INTO idx_episode_origin_v2 \
                 (raw_event_id,origin_kind,origin_event_id,raw_payload_hash,channel_id,account_id,scoped_sender_hash) \

@@ -138,7 +138,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v47: optional source-bound document extraction provenance for ctx search.
 /// v48: fuzzy vocabulary rebuilt from canonical chunks and maintained on deletion.
 /// v49: optional bounded DOCX source structure stored with document provenance.
-pub const SCHEMA_VERSION: i64 = 49;
+/// v50: explicit logical-document revisions, event receipts and purge epochs.
+pub const SCHEMA_VERSION: i64 = 50;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2170,7 +2171,10 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             document_text_bytes INTEGER,
             document_text_encoding TEXT,
             document_text_truncated INTEGER,
-            document_structure_json TEXT
+            document_structure_json TEXT,
+            logical_id TEXT REFERENCES logical_documents(logical_id) DEFERRABLE INITIALLY DEFERRED,
+            logical_revision TEXT CHECK((logical_id IS NULL AND logical_revision IS NULL)
+                OR (logical_id IS NOT NULL AND logical_revision IS NOT NULL))
         );
 
         CREATE INDEX IF NOT EXISTS sources_indexed_ts ON sources (indexed_ts DESC);
@@ -3059,6 +3063,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(crate::memory::document_claims::DOCUMENT_CLAIM_SCHEMA_SQL)
         .context("create W848 document-claim applied-once ledger")?;
 
+    conn.execute_batch(crate::memory::ctx::logical::SCHEMA_SQL)
+        .context("create A03 logical-document lifecycle" )?;
+
     // Stamp schema version (idempotent).
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -3631,6 +3638,9 @@ mod tests {
         // object, but neither W209 challenge table.  Stamping an older version
         // on a current schema leaves later tables behind and makes migration
         // fail before this test can exercise the final no-follow rebind.
+        if SCHEMA_VERSION >= 50 {
+            crate::memory::ctx::logical::remove_schema_for_legacy_fixture(&legacy).unwrap();
+        }
         if SCHEMA_VERSION >= 49 {
             legacy
                 .execute_batch("ALTER TABLE sources DROP COLUMN document_structure_json;")

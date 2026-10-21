@@ -794,6 +794,7 @@ mod tests {
         .unwrap();
         crate::memory::embeddings::upsert(&conn, "episode", "77", "pre-v42-local", &[1.0]).unwrap();
 
+        crate::memory::ctx::logical::remove_schema_for_legacy_fixture(&conn).unwrap();
         // Build a faithful v41 fixture from the otherwise fresh schema: the
         // historic episode/vector survive, while all v42-only state is absent.
         conn.execute_batch(

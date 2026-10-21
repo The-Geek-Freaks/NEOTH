@@ -121,3 +121,24 @@ therefore preserves per-chunk counts. The vocabulary is a derived index, not a
 second document authority; missing, invalid or exhausted counts abort a mutation.
 The migration requires its caller's transaction and rolls back both vocabulary
 and version on failure. Normal edits read only affected source chunks.
+
+## Explicit logical documents (schema v50)
+
+ctx/logical.rs owns explicit registration, content revision and metadata rename
+inside the existing ctx transaction. ctx/logical_request.rs validates the strict,
+bounded request and hashes its canonical semantics. A logical ID points to one
+current physical source. Event receipts retain historical results; a replay says
+whether that event is still current. Rename preserves content/revision and updates
+both FTS paths. It changes indexed metadata, never a file on disk.
+
+Revision requires the expected source ID, revision and current event. Ordinary
+label-based replacement refuses a source bound to a logical ID. Successful purge
+removes the owner and its receipts with the source and advances the global request
+epoch. Empty purge leaves the epoch unchanged. An old request therefore cannot
+recreate a removed document. The epoch is a stale-request guard, not permission.
+
+cli/ctx.rs exposes request-file/stdin, status and epoch modes. Request decoding and
+status-ID validation precede database opening. Legacy stores remain unbound during
+v49-to-v50 migration. [CLI usage](../CTX_LOGICAL_DOCUMENTS.md) describes the wire
+format and replay boundaries. The B7 claim ledger and provider consent owners are
+unchanged.

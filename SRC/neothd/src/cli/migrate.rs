@@ -999,6 +999,12 @@ mod tests {
             migrations::current_version(&c).unwrap(),
             store::SCHEMA_VERSION,
         );
+        assert_eq!(crate::memory::ctx::logical::epoch(&c).unwrap(), 0);
+        assert!(crate::memory::ctx::logical::status(&c, "unregistered").unwrap().is_none());
+        for table in ["logical_documents", "logical_document_events"] {
+            assert_eq!(c.query_row(&format!("SELECT count(*) FROM {table}"), [],
+                |row| row.get::<_, i64>(0)).unwrap(), 0);
+        }
     }
 
     #[tokio::test]

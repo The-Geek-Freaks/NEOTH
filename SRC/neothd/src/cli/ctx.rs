@@ -12,9 +12,9 @@
 //!
 //! Output respects the global `--output` flag (table / json / jsonl).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Args;
 use tracing::info;
 
@@ -26,6 +26,17 @@ use crate::memory::store;
 
 #[derive(Args, Debug, Clone)]
 pub struct CtxArgs {
+    /// Apply an explicit logical-document JSON request. Use "-" for stdin.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["logical_status", "logical_epoch", "search", "index", "index_stdin", "stats", "doctor", "purge", "retrieve", "savings", "label", "category", "all", "content_type", "limit"])]
+    pub logical_request: Option<PathBuf>,
+
+    /// Inspect one logical document's current source, revision and event.
+    #[arg(long, value_name = "ID", conflicts_with_all = ["logical_request", "logical_epoch", "search", "index", "index_stdin", "stats", "doctor", "purge", "retrieve", "savings", "label", "category", "all", "content_type", "limit"])]
+    pub logical_status: Option<String>,
+
+    /// Read the current logical-document request epoch.
+    #[arg(long, conflicts_with_all = ["logical_request", "logical_status", "search", "index", "index_stdin", "stats", "doctor", "purge", "retrieve", "savings", "label", "category", "all", "content_type", "limit"])]
+    pub logical_epoch: bool,
     /// Run a hybrid search and print hits.
     #[arg(long, value_name = "QUERY", conflicts_with_all = ["index", "index_stdin", "stats", "doctor", "purge"])]
     pub search: Option<String>,
@@ -88,6 +99,10 @@ pub struct CtxArgs {
 }
 
 pub async fn run_ctx(args: CtxArgs) -> Result<()> {
+    if args.logical_request.is_some() || args.logical_status.is_some() || args.logical_epoch {
+        println!("{}", run_logical_mode(&args, &store::default_path()).await?);
+        return Ok(());
+    }
     // GOLD-HR-10 — CCR retrieval + savings don't touch the views DB; handle
     // them first so they work even before any `ctx` indexing has happened.
     if let Some(key) = &args.retrieve {
@@ -218,10 +233,70 @@ pub async fn run_ctx(args: CtxArgs) -> Result<()> {
     }
 
     anyhow::bail!(
-        "ctx: pick one of --search / --index / --index-stdin / --stats / --doctor / --purge"
+        "ctx: pick one of --search / --index / --index-stdin / --stats / --doctor / --purge / --logical-request / --logical-status / --logical-epoch"
     );
 }
 
+async fn read_logical_request<R: tokio::io::AsyncRead + Unpin>(reader: R) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    reader.take(ctx::logical::MAX_REQUEST_BYTES as u64 + 1).read_to_end(&mut bytes).await?;
+    ensure!(bytes.len() <= ctx::logical::MAX_REQUEST_BYTES, "logical request exceeds 10 MiB");
+    ctx::logical::validate_request(&bytes)?;
+    Ok(bytes)
+}
+
+async fn run_logical_mode(args: &CtxArgs, store_path: &Path) -> Result<String> {
+    if let Some(path) = &args.logical_request {
+        let bytes = if path == Path::new("-") {
+            read_logical_request(tokio::io::stdin()).await?
+        } else {
+            let file = tokio::fs::File::open(path).await
+                .with_context(|| format!("read logical request {}", path.display()))?;
+            read_logical_request(file).await?
+        };
+        // No store creation or migration until the complete request passes preflight.
+        let mut conn = store::open(store_path)?;
+        let report = ctx::logical::apply(&mut conn, &bytes)?;
+        let table = format!(
+            "{} {}: source {}, revision {}, event {} (replayed={}, current={})",
+            report.action, report.logical_document_id, report.source_id,
+            report.content_revision_id, report.logical_event_id,
+            report.replayed, report.is_current,
+        );
+        return render_logical(&report, args.output, &table);
+    }
+    if let Some(identity) = &args.logical_status {
+        ctx::logical::validate_identity(identity)?;
+        let conn = store::open(store_path)?;
+        return match ctx::logical::status(&conn, identity)? {
+            Some(status) => {
+                let table = format!(
+                    "{}: source {}, revision {}, event {}, epoch {}",
+                    status.logical_document_id, status.source_id, status.content_revision_id,
+                    status.current_event_id, status.authorization_epoch,
+                );
+                render_logical(&status, args.output, &table)
+            }
+            None => render_logical(
+                &serde_json::json!({"logical_document_id": identity, "found": false}),
+                args.output, &format!("logical document {identity}: not found"),
+            ),
+        };
+    }
+    ensure!(args.logical_epoch, "missing logical ctx action");
+    let conn = store::open(store_path)?;
+    let epoch = ctx::logical::epoch(&conn)?;
+    render_logical(&serde_json::json!({"epoch": epoch}), args.output, &format!("epoch: {epoch}"))
+}
+
+fn render_logical<T: serde::Serialize>(value: &T, output: OutputFormat, table: &str) -> Result<String> {
+    match output {
+        OutputFormat::Json => Ok(serde_json::to_string_pretty(value)?),
+        OutputFormat::Jsonl => Ok(serde_json::to_string(value)?),
+        OutputFormat::Table => Ok(table.to_owned()),
+    }
+}
 fn render_hits(hits: &[CtxHit], output: OutputFormat) {
     match output {
         OutputFormat::Json => {
@@ -315,5 +390,126 @@ fn render_doctor(d: &CtxDoctor, output: OutputFormat) {
                 d.trigram_tokenizer_available
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod logical_tests {
+    use super::*;
+    use clap::Parser;
+    use serde_json::{Value, json};
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        ctx: CtxArgs,
+    }
+
+    fn args(words: &[&str]) -> CtxArgs {
+        TestCli::try_parse_from(std::iter::once("ctx").chain(words.iter().copied())).unwrap().ctx
+    }
+
+    fn request() -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "action": "register", "logical_document_id": "doc-1",
+            "logical_event_id": "register-1", "authorization_epoch": 0,
+            "index": {"label": "manual", "content": "retained document body"}
+        })).unwrap()
+    }
+
+    #[test]
+    fn logical_cli_actions_allow_defaults_and_reject_explicit_conflicts() {
+        let actions: [&[&str]; 3] = [
+            &["--logical-request", "-"], &["--logical-status", "doc-1"], &["--logical-epoch"],
+        ];
+        let conflicts: [&[&str]; 14] = [
+            &["--search", "query"], &["--index", "file"], &["--index-stdin"],
+            &["--stats"], &["--doctor"], &["--purge"], &["--retrieve", "key"],
+            &["--savings"], &["--label", "name"], &["--category", "docs"],
+            &["--all"], &["--content-type", "prose"], &["--limit", "20"],
+            &["--content-type", "code"],
+        ];
+        for action in actions {
+            let parsed = args(action);
+            assert_eq!(parsed.content_type, "prose");
+            assert_eq!(parsed.limit, 20);
+            for conflict in conflicts {
+                let argv = std::iter::once("ctx").chain(action.iter().copied())
+                    .chain(conflict.iter().copied());
+                assert!(TestCli::try_parse_from(argv).is_err(), "{action:?} {conflict:?}");
+            }
+        }
+        for left in 0..actions.len() {
+            for right in left + 1..actions.len() {
+                let argv = std::iter::once("ctx").chain(actions[left].iter().copied())
+                    .chain(actions[right].iter().copied());
+                assert!(TestCli::try_parse_from(argv).is_err());
+            }
+        }
+        assert_eq!(args(&["--logical-request", "-"]).logical_request, Some(PathBuf::from("-")));
+    }
+
+    #[tokio::test]
+    async fn logical_cli_stream_limit_accepts_exact_boundary_and_rejects_one_extra_byte() {
+        let mut exact = request();
+        exact.resize(ctx::logical::MAX_REQUEST_BYTES, b' ');
+        assert_eq!(read_logical_request(exact.as_slice()).await.unwrap(), exact);
+        exact.push(b' ');
+        let error = read_logical_request(exact.as_slice()).await.unwrap_err().to_string();
+        assert!(error.contains("10 MiB"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn logical_cli_invalid_requests_and_identities_never_open_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("untouched").join("views.db");
+        let file = dir.path().join("request.json");
+        let mut selected = args(&["--logical-request", "placeholder"]);
+        selected.logical_request = Some(file.clone());
+        for bytes in [b"{bad".as_slice(), br#"{"action":"register","unexpected":true}"#.as_slice()] {
+            std::fs::write(&file, bytes).unwrap();
+            assert!(run_logical_mode(&selected, &db).await.is_err());
+            assert!(!db.parent().unwrap().exists());
+        }
+        let selected = args(&["--logical-status", "invalid identity"]);
+        assert!(run_logical_mode(&selected, &db).await.is_err());
+        assert!(!db.parent().unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn logical_cli_file_request_status_epoch_and_replay_share_one_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let file = dir.path().join("request.json");
+        std::fs::write(&file, request()).unwrap();
+        let mut selected = args(&["--logical-request", "placeholder"]);
+        selected.logical_request = Some(file);
+        selected.output = OutputFormat::Jsonl;
+        let first = run_logical_mode(&selected, &db).await.unwrap();
+        assert_eq!(first.lines().count(), 1);
+        let first: Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(first["replayed"], false);
+        assert!(first["raw_container_sha256"].is_null());
+        let replay: Value = serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["source_id"], first["source_id"]);
+
+        let mut selected = args(&["--logical-status", "doc-1"]);
+        selected.output = OutputFormat::Json;
+        let status: Value = serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
+        assert_eq!(status["current_event_id"], "register-1");
+        assert_eq!(status["source_id"], first["source_id"]);
+        selected.logical_status = Some("absent".into());
+        selected.output = OutputFormat::Jsonl;
+        let missing = run_logical_mode(&selected, &db).await.unwrap();
+        assert_eq!(missing.lines().count(), 1);
+        assert_eq!(serde_json::from_str::<Value>(&missing).unwrap(),
+            json!({"logical_document_id":"absent","found":false}));
+        selected.output = OutputFormat::Table;
+        assert_eq!(run_logical_mode(&selected, &db).await.unwrap(), "logical document absent: not found");
+
+        let mut selected = args(&["--logical-epoch"]);
+        selected.output = OutputFormat::Jsonl;
+        assert_eq!(run_logical_mode(&selected, &db).await.unwrap(), r#"{"epoch":0}"#);
     }
 }

@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use super::document_provenance::DocumentProvenance;
 
+pub mod logical;
+mod logical_request;
+
 /// Max bytes per chunk. Synthesis tech-pin: 4 KiB. Larger sections are
 /// split at paragraph boundaries before that cap.
 const CHUNK_BYTE_CAP: usize = 4 * 1024;
@@ -118,6 +121,14 @@ pub enum PurgeScope<'a> {
 /// Index one document. Replaces any prior chunks for the same label, so
 /// re-indexing is idempotent. Returns the chunk count actually written.
 pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<IndexReport> {
+    let tx = conn.transaction().context("begin index transaction")?;
+    logical::refuse_legacy_replacement(&tx, &req.label)?;
+    let report = index_document_in_transaction(&tx, req)?;
+    tx.commit().context("commit index transaction")?;
+    Ok(report)
+}
+
+fn index_document_in_transaction(tx: &rusqlite::Transaction<'_>, req: &IndexRequest) -> Result<IndexReport> {
     let provenance = req.document_provenance.as_ref();
     if let Some(provenance) = provenance {
         provenance.validate_for_content(&req.content)?;
@@ -139,12 +150,10 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
         "{:016x}",
         xxhash_rust::xxh3::xxh3_64(req.content.as_bytes())
     );
-    let tx = conn.transaction().context("begin index transaction")?;
-
     // Replace mode: delete existing chunks for this label, drop the old
     // sources row, insert fresh. Cheaper than a delta because we can't
     // detect which chunks changed without semantic diffing.
-    delete_for_label(&tx, &req.label)?;
+    delete_for_label(tx, &req.label)?;
 
     tx.execute(
         "INSERT INTO sources \
@@ -198,7 +207,7 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
                 ],
             )?;
         }
-        bump_vocabulary(&tx, &chunk.body)?;
+        bump_vocabulary(tx, &chunk.body)?;
         let _ = idx;
     }
 
@@ -206,8 +215,6 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
         "UPDATE sources SET chunk_count = ?1 WHERE id = ?2",
         params![chunks.len() as i64, source_id],
     )?;
-
-    tx.commit().context("commit index transaction")?;
 
     Ok(IndexReport {
         label: req.label.clone(),
@@ -712,7 +719,15 @@ pub fn doctor(conn: &Connection) -> Result<CtxDoctor> {
 pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
     let tx = conn.transaction()?;
     let n = match scope {
-        PurgeScope::Source(label) => delete_for_label(&tx, label)?,
+        PurgeScope::Source(label) => {
+            let source: Option<i64> = tx.query_row(
+                "SELECT id FROM sources WHERE label=?1", [label], |row| row.get(0),
+            ).optional()?;
+            if let Some(source) = source {
+                logical::remove_owner_for_source(&tx, source)?;
+            }
+            delete_for_label(&tx, label)?
+        }
         PurgeScope::Category(cat) => {
             // Collect source_ids first, then bulk-delete chunks.
             let mut stmt = tx.prepare("SELECT id FROM sources WHERE source_category = ?1")?;
@@ -721,6 +736,7 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
                 .collect::<Result<_, _>>()?;
             drop(stmt);
             for sid in &ids {
+                logical::remove_owner_for_source(&tx, *sid)?;
                 remove_source_vocabulary(&tx, *sid)?;
                 tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![sid])?;
                 tx.execute(
@@ -736,6 +752,7 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
         }
         PurgeScope::All => {
             let count: i64 = tx.query_row("SELECT count(*) FROM sources", [], |r| r.get(0))?;
+            tx.execute("DELETE FROM logical_documents", [])?;
             tx.execute("DELETE FROM chunks", [])?;
             tx.execute("DELETE FROM chunks_trigram", [])?;
             tx.execute("DELETE FROM sources", [])?;
@@ -743,6 +760,7 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
             count as usize
         }
     };
+    logical::advance_after_purge(&tx, n)?;
     tx.commit()?;
     Ok(n)
 }
@@ -955,6 +973,7 @@ mod tests {
         let request = proven_document("retained provenance", "doc");
         index_document(&mut conn, &request).unwrap();
         index_document(&mut conn, &idx("unbound legacy", "legacy")).unwrap();
+        logical::remove_schema_for_legacy_fixture(&conn).unwrap();
         conn.execute_batch(
             "ALTER TABLE sources DROP COLUMN document_structure_json;
             UPDATE meta SET value='48' WHERE key='schema_version';",
@@ -1054,6 +1073,7 @@ mod tests {
         let path = dir.path().join("views.db");
         let mut conn = crate::memory::store::open(&path).unwrap();
         let legacy = index_document(&mut conn, &idx("legacy retained body", "legacy")).unwrap();
+        logical::remove_schema_for_legacy_fixture(&conn).unwrap();
         // Reconstruct the exact v46 sources columns. All other schema objects
         // are unchanged by v47; the existing legacy FTS rows remain in place.
         for column in [

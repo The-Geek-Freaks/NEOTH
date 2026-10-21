@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2604.logical-document-lifecycle.v1",
+  "capturedUtc": "2026-10-21T07:27:42.9590039Z",
+  "baseProducer": "eda3ef0c37d405adab662942977ef2bf0323e6e6",
+  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "sourceSchema": {
+    "to": 50,
+    "legacyBackfill": false,
+    "from": 49
+  },
+  "behavior": [
+    "Strict bounded explicit registration, guarded content revision, and indexed metadata rename",
+    "One existing ctx transaction owns source, both FTS projections, derived vocabulary, current logical pointer and event receipt",
+    "Revision checks source ID, content revision and current event; historical receipts do not claim current physical source existence",
+    "Global purge epoch checked before replay; successful nonempty purge removes logical owner and receipts atomically",
+    "Legacy label replacement refuses logical-bound sources; metadata rename never moves filesystem objects",
+    "CLI request/status/epoch routes validate bounded input before opening or migrating the store"
+  ],
+  "tests": [
+    "cli::ctx::logical_tests::logical_cli_actions_allow_defaults_and_reject_explicit_conflicts",
+    "cli::ctx::logical_tests::logical_cli_file_request_status_epoch_and_replay_share_one_owner",
+    "cli::ctx::logical_tests::logical_cli_invalid_requests_and_identities_never_open_the_store",
+    "cli::ctx::logical_tests::logical_cli_stream_limit_accepts_exact_boundary_and_rejects_one_extra_byte",
+    "memory::ctx::logical_request::tests::logical_canonicalization_sorts_nested_objects_and_separates_fields",
+    "memory::ctx::logical_request::tests::logical_content_limit_and_epoch_overflow_fail_before_effects",
+    "memory::ctx::logical_request::tests::logical_digest_binds_each_semantic_field_and_independent_event",
+    "memory::ctx::logical_request::tests::logical_identity_validation_precedes_provenance_hash_checks",
+    "memory::ctx::logical_request::tests::logical_options_normalize_null_but_preserve_present_empty",
+    "memory::ctx::logical_request::tests::logical_raw_container_remains_unknown_without_provenance",
+    "memory::ctx::logical_request::tests::logical_rename_has_no_content_and_counts_lineage_once",
+    "memory::ctx::logical_request::tests::logical_wire_rejects_unknown_outer_index_and_provenance_fields",
+    "memory::ctx::logical::tests::logical_conflicting_event_label_and_legacy_replacement_preserve_every_projection",
+    "memory::ctx::logical::tests::logical_purge_epoch_write_failure_and_exhaustion_roll_back_all_deleted_rows",
+    "memory::ctx::logical::tests::logical_receipt_and_rename_failures_roll_back_source_fts_vocabulary_and_ledger",
+    "memory::ctx::logical::tests::logical_register_revise_rename_and_historical_replay_keep_one_current_source",
+    "memory::ctx::logical::tests::logical_source_category_and_all_purge_reject_old_replay_without_resurrection",
+    "memory::ctx::logical::tests::logical_two_connections_reject_stale_guard_even_when_content_revision_is_unchanged",
+    "memory::migrations::tests::v49_to_v50_preserves_unbound_sources_and_matches_fresh_logical_contract",
+    "memory::migrations::tests::v49_to_v50_rejects_missing_owner_columns_and_schema_object_collisions",
+    "memory::migrations::tests::v49_to_v50_version_failure_rolls_back_columns_objects_and_retries"
+  ],
+  "focusedAdditionalTests": [
+    "memory::migrations::tests::v47_fresh_and_migrated_sources_have_the_same_column_contract"
+  ],
+  "focusedSelection": {
+    "retained": 33,
+    "input": "document_regressions",
+    "new": 21,
+    "workflow": ".github/workflows/cli-reference.yml",
+    "additionalHistorical": 1,
+    "required": 55
+  },
+  "historicalFixtures": [
+    "CLI migration builds the real predecessor through canonical migration chain and now checks logical state",
+    "ctx v46/v48, consent v41, migration v42 and Unix history v42 remove successor logical objects before downgrading",
+    "v47/v49 column-shape comparisons use their historical source contract"
+  ],
+  "review": {
+    "reviewer": "/root/logical_document_review",
+    "result": "No concrete blocking defect found; borrow and import concerns resolved from source",
+    "runtime": false,
+    "method": "Prompt-only actual schema, transaction, replay, purge, CLI excerpts and regression design"
+  },
+  "validation": {
+    "localTests": false,
+    "hostedFocused55": "pending",
+    "hostedCompilation": "pending",
+    "localCompiler": false,
+    "interopNativeDeviceRelease": "separate gates remain open",
+    "fullPlatforms": "pending"
+  },
+  "limitations": [
+    "Explicit CLI and internal owner only; no automatic watcher or mobile UI wiring in this slice",
+    "Content revisions identify indexed UTF-8 bytes; raw-container identity remains optional validated extraction provenance",
+    "Full A03, other formats, native/device and release acceptance remain open"
+  ],
+  "goldCheckboxesClosed": 0,
+  "goldAccepted": false
+}
