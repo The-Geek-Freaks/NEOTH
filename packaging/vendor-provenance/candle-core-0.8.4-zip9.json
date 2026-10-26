@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.candle-zip9-source.v1",
+  "baseProducer": "0503f7208d9b110337e0057ab22743276f6600a3",
+  "archiveSha256": "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1",
+  "upstreamCommit": "468d1d525fe206a35d6962c02cfa7b9918b31076",
+  "patchSha256": "34cad6b0e1da5585e4be2dce57e4fe5befd072c1ed6cd7e9ae84fd1c776da0f4",
+  "changes": [
+    {
+      "path": "SRC/Cargo.toml",
+      "before": "6124446dacaea94eaaa1202686e3a9a2af30a23ea991bbcb9a9c47dcecc8b0b6",
+      "after": "f39929bb44951ccbf193b54a3bfd485397476856035fdd4b1a7bcf7327009c25"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "before": "0f28f4ebdabd6a69df66109effdef8d8a21bf3d3ea81e6857c730119c32e180c",
+      "after": "9fee53afb2ea7f340e64f61dfc6d168f91fd77bb425fb78bacb37a0e3cb3fde8"
+    },
+    {
+      "path": "SRC/neothd/src/media/document.rs",
+      "before": "ee319cec6c1c88c09321a444ff51d827396916d5d955944ad377643c72ae7c7e",
+      "after": "7515cb6cc0ceb337b8c8f5b34c3fffd35409c2faa0eaf3152682d5dd181b72f5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml",
+      "before": "567a44bb3beb5b451eb6e1c15052219c89cec78310b547c8c02c12d60283ad1b",
+      "after": "4f91c55c9fb77cc2a6f91d783c5be0d52195038c7a0335e45891a91d8eab6e2b"
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml.orig",
+      "before": "ad714484c40e6f6170c4681168af9473fd420c8c5a55fb7ebe4556c1baa7702a",
+      "after": "5d87068638d7e3f333a2ad8164ee3524b4f3cc9482827eb415027d1b9195253b"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/npy.rs",
+      "before": "886c8114500861fe6f3103ee7a183557f1c6f1de058f346438c99d0f2e4ea10e",
+      "after": "524e2589a395286065321e5bc6be2dafeecf6610f22b05cd5e1e73108efe5d32"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/pickle.rs",
+      "before": "d18f47f518c0688c011db1bd74117f7ff9a616263be9eaa2759c484bab75613f",
+      "after": "5c329d8a51cbeb1d7a61bccd7975e74f17c388c88fcce4f6016be2e60f3d6ec1"
+    }
+  ]
+}

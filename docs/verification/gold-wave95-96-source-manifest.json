@@ -2,14 +2,14 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T14:14:54.9930178Z",
-  "validationStatus": "STATIC_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-10-26T14:18:26.5813894Z",
+  "validationStatus": "SOURCE_CANDIDATE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 1441,
-      "sha256": "8D524F1F957C1A28C39DEA2F02C33B60BFFC3F86B91996717ADC6FFBC291607F"
+      "bytes": 1704,
+      "sha256": "8A0698EF6157CFE67A53CFB42F4599E0E4CF2D1645A25EC631DBA5CB4283C52C"
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -125,6 +125,11 @@
       "path": ".github/workflows/bge-m3.yml",
       "bytes": 4970,
       "sha256": "CE587DC01FA879DBD4BF211AA059C9783E0CA2D9BDD7804B0CCB3E8DDD7216AB"
+    },
+    {
+      "path": ".github/workflows/candle-zip-migration.yml",
+      "bytes": 8300,
+      "sha256": "CA95139C429DC3A13DB8570044F641F2030C80FBEE99FBD0190373F65C54ACDA"
     },
     {
       "path": ".github/workflows/capability-quality.yml",
@@ -4572,6 +4577,11 @@
       "sha256": "111E1E94F4F2852855996BE26D1BD403FF56B5FD6AF37CB456044F4C11EBA65A"
     },
     {
+      "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
+      "bytes": 3275,
+      "sha256": "29E25B4B96DC5C8A23BDBEC8B61BE9AD30C7955EBAC4D4527C5081813A33A5F5"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5407,6 +5417,11 @@
       "sha256": "7CC34662D013E677163BF37D74B74D14E9F87DC49E8BFA2B5F7609B95D4FCD19"
     },
     {
+      "path": "packaging/candle_zip_migration.py",
+      "bytes": 10185,
+      "sha256": "606471452413DD100366D752547263C8B06386C4EBA0598897CF74C7ED6A1997"
+    },
+    {
       "path": "packaging/converted_channel_relink_product_canary.py",
       "bytes": 26146,
       "sha256": "AB6C977E3E3B955C24D825336B9BE5B7A6A4222180FC7D1F194F6BC974D280B6"
@@ -5672,6 +5687,26 @@
       "sha256": "B098CF6E81E1ECF4A39AB7CD25CEF22E8B3D29C8E277AC43875249DFCED1B977"
     },
     {
+      "path": "packaging/vendor-provenance/candle_zip_compat.rs",
+      "bytes": 5016,
+      "sha256": "1D399FBF303DFC1DDCFE833AB88B484B29A28D7993DB8270EC05D721CF4E72D9"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+      "bytes": 1949,
+      "sha256": "BB42F99BE1919B67A41E413598801B148E58B5D3C8DB7B4193C0BD9024DC1F4B"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
+      "bytes": 8954,
+      "sha256": "34CAD6B0E1DA5585E4BE2DCE57E4FE5BEFD072C1ED6CD7E9AE84FD1C776DA0F4"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4.crate",
+      "bytes": 232912,
+      "sha256": "06CCF5EE3532E66868516D9B315F73AEC9F34EA1A37AE98514534D458915DBF1"
+    },
+    {
       "path": "packaging/vendor-provenance/imbl-6.1.0.crate",
       "bytes": 136861,
       "sha256": "0FADE8AE6828627AD1FA094A891ECCFB25150B383047190A3648D66D06186501"
@@ -5748,8 +5783,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2663005,
-      "sha256": "57E0A93C2525ACA88A56E7DAE184C2F131397F3FC74F3A3F7D122025A669D67A"
+      "bytes": 2663884,
+      "sha256": "C265D3775716660EFF1B7F5A70D5CCAE8D0ADC87D20E46E70B5AB24B0A679582"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

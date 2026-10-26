@@ -1,0 +1,78 @@
+{
+  "schema": "neoth.wave2608.candle-zip-candidate.v1",
+  "capturedUtc": "2026-10-26T14:17:42.8396482Z",
+  "baseProducer": "0503f7208d9b110337e0057ab22743276f6600a3",
+  "status": "SOURCE_AND_HOSTED_PIPELINE_PREPARED_NOT_DISPATCHED",
+  "upstreamArchiveSha256": "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1",
+  "upstreamCommit": "468d1d525fe206a35d6962c02cfa7b9918b31076",
+  "vendorFiles": 97,
+  "packageIdentity": "candle-core0.8.4",
+  "targetZip": "9.0.0",
+  "review": {
+    "sourceApplyCheck": true,
+    "noAgentTools": true,
+    "mode": "PROMPT_ONLY_SUPPLIED_EXCERPTS",
+    "design": "/root/candle_zip_adoption_review",
+    "boundary": "/root/dependency_boundary_review"
+  },
+  "candidatePaths": 7,
+  "integrationCases": 3,
+  "newDocumentCase": "media::document::tests::malformed_utf8_archive_names_fail_before_document_selection",
+  "boundaries": [
+    "No production source, lock or vendor import until exact hosted candidate and Root admission",
+    "Candle family, CPU/CUDA/Metal feature surface retained; native CUDA/Metal validation remains open",
+    "Source gate authenticates all97 files and seven exact changed pre/postimages",
+    "Solver-produced lock; one ZIP9 and path Candle; unchanged sibling Candle identities; complete delta retained",
+    "No ZIP advisory ignore; retained other findings/warnings; fresh audit database provenance",
+    "Named NPZ, unicode names, real official PTH payload, invalid UTF8 and existing document/browser/updater boundaries",
+    "NPZ writer now explicitly propagates finish failure",
+    "Full97-file patch export enforced even for ignored upstream fixtures",
+    "Candle upstream checkout bytes preserved; patch LF and required blank-context markers explicitly retained"
+  ],
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/candle-zip-migration.yml",
+      "sha256": "CA95139C429DC3A13DB8570044F641F2030C80FBEE99FBD0190373F65C54ACDA",
+      "bytes": 8300
+    },
+    {
+      "path": "packaging/candle_zip_migration.py",
+      "sha256": "606471452413DD100366D752547263C8B06386C4EBA0598897CF74C7ED6A1997",
+      "bytes": 10185
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4.crate",
+      "sha256": "06CCF5EE3532E66868516D9B315F73AEC9F34EA1A37AE98514534D458915DBF1",
+      "bytes": 232912
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
+      "sha256": "34CAD6B0E1DA5585E4BE2DCE57E4FE5BEFD072C1ED6CD7E9AE84FD1C776DA0F4",
+      "bytes": 8954
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+      "sha256": "BB42F99BE1919B67A41E413598801B148E58B5D3C8DB7B4193C0BD9024DC1F4B",
+      "bytes": 1949
+    },
+    {
+      "path": "packaging/vendor-provenance/candle_zip_compat.rs",
+      "sha256": "1D399FBF303DFC1DDCFE833AB88B484B29A28D7993DB8270EC05D721CF4E72D9",
+      "bytes": 5016
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "8A0698EF6157CFE67A53CFB42F4599E0E4CF2D1645A25EC631DBA5CB4283C52C",
+      "bytes": 1704
+    }
+  ],
+  "activeValidation": {
+    "producer": "0503f7208d9b110337e0057ab22743276f6600a3",
+    "run": 40336506459,
+    "separate": true
+  },
+  "localRuntimeExecuted": false,
+  "productSourceImported": false,
+  "hostedAccepted": false,
+  "goldAccepted": false
+}

@@ -1,0 +1,167 @@
+name: Candle ZIP migration candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main producer for the reviewed ZIP 9 candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candle-zip-migration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      PROOF: ${{ runner.temp }}/candle-zip-proof
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout exact main producer
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Bind producer and prepare reviewed source candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$PROOF"
+          printf 'producer=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$PROOF/run-context.txt"
+          git show HEAD:SRC/Cargo.lock > "$PROOF/baseline-Cargo.lock"
+          sha256sum SRC/.cargo/audit.toml SRC/deny.toml > "$PROOF/unchanged-policy.SHA256SUMS"
+          python3 packaging/candle_zip_migration.py prepare --proof "$PROOF"
+      - name: Set up pinned Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Restore hosted Cargo inputs
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-candle-zip9-rust191-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Resolve ZIP 9 without reconstructing lock records
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo update --manifest-path SRC/Cargo.toml -p zip@1.1.4 --precise 9.0.0 2>&1 | tee "$PROOF/resolve.log"
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-1.json"
+          sha256sum SRC/Cargo.lock > "$PROOF/stable-lock.SHA256SUMS"
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-2.json"
+          sha256sum -c "$PROOF/stable-lock.SHA256SUMS"
+          python3 packaging/candle_zip_migration.py resolved --proof "$PROOF"
+      - name: Install pinned audit tool
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Prove ZIP advisories absent and retain every remaining finding
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, json, os, re, subprocess
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          result = subprocess.run(["cargo", "audit", "--json"], cwd="SRC", capture_output=True, text=True)
+          (proof / "audit.json").write_text(result.stdout)
+          (proof / "audit.stderr.txt").write_text(result.stderr)
+          if result.returncode not in (0, 1):
+              raise SystemExit("audit execution failed")
+          audit = json.loads(result.stdout)
+          targets = {"RUSTSEC-2026-0367", "RUSTSEC-2026-0368", "RUSTSEC-2026-0369"}
+          if targets.intersection(audit["settings"]["ignore"]):
+              raise SystemExit("ZIP advisory was ignored")
+          if any(item["advisory"]["id"] in targets or item["package"]["name"] == "zip" for item in audit["vulnerabilities"]["list"]):
+              raise SystemExit("ZIP vulnerability remains")
+          database = audit["database"]
+          updated = datetime.datetime.fromisoformat(database["last-updated"])
+          now = datetime.datetime.now(datetime.timezone.utc)
+          if updated.utcoffset() is None or not re.fullmatch(r"[0-9a-f]{40}", database["last-commit"]):
+              raise SystemExit("audit database provenance missing")
+          if not -300 <= (now - updated).total_seconds() <= 14 * 24 * 60 * 60:
+              raise SystemExit("audit database freshness bound exceeded")
+          (proof / "remaining-findings.json").write_text(json.dumps({
+              "exitCode": result.returncode, "database": database,
+              "vulnerabilities": audit["vulnerabilities"], "warnings": audit["warnings"],
+              "fullSecurityAccepted": False,
+          }, indent=2) + "\n")
+          PY
+          sha256sum -c "$PROOF/unchanged-policy.SHA256SUMS"
+      - name: Generate and verify exact candidate notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/generate_rust_notices.py --write 2>&1 | tee "$PROOF/notices-write.log"
+          python3 packaging/generate_rust_notices.py --check 2>&1 | tee "$PROOF/notices-check.log"
+      - name: Exercise Candle and actual NEOTH archive consumers
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p neoth --test candle_zip_compat --locked -- --test-threads=1 2>&1 | tee "$PROOF/candle-tests.log"
+          cargo test -p neoth --lib --locked media::document::tests:: -- --test-threads=1 2>&1 | tee "$PROOF/document-tests.log"
+          cargo test -p neoth --lib --locked tools::managed_browser::tests::controlled_zip_fixture -- --test-threads=1 2>&1 | tee "$PROOF/browser-tests.log"
+          cargo test -p neoth --lib --locked updater::self_update::tests::zip_extractor_rejects_wrong_root_duplicates_and_links -- --exact --test-threads=1 2>&1 | tee "$PROOF/updater-tests.log"
+      - name: Require nonempty test receipts and export exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          expected = {"candle": 3, "document": None, "browser": 3, "updater": 1}
+          counts = {}
+          for name, count in expected.items():
+              text = (proof / f"{name}-tests.log").read_text()
+              terminals = re.findall(r"test result: ok\. (\d+) passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;", text)
+              if len(terminals) != 1 or int(terminals[0]) < 1 or (count is not None and int(terminals[0]) != count):
+                  raise SystemExit(f"missing/nonexact test receipt: {name}")
+              cases = re.findall(r"^test (\S+) \.\.\. ok$", text, re.MULTILINE)
+              if len(cases) != int(terminals[0]) or len(set(cases)) != len(cases):
+                  raise SystemExit(f"case list mismatch: {name}")
+              counts[name] = {"count": len(cases), "cases": cases}
+          (proof / "test-cases.json").write_text(json.dumps(counts, indent=2) + "\n")
+          PY
+          python3 packaging/candle_zip_migration.py export --proof "$PROOF"
+      - name: Hash retained candidate or diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROOF"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          proof = Path(os.environ["PROOF"])
+          hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(proof.iterdir()) if p.is_file() and p.name != "artifact-hashes.json"}
+          (proof / "artifact-hashes.json").write_text(json.dumps(hashes, indent=2) + "\n")
+          PY
+      - name: Retain original candidate and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candle-zip9-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.PROOF }}
+          if-no-files-found: error

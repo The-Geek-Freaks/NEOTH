@@ -1,0 +1,212 @@
+diff --git a/SRC/Cargo.toml b/SRC/Cargo.toml
+index 07e4c6c05e514702090e309e345d5dbd4920921e..318bb830f25f531a727c03c5c59af52540de4377 100644
+--- a/SRC/Cargo.toml
++++ b/SRC/Cargo.toml
+@@ -45,6 +45,7 @@ zeroize    = { version = "1", features = ["zeroize_derive"] }
+ unsafe_op_in_unsafe_fn = "warn"
+ 
+ [patch.crates-io]
++candle-core = { path = "vendor/candle-core", version = "=0.8.4" }
+ arrayref = { path = "vendor/arrayref", version = "=0.3.9" }
+ imbl = { path = "vendor/imbl", version = "=6.1.0" }
+ libudx = { path = "vendor/libudx" }
+diff --git a/SRC/neothd/Cargo.toml b/SRC/neothd/Cargo.toml
+index d0a0998b2670189d0dd4efa60592f0f0302ad2da..b3a1cfc6401fa5c83cfab08c5f1f33036956e9e2 100644
+--- a/SRC/neothd/Cargo.toml
++++ b/SRC/neothd/Cargo.toml
+@@ -362,7 +362,7 @@ zstd = "=0.14.3"
+ # Both pure-Rust — no system liblzma linkage, no shell-out — so the
+ # self-contained-binary rule (memory/neoth-hard-rule-self-contained)
+ # stays honoured.
+-zip     = { version = "1", default-features = false, features = ["deflate"] }
++zip     = { version = "=9.0.0", default-features = false, features = ["deflate"] }
+ lzma-rs = "0.3"
+ 
+ # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
+diff --git a/SRC/neothd/src/media/document.rs b/SRC/neothd/src/media/document.rs
+index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..b890a784199a3bd3d8f9a476fefbe8ae51b884ea 100644
+--- a/SRC/neothd/src/media/document.rs
++++ b/SRC/neothd/src/media/document.rs
+@@ -320,7 +320,7 @@ fn extract_zip_text(
+             ))
+         }
+         DocFormat::Pptx => {
+-            let mut names = member_names(&archive);
++            let mut names = member_names(&archive)?;
+             names.retain(|n| is_slide(n));
+             names.sort_by_key(|n| slide_number(n));
+             let mut out = String::new();
+@@ -359,7 +359,7 @@ fn extract_zip_text(
+             ))
+         }
+         DocFormat::Epub => {
+-            let mut names = member_names(&archive);
++            let mut names = member_names(&archive)?;
+             names.retain(|n| is_xhtml(n));
+             names.sort();
+             let mut out = String::new();
+@@ -403,13 +403,17 @@ fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(),
+                 backend: "document",
+                 reason: format!("inspect archive member {index}: {e}"),
+             })?;
++        let member_name = file.name().map_err(|e| ExtractionError::Backend {
++            backend: "document",
++            reason: format!("decode archive member {index} name: {e}"),
++        })?;
+         let member_size = file.size();
+         if member_size > limits.member_bytes {
+             return Err(ExtractionError::Backend {
+                 backend: "document",
+                 reason: format!(
+                     "archive member `{}` declares {member_size} bytes, exceeding the {}-byte cap",
+-                    file.name(),
++                    member_name,
+                     limits.member_bytes
+                 ),
+             });
+@@ -457,8 +461,17 @@ fn missing(fmt: &'static str, member: &'static str) -> impl Fn() -> ExtractionEr
+     }
+ }
+ 
+-fn member_names(archive: &Archive) -> Vec<String> {
+-    archive.file_names().map(|s| s.to_string()).collect()
++fn member_names(archive: &Archive) -> Result<Vec<String>, ExtractionError> {
++    archive
++        .file_names()
++        .map(|name| {
++            name.map(|name| name.into_owned())
++                .map_err(|e| ExtractionError::Backend {
++                    backend: "document",
++                    reason: format!("decode archive member name: {e}"),
++                })
++        })
++        .collect()
+ }
+ 
+ fn read_member(
+@@ -1510,6 +1523,41 @@ mod tests {
+         assert!(matches!(err, ExtractionError::Backend { .. }), "{err:?}");
+     }
+ 
++    #[test]
++    fn malformed_utf8_archive_names_fail_before_document_selection() {
++        let mut bytes = make_zip(&[("bad", ""), ("word/document.xml", "<w:t>ok</w:t>")]);
++        // Change only the first local/central filename; leave payloads and CRCs intact.
++        let central = bytes
++            .windows(4)
++            .position(|v| v == b"PK\x01\x02")
++            .unwrap();
++        assert_eq!(&bytes[..4], b"PK\x03\x04");
++        for (header, flags, name) in [(0, 6, 30), (central, 8, 46)] {
++            let offset = header + flags;
++            let value = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) | (1 << 11);
++            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
++            bytes[header + name] = 0xff;
++        }
++        let mut archive = open_zip(bytes);
++        assert!(archive.file_names().any(|name| name.is_err()));
++        let error = member_names(&archive).unwrap_err();
++        assert!(matches!(
++            error,
++            ExtractionError::Backend {
++                backend: "document",
++                ..
++            }
++        ));
++        let error = validate_archive(&mut archive, ARCHIVE_LIMITS).unwrap_err();
++        assert!(matches!(
++            error,
++            ExtractionError::Backend {
++                backend: "document",
++                ..
++            }
++        ));
++    }
++
+     #[test]
+     fn archive_member_count_is_bounded_before_name_collection() {
+         let zip = make_zip(&[("a", ""), ("b", ""), ("c", "")]);
+diff --git a/SRC/vendor/candle-core/Cargo.toml b/SRC/vendor/candle-core/Cargo.toml
+index ee50cc277443d313c14165ac7338582f57d82bf5..70ec32259cfc877306b1415e881475a6df1587f3 100644
+--- a/SRC/vendor/candle-core/Cargo.toml
++++ b/SRC/vendor/candle-core/Cargo.toml
+@@ -199,7 +199,7 @@ version = "0.7.2"
+ features = ["derive"]
+ 
+ [dependencies.zip]
+-version = "1.1.1"
++version = "=9.0.0"
+ default-features = false
+ 
+ [dev-dependencies.anyhow]
+diff --git a/SRC/vendor/candle-core/Cargo.toml.orig b/SRC/vendor/candle-core/Cargo.toml.orig
+index d5d5bde00cfc7b00f93bc76e6915b8aa893c3928..3ec56e4b7f69286b830e26014b50225df4184660 100644
+--- a/SRC/vendor/candle-core/Cargo.toml.orig
++++ b/SRC/vendor/candle-core/Cargo.toml.orig
+@@ -31,7 +31,7 @@ thiserror = { workspace = true }
+ ug-cuda = { workspace = true, optional = true }
+ ug-metal = { workspace = true, optional = true }
+ yoke = { workspace = true }
+-zip = { workspace = true }
++zip = { version = "=9.0.0", default-features = false }
+ 
+ [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ ug = { workspace = true }
+diff --git a/SRC/vendor/candle-core/src/npy.rs b/SRC/vendor/candle-core/src/npy.rs
+index 83e4f6527fc0de153b4007d74698c232292d3edb..30384ac67af017df5d04cbf188d1d86796be04f7 100644
+--- a/SRC/vendor/candle-core/src/npy.rs
++++ b/SRC/vendor/candle-core/src/npy.rs
+@@ -261,8 +261,8 @@ impl Tensor {
+         for i in 0..zip.len() {
+             let mut reader = zip.by_index(i)?;
+             let name = {
+-                let name = reader.name();
+-                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
++                let name = reader.name()?;
++                name.strip_suffix(NPY_SUFFIX).unwrap_or(&name).to_owned()
+             };
+             let header = read_header(&mut reader)?;
+             let header = Header::parse(&header)?;
+@@ -330,13 +330,14 @@ impl Tensor {
+         path: P,
+     ) -> Result<()> {
+         let mut zip = zip::ZipWriter::new(File::create(path.as_ref())?);
+-        let options: zip::write::FileOptions<()> =
+-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
++        let options = zip::write::SimpleFileOptions::default()
++            .compression_method(zip::CompressionMethod::Stored);
+ 
+         for (name, tensor) in ts.iter() {
+             zip.start_file(format!("{}.npy", name.as_ref()), options)?;
+             tensor.as_ref().write(&mut zip)?
+         }
++        zip.finish()?;
+         Ok(())
+     }
+ }
+@@ -358,8 +359,8 @@ impl NpzTensors {
+         for i in 0..zip.len() {
+             let file = zip.by_index(i)?;
+             let name = {
+-                let name = file.name();
+-                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
++                let name = file.name()?;
++                name.strip_suffix(NPY_SUFFIX).unwrap_or(&name).to_owned()
+             };
+             index_per_name.insert(name, i);
+         }
+diff --git a/SRC/vendor/candle-core/src/pickle.rs b/SRC/vendor/candle-core/src/pickle.rs
+index 1632cc262c2120187cff8198539b814f6aaf1902..c4694c28a21476f23ef676cdd41ae3c5d81fab07 100644
+--- a/SRC/vendor/candle-core/src/pickle.rs
++++ b/SRC/vendor/candle-core/src/pickle.rs
+@@ -653,8 +653,8 @@ pub fn read_pth_tensor_info<P: AsRef<std::path::Path>>(
+     let mut zip = zip::ZipArchive::new(zip_reader)?;
+     let zip_file_names = zip
+         .file_names()
+-        .map(|f| f.to_string())
+-        .collect::<Vec<String>>();
++        .map(|name| name.map(|name| name.into_owned()))
++        .collect::<zip::result::ZipResult<Vec<String>>>()?;
+ 
+     let mut tensor_infos = vec![];
+     for file_name in zip_file_names.iter() {

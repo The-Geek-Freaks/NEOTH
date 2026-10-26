@@ -31,6 +31,10 @@ packaging/**/fixtures/*.txt text eol=lf
 # checkout conversion for every member, including extensionless metadata.
 SRC/vendor/arrayref/** -text
 SRC/vendor/imbl/** -text
+# Preserve Candle archive bytes and the reviewed patch's context-line markers.
+SRC/vendor/candle-core/** -text
+packaging/vendor-provenance/candle-core-0.8.4.crate -text
+packaging/vendor-provenance/candle-core-0.8.4-zip9.patch text eol=lf whitespace=-blank-at-eol
 # Preserve the upstream archive member's existing final blank line.
 SRC/vendor/imbl/.github/dependabot.yml whitespace=-blank-at-eof
 # Preserve the pinned Silero model, upstream license and provenance bytes.
