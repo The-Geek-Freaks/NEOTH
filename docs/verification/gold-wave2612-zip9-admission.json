@@ -1,0 +1,243 @@
+{
+  "schema": "neoth.wave2612.zip9-admission.v1",
+  "capturedUtc": "2026-10-26T18:20:35.0173346Z",
+  "status": "IMPORTED_FROM_VERIFIED_HOSTED_CANDIDATE_FINAL_FULL_PENDING",
+  "producer": "eb5997dfe96f38e9af668d2dcc8f3cca70644f62",
+  "run": 40373737661,
+  "attempt": 1,
+  "job": 121751073086,
+  "artifact": 12673938963,
+  "originalZipSha256": "74FB19B228E4E9931F787FFDBF8A6F8ECA523A0AE6990BAF5B487253F473BBEA",
+  "archiveEntries": 64,
+  "patchPaths": 103,
+  "vendorFiles": 97,
+  "changedSourcePostimages": 7,
+  "rootAdmission": {
+    "path": "work/gold-20260906/wave2612-zip9-admission/ROOT_ADMISSION.json",
+    "sha256": "3D19DF2F7D5230F1A75F11136BFBA6036E5CCFA96F205CE00CE650B7029F2128"
+  },
+  "dependency": {
+    "zip": "9.0.0",
+    "zipChecksum": "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e",
+    "candleCore": "0.8.4",
+    "candleUpstreamCommit": "468d1d525fe206a35d6962c02cfa7b9918b31076",
+    "vendorSource": "Authenticated official archive with four reviewed vendor changes",
+    "siblingCandleIdentitiesUnchanged": true,
+    "solverAdded": 9,
+    "solverRemoved": 7,
+    "solverSameIdentityEdgeChanges": 17,
+    "allFeaturesLockedMetadataStable": true,
+    "lockSha256": "8BBA731049696411D897FD8A9FB1F97CBED5CEFD1546620D5E37B90D166D9106",
+    "reviewMode": "Root artifact/source inspection plus prompt-only independent review"
+  },
+  "tests": {
+    "candle": {
+      "count": 3,
+      "cases": [
+        "npz_roundtrip_preserves_named_tensors_and_unicode",
+        "pickle_discovers_metadata_and_reads_nonfirst_tensor_payload",
+        "truncated_archive_errors_propagate_through_npz_and_pickle"
+      ]
+    },
+    "document": {
+      "count": 39,
+      "cases": [
+        "media::document::tests::archive_aggregate_and_expansion_ratio_are_bounded",
+        "media::document::tests::archive_member_count_is_bounded_before_name_collection",
+        "media::document::tests::archive_member_read_uses_limit_plus_one_and_fails",
+        "media::document::tests::archive_member_reads_share_an_actual_byte_budget",
+        "media::document::tests::bounded_section_append_never_splits_utf8_or_exceeds_limit",
+        "media::document::tests::corrupt_zip_errors_not_panics",
+        "media::document::tests::decode_entities_handles_named_and_numeric",
+        "media::document::tests::decode_entities_is_linear_for_ampersand_heavy_hostile_text",
+        "media::document::tests::decode_entities_leaves_unknown_amp_alone",
+        "media::document::tests::document_input_ceiling_is_fail_closed",
+        "media::document::tests::docx_extracts_paragraph_text",
+        "media::document::tests::docx_missing_document_xml_errors",
+        "media::document::tests::docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member",
+        "media::document::tests::docx_structure_omissions_preserve_text_and_distinguish_container_revisions",
+        "media::document::tests::epub_concatenates_xhtml_in_order",
+        "media::document::tests::epub_preserves_table_header_and_data_cell_boundaries",
+        "media::document::tests::from_ext_round_trips",
+        "media::document::tests::from_mime_covers_all_known_types",
+        "media::document::tests::from_mime_ignores_charset_suffix",
+        "media::document::tests::non_docx_documents_do_not_claim_docx_structure",
+        "media::document::tests::normalize_ws_collapses_blank_runs",
+        "media::document::tests::odt_extracts_content_xml",
+        "media::document::tests::pptx_reads_slides_in_numeric_order",
+        "media::document::tests::provenance_binds_exact_bytes_and_text_without_path_identity",
+        "media::document::tests::provenance_distinguishes_source_revision_from_equal_text",
+        "media::document::tests::provenance_hashes_unicode_safe_capped_text_with_visible_marker",
+        "media::document::tests::rtf_decodes_hex_and_unicode_escapes",
+        "media::document::tests::rtf_handles_escaped_braces",
+        "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
+        "media::document::tests::rtf_strips_control_words_and_metadata",
+        "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated",
+        "media::document::tests::rtf_via_extractor_surface",
+        "media::document::tests::slide_number_parses_ordinal",
+        "media::document::tests::strip_tags_removes_markup_keeps_text",
+        "media::document::tests::truncated_archive_directory_fails_before_document_selection",
+        "media::document::tests::unknown_format_errors_cleanly",
+        "media::document::tests::wrong_kind_returns_unsupported",
+        "media::document::tests::xlsx_reads_shared_strings",
+        "media::document::tests::xlsx_without_shared_strings_is_empty_not_error"
+      ]
+    },
+    "browser": {
+      "count": 3,
+      "cases": [
+        "tools::managed_browser::tests::controlled_zip_fixture_extracts_only_the_expected_root_and_executable",
+        "tools::managed_browser::tests::controlled_zip_fixture_rejects_escape_and_case_collision_before_write",
+        "tools::managed_browser::tests::controlled_zip_fixture_rejects_excessive_member_inventory"
+      ]
+    },
+    "updater": {
+      "count": 1,
+      "cases": [
+        "updater::self_update::tests::zip_extractor_rejects_wrong_root_duplicates_and_links"
+      ]
+    },
+    "costCases": [
+      "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback",
+      "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
+      "daemon::usage_log::tests::terminal_v3_keeps_unknown_amounts_distinct_from_known_zero",
+      "daemon::usage_log::tests::terminal_v3_preserves_original_amount_bits_instead_of_current_rates",
+      "daemon::usage_log::tests::terminal_v3_refuses_outer_identity_usage_and_context_mismatches",
+      "daemon::usage_log::tests::terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values",
+      "daemon::usage_log::tests::terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions",
+      "daemon::usage_log::tests::terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts",
+      "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
+      "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
+      "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
+      "daemon::usage_log::tests::terminal_v4_rejects_outer_basis_and_model_mismatches",
+      "daemon::usage_log::tests::terminal_v4_requires_complete_basis_and_refuses_mixed_versions",
+      "daemon::usage_log::tests::terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis",
+      "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",
+      "providers::pricing_basis::tests::price_basis_rejects_invalid_rates_even_with_matching_digest",
+      "providers::pricing_basis::tests::price_basis_rejects_tampered_rates_policy_and_identity",
+      "providers::pricing_basis::tests::price_basis_roundtrip_preserves_exact_row_and_policy"
+    ],
+    "costCount": 18,
+    "costSourceBindings": 15,
+    "total": 64,
+    "registeredPortableCount": 3049,
+    "addedNativeRegistrations": [
+      {
+        "test": "npz_roundtrip_preserves_named_tensors_and_unicode",
+        "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
+        "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+        "junitClass": "neoth::candle_zip_compat"
+      },
+      {
+        "test": "pickle_discovers_metadata_and_reads_nonfirst_tensor_payload",
+        "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
+        "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+        "junitClass": "neoth::candle_zip_compat"
+      },
+      {
+        "test": "truncated_archive_errors_propagate_through_npz_and_pickle",
+        "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
+        "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+        "junitClass": "neoth::candle_zip_compat"
+      },
+      {
+        "test": "media::document::tests::truncated_archive_directory_fails_before_document_selection",
+        "sourcePath": "SRC/neothd/src/media/document.rs",
+        "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+        "junitClass": "neoth"
+      }
+    ]
+  },
+  "audit": {
+    "database": {
+      "advisory-count": 1378,
+      "last-commit": "a78282a1414d6c28cc228c4eae3570451affb0dc",
+      "last-updated": "2026-10-26T14:45:01+01:00"
+    },
+    "vulnerabilities": 0,
+    "targetAdvisoriesAbsent": [
+      "RUSTSEC-2026-0367",
+      "RUSTSEC-2026-0368",
+      "RUSTSEC-2026-0369"
+    ],
+    "noNewIgnore": true,
+    "warnings": [
+      {
+        "kind": "unmaintained",
+        "package": "derivative",
+        "version": "2.2.0",
+        "advisory": "RUSTSEC-2024-0388"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zbus_names",
+        "version": "3.0.0",
+        "advisory": "RUSTSEC-2026-0371"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zbus_names",
+        "version": "4.3.2",
+        "advisory": "RUSTSEC-2026-0371"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zvariant",
+        "version": "4.2.0",
+        "advisory": "RUSTSEC-2026-0370"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zvariant",
+        "version": "5.11.0",
+        "advisory": "RUSTSEC-2026-0370"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zvariant_derive",
+        "version": "4.2.0",
+        "advisory": "RUSTSEC-2026-0372"
+      },
+      {
+        "kind": "unmaintained",
+        "package": "zvariant_derive",
+        "version": "5.11.0",
+        "advisory": "RUSTSEC-2026-0372"
+      },
+      {
+        "kind": "unsound",
+        "package": "tokio",
+        "version": "1.52.3",
+        "advisory": "RUSTSEC-2026-0386"
+      },
+      {
+        "kind": "yanked",
+        "package": "clipboard-win",
+        "version": "5.4.1",
+        "advisory": null
+      }
+    ],
+    "fullSecurityAccepted": false
+  },
+  "notices": "Hosted generated and checked exact distribution notices,1217runtime/build crates",
+  "sourcePreservation": [
+    "97vendorfile hashes verified against authenticated original plus four explicit edits",
+    "Two unchanged upstream whitespace lines preserved by path-specific attributes",
+    "No local runtime or code/XML parser executed",
+    "Protected physical Cargo.lock kept; solver lock staged through raw Git object"
+  ],
+  "candidateRuntimeAccepted": true,
+  "productImported": true,
+  "fullIntegrationAccepted": false,
+  "nativeAccepted": false,
+  "interopAcceptedOnThisProducer": false,
+  "releaseAccepted": false,
+  "goldAccepted": false,
+  "limitations": [
+    "No invalidUTF8 filename rejection or filename iterator-error proof",
+    "CPU tests do not qualify CUDA/Metal or native applications",
+    "Audit warnings retained and not dismissed",
+    "Full integration,Interop,native,device,release remain independent gates",
+    "Raw backlog and Gold checkboxes unchanged"
+  ]
+}

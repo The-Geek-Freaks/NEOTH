@@ -2,14 +2,14 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T17:57:24.9554304Z",
-  "validationStatus": "W2611_STATIC_FIXTURE_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-10-26T18:20:55.8261397Z",
+  "validationStatus": "W2612_CANDIDATE64_ADMITTED_FULL_INTEGRATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 1704,
-      "sha256": "8A0698EF6157CFE67A53CFB42F4599E0E4CF2D1645A25EC631DBA5CB4283C52C"
+      "bytes": 1920,
+      "sha256": "33566B5A02A8E74B0C004530D75D64F6C22AC468065D7B9272219F67B0F92DE2"
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -4602,6 +4602,11 @@
       "sha256": "B93BD5574C05411E327FCA848401CDA2A93D9785CE0797CB5944A901BA61E9E7"
     },
     {
+      "path": "docs/verification/gold-wave2612-zip9-admission.json",
+      "bytes": 11214,
+      "sha256": "3D4AC1615C76D982B349A0EAE4A20A74D72EE904B37C35985DACAC88F26ABE3D"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5803,8 +5808,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2672635,
-      "sha256": "78264E0FC2DEBEFA1EB9FE24CE6DAB376511CA0761F3E17F804AC3F3467C3664"
+      "bytes": 2674637,
+      "sha256": "D08B4CC7F9175599199AC57158988022129B4554A27F4D9EE2310D4641822994"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5878,13 +5883,13 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 386961,
-      "sha256": "A5587829EBF19110FC0D13AE8C8D53A055EFFF5FBBD876A2F58EB8DC78394305"
+      "bytes": 387130,
+      "sha256": "8BBA731049696411D897FD8A9FB1F97CBED5CEFD1546620D5E37B90D166D9106"
     },
     {
       "path": "SRC/Cargo.toml",
-      "bytes": 2239,
-      "sha256": "6124446DACAEA94EAAA1202686E3A9A2AF30A23EA991BBCB9A9C47DCECC8B0B6"
+      "bytes": 2305,
+      "sha256": "F39929BB44951CCBF193B54A3BFD485397476856035FDD4B1A7BCF7327009C25"
     },
     {
       "path": "SRC/deny.toml",
@@ -6523,8 +6528,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46683,
-      "sha256": "0F28F4EBDABD6A69DF66109EFFDEF8D8A21BF3D3EA81E6857C730119C32E180C"
+      "bytes": 46688,
+      "sha256": "9FEE53AFB2EA7F340E64F61DFC6D168F91FD77BB425FB78BACB37A0E3CB3FDE8"
     },
     {
       "path": "SRC/neothd/src/adr/extractor.rs",
@@ -8513,8 +8518,8 @@
     },
     {
       "path": "SRC/neothd/src/media/document.rs",
-      "bytes": 58975,
-      "sha256": "EE319CEC6C1C88C09321A444FF51D827396916D5D955944AD377643C72AE7C7E"
+      "bytes": 60499,
+      "sha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888"
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
@@ -9647,6 +9652,11 @@
       "sha256": "591A0931B86F2BC423F7A8338715061FC5A4DEE8EBECE622697B03BD669EFDDC"
     },
     {
+      "path": "SRC/neothd/tests/candle_zip_compat.rs",
+      "bytes": 4780,
+      "sha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E"
+    },
+    {
       "path": "SRC/neothd/tests/channel_attachment_wiring_source_gate.rs",
       "bytes": 24423,
       "sha256": "69858987C221D7D6D239A962E9C06888EE0728655447A43EB834CC39051AC554"
@@ -9770,6 +9780,491 @@
       "path": "SRC/neothd/tests/untrusted_consumer_source_gate.rs",
       "bytes": 11344,
       "sha256": "C4707F3290A9A893F28B5E2915E6A2E08D311972FE5DBDDC12EFD438B2E978AE"
+    },
+    {
+      "path": "SRC/vendor/candle-core/.cargo_vcs_info.json",
+      "bytes": 105,
+      "sha256": "BFE9CB205BAA4E9024476C2703BF94A0266A9148946804B1638E991B47D82FBC"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/bench_main.rs",
+      "bytes": 346,
+      "sha256": "4A23290C22417A856748C26DB1D3E4D11817700D7BE0EFFB472487E05C3C41D8"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/affine.rs",
+      "bytes": 1340,
+      "sha256": "A3A4CA125FB1F6A3AE6906116B98EB8A205547219B060711D945E872A41E47E1"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/conv_transpose2d.rs",
+      "bytes": 1768,
+      "sha256": "1FAB09BB4C799E3E04BD49F680E7686CCCFCDEA76CDBD2147D99C798D0D017F0"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/matmul.rs",
+      "bytes": 1245,
+      "sha256": "268CD905C3E1A2D76B87BDEE52A57ADCAE8F60ACCB61FAEA28492C10533BD2A5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/mod.rs",
+      "bytes": 2049,
+      "sha256": "424E057693736547755FE170931FD24261BE6F76F2C8AB485973B56D8510496B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/qmatmul.rs",
+      "bytes": 2092,
+      "sha256": "5605D519A2F117AFE4D69551C72AA21F6385DF54113B3FCFCD769E96B6DAD513"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/random.rs",
+      "bytes": 1837,
+      "sha256": "D19E9712CABD73FD2F9B630B8E0DBDD227B987282B70B86026E6789B985A193B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/reduce.rs",
+      "bytes": 4344,
+      "sha256": "1FE1381B3E91D350EE4F17B36FEE9D4AA98B4638A665B9E77D0C536A8E3682BD"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/unary.rs",
+      "bytes": 1410,
+      "sha256": "BECC0B20D04B7E9696BBD64B6458D3E45B68421100FF455E8C9C0E21CB6D3BF3"
+    },
+    {
+      "path": "SRC/vendor/candle-core/benches/benchmarks/where_cond.rs",
+      "bytes": 2010,
+      "sha256": "77DE82DAD3975C9219EC2A0F61174E571E4C3EA1A523693F54D78A20F9C520D8"
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.lock",
+      "bytes": 66411,
+      "sha256": "2AB08E3940164FBAF570D1E17D44EDAC3178B4F24DA608E21FCFAB609F5786DD"
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml",
+      "bytes": 4222,
+      "sha256": "4F91C55C9FB77CC2A6F91D783C5BE0D52195038C7A0335E45891A91D8EAB6E2B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml.orig",
+      "bytes": 1716,
+      "sha256": "5D87068638D7E3F333A2AD8164EE3524B4F3CC9482827EB415027D1B9195253B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/examples/basics.rs",
+      "bytes": 543,
+      "sha256": "834936869CA3542647C1C0FEAAFCE578708CDA17381B8010FB9CE2C1B78EF838"
+    },
+    {
+      "path": "SRC/vendor/candle-core/examples/cuda_basics.rs",
+      "bytes": 1037,
+      "sha256": "E8B10B6DB2E9CCA40BBBECBE4C4ADA036AB3B645158AC118FC836A6227EBC0EF"
+    },
+    {
+      "path": "SRC/vendor/candle-core/examples/cuda_sum_benchmark.rs",
+      "bytes": 1694,
+      "sha256": "8C1CCAC409D77695793186588274F8B08C2C66337F0751485634A0329A55A9B7"
+    },
+    {
+      "path": "SRC/vendor/candle-core/examples/metal_basics.rs",
+      "bytes": 897,
+      "sha256": "9C6627BA32CDCA0221DE6C6C36C39FCFAEFCED4541A670D751CD196A6E12CF11"
+    },
+    {
+      "path": "SRC/vendor/candle-core/LICENSE",
+      "bytes": 11357,
+      "sha256": "C71D239DF91726FC519C6EB72D318EC65820627232B2F796219E87DCF35D0AB4"
+    },
+    {
+      "path": "SRC/vendor/candle-core/README.md",
+      "bytes": 42,
+      "sha256": "9B00007B1D568125E67D6F2FF5C40ACD8227DEC4C62681CBC87775768A125200"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/accelerate.rs",
+      "bytes": 12889,
+      "sha256": "9BE99929BB6553D9BAF6B6A5A56FA66BFDBEE122F76C4792A00E09AC8A0D638A"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/backend.rs",
+      "bytes": 4707,
+      "sha256": "B6D4BAACA5948F37ABAE7F640E7918D89F01BCCC284207D4C2B1DC7B97FCBDD6"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/backprop.rs",
+      "bytes": 38207,
+      "sha256": "509342DCA5F82E2A75F67F93FBFA969E9E1E82B3312AADDE5434A3DAEA81A990"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/conv.rs",
+      "bytes": 10846,
+      "sha256": "1CE04D9129CEB0A29C9B0F97D764856B0E3BB89AE63F0DDD3AE23FAE0B532598"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/convert.rs",
+      "bytes": 4024,
+      "sha256": "859BA5F6C8A9AE69DD1F5442904CD86202D98C24D96D55C9C1CFE04FF37B50A0"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu_backend/mod.rs",
+      "bytes": 104391,
+      "sha256": "3BB1312254497EEBE2A9A188E85FD2A65CD716B5A932DF99AFD96092F899F9B0"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu_backend/utils.rs",
+      "bytes": 14170,
+      "sha256": "62886F78DB34FDE132FA9EFC82707CC4E3EC8E1B77C71DCA7DE48385F40B8EEF"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/avx.rs",
+      "bytes": 3908,
+      "sha256": "6A30F8F1C6A7C6B103CE7D675D84F550A622369839B115399F65D72A504CBD10"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/erf.rs",
+      "bytes": 22763,
+      "sha256": "D71DF728DCA01FD96E9FFFEF7778149AC1AC776D65434D0087F9AE9BB266224C"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/kernels.rs",
+      "bytes": 4743,
+      "sha256": "AC7CBF3B316C2FF0B532D3C74A2B1E086BBF074899FFEBEAA9D97BF337577C6A"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/mod.rs",
+      "bytes": 5173,
+      "sha256": "997EBDC32955DD5F6DA602D7E06F743D609A6D23200764394DAC9AFED447D74B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/neon.rs",
+      "bytes": 1688,
+      "sha256": "C180DFFB8A342C2F026D8FDCC235C7D9E8F0AAC8A5F6F03DE4C2F4DE8DDA609C"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cpu/simd128.rs",
+      "bytes": 1541,
+      "sha256": "8ED8CFF924086325C4D4AF5A12746A7CE4A5A05F18CDEAA28BC0FF9C64060906"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cuda_backend/cudnn.rs",
+      "bytes": 4325,
+      "sha256": "88A0475F6348493D7569CA75B53A0A55796237F71CB340F089322D94121A617F"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cuda_backend/device.rs",
+      "bytes": 18202,
+      "sha256": "E2A77C2FB3666B42B902B52B985BAE88A50D20390FF49C4CA919CDADFEA6E345"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cuda_backend/error.rs",
+      "bytes": 1682,
+      "sha256": "B60BCE29F50CE640FB1932009BD447F0FF7FC0E293900BEFB05A9D8DF0E43413"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cuda_backend/mod.rs",
+      "bytes": 77218,
+      "sha256": "6573495EED70AF80B3682D443220FCAA2D1E4C39CA0EA6D8D0E3E176219E04FC"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/cuda_backend/utils.rs",
+      "bytes": 6149,
+      "sha256": "B795E2DEF1C2CAFC4C128D2C70428B8330D289A092609291566FD1938DD1FC22"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/custom_op.rs",
+      "bytes": 16469,
+      "sha256": "746309DE3BF53DAEDF8D7E3890B8F9D5850124DAB2EA881ACA2A3AE47D7E846D"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/device.rs",
+      "bytes": 12475,
+      "sha256": "2043ED3DC32A6F0A2C5AC7B08C069A1AC6668604B1EE03E7B943C76D249649AF"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/display.rs",
+      "bytes": 16194,
+      "sha256": "EE0F2E4498A926E16CDE0F62E4D6C058F08C0AB427B62535EB612E96E700661C"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/dtype.rs",
+      "bytes": 5838,
+      "sha256": "2EEDB83F4AE7051D3EB5B9BFD7F2B27FA0EE9BC233CA0A42498BC97AFB73AC67"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/dummy_cuda_backend.rs",
+      "bytes": 7607,
+      "sha256": "35C6FA9E709F56FF3A86447B2A362752C0C936C349D133D8E9D99DFBA0311991"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/dummy_metal_backend.rs",
+      "bytes": 6565,
+      "sha256": "46A27CBFB354A2F322CEFE97C9DD2CA7D3C02CA250E875ADFA2DB688207541AD"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/error.rs",
+      "bytes": 9198,
+      "sha256": "8C12415E925A8D53EC759572A3289E9F6E8784C5D68E5384989F02359AEC88F3"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/indexer.rs",
+      "bytes": 7903,
+      "sha256": "2B817B1C17E38265CEF8DBC64449E53457BE906A747CB025A7505882FED42628"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/layout.rs",
+      "bytes": 8624,
+      "sha256": "01C9D10E47B975707E8780166E891D36FF00AAF153F29EB28597F55E11A864A3"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/lib.rs",
+      "bytes": 5101,
+      "sha256": "310E2ED2DD91AD192B3F871F8C79091CFA2F1C3ED382D1C729BBDDDE4E3601E5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/metal_backend/device.rs",
+      "bytes": 12817,
+      "sha256": "B09F3DA24B779768BCE8104B277BE87FDAEB0CAA223DC939DD075305A056757A"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/metal_backend/mod.rs",
+      "bytes": 91500,
+      "sha256": "8B4800182CE1842D553E62D8D6BD244017C8B41FF64809DF35BAE1B7FF22125F"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/mkl.rs",
+      "bytes": 11567,
+      "sha256": "C80564BD6139736E0E28336BA3130F386DA963D62238EB45F2F1A15C506C2254"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/npy.rs",
+      "bytes": 16812,
+      "sha256": "524E2589A395286065321E5BC6BE2DAFEECF6610F22B05CD5E1E73108EFE5D32"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/op.rs",
+      "bytes": 23798,
+      "sha256": "57C0807A2E72A21CBAECF7181B5820122BB1CB75B03A7A5B3F68A6870E43FE24"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/pickle.rs",
+      "bytes": 26747,
+      "sha256": "5C329D8A51CBEB1D7A61BCCD7975E74F17C388C88FCCE4F6016BE2E60F3D6EC1"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/avx.rs",
+      "bytes": 28383,
+      "sha256": "24CAF149E175E12AC4B55F94074F051518C94D85D3B6E749581E1241B15B5BF5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/cuda.rs",
+      "bytes": 27194,
+      "sha256": "2B9CF5955C9385A77E96E5A19C5EE2351D2597694DD3D5F6CB8F9702116F0261"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/dummy_cuda.rs",
+      "bytes": 1323,
+      "sha256": "2BAA081EDCD66D4A8EA1935FADB301E2C86D490D1761A4320F7180A04EA5BA91"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/dummy_metal.rs",
+      "bytes": 1208,
+      "sha256": "FCDBAC00595C9035874D28C4539AEE6143629EE4BD8CA128EBE3614E87EB4BCA"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/ggml_file.rs",
+      "bytes": 9132,
+      "sha256": "08F9309986A64224F525CCFAA5DD56BB9129E5B9F2963F356509A534B81892F9"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/gguf_file.rs",
+      "bytes": 18336,
+      "sha256": "5954F630B6B416B2DAB2F5A48F941DE6940165A36EF33D8FB9838364452281BC"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/k_quants.rs",
+      "bytes": 67916,
+      "sha256": "D0D15868C3ADBAB7EE2BB4DD69F7F668225490B2CE17AFCD834AAB2C1315E523"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/metal.rs",
+      "bytes": 9178,
+      "sha256": "7662AAFC3BCF55C11AF8C33A3C8DC3DACFB28E19AE0769DA1544BEFFE76D66DE"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/mod.rs",
+      "bytes": 18019,
+      "sha256": "E62386DADBD23DB42964EA4194892EF08C7ADC13B24EA5A07AFCFCF9C0A0BD0F"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/neon.rs",
+      "bytes": 22917,
+      "sha256": "E76EF3A2AE350CFFE35764845481E6FBB1553DA3CD34B500E7E6ECC127A41C70"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/simd128.rs",
+      "bytes": 17175,
+      "sha256": "6AFE4C9677961DDC5CBEAAEB3AA48A8AF200134CEA8D39E43C239E0DF5D1D3D5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/quantized/utils.rs",
+      "bytes": 10023,
+      "sha256": "622E915FBCC13B03D827284FC802076B2955C53744FF6D7A9A881A4509D2F0C5"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/safetensors.rs",
+      "bytes": 17254,
+      "sha256": "3AB0AB6A763912D3435985B6C49AA5720DC6BC5DABB2B12D37467397D491C87E"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/scalar.rs",
+      "bytes": 584,
+      "sha256": "DFABB71BE36A8D05847DBDB8B20070F53BBFB0399469473B14A561F74915DFD9"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/shape.rs",
+      "bytes": 19155,
+      "sha256": "C8C35F61E16583FCBE2382A20E3B22104056394E8CC6F9AD4A45B96A022B5D8D"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/sort.rs",
+      "bytes": 8755,
+      "sha256": "E1EDFB713F908F6AAA594FC29EE1750E3B3A0BBC21ED48C68DC4B1A2E5D10575"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/storage.rs",
+      "bytes": 27360,
+      "sha256": "7C16AA7859F7B9967EC3211C0C67E8247E29939EBBC12237B03FF2455D6D5DB7"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/streaming.rs",
+      "bytes": 6138,
+      "sha256": "ABD0DE65D894B617E6E3FB0C0787F220582BCB1F8EB9341C33BB74AAA23BF165"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/strided_index.rs",
+      "bytes": 2126,
+      "sha256": "FED1CD1E57CC508D5D16ECC99F3385E3AFF8236FD025B8DD9B9E6AFA5867EC67"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/tensor_cat.rs",
+      "bytes": 11055,
+      "sha256": "5C5C45A6B0EB2A1D6FEE51473ECEDC462C728F3164D7371C4EAE3CDDA3DD30BD"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/tensor.rs",
+      "bytes": 102141,
+      "sha256": "F9924778F9AC3B574F86E07293991DE91C45B6B1783B6B7C6F66762A7AF3F3D7"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/test_utils.rs",
+      "bytes": 1711,
+      "sha256": "1F4483BB02AB7FDD90828B947D4D5029BBBE400387438DCEEA9EA6171841929D"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/utils.rs",
+      "bytes": 887,
+      "sha256": "0F3C86ED5C3790F5726FCA46F70C212791F256C1A45DF75377A79DFF8A46E1F8"
+    },
+    {
+      "path": "SRC/vendor/candle-core/src/variable.rs",
+      "bytes": 4731,
+      "sha256": "B9B10B5D2D4A81D1AB920F9337E556A634BAE7E484A0B04EA855F9A903FC87EC"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/conv_tests.rs",
+      "bytes": 35054,
+      "sha256": "4BC78F017A3B79028D474FADB62FA2EF3A70C102F90795BFD2D557EC93014C0D"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/custom_op_tests.rs",
+      "bytes": 5238,
+      "sha256": "5DE51AC9AFB50248F76C202687A6163193D7EA366143840901C903FE8E633F86"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/display_tests.rs",
+      "bytes": 2794,
+      "sha256": "CF59D2EE9954A639DB5C43ADE847D4629503B706282419FAE8C6481790C41E9B"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/fortran_tensor_3d.pth",
+      "bytes": 1486,
+      "sha256": "F5178BCD53EB6CB54C9A5E825492C717BF4E7BBADB9F0F3833B6C5C6764F7A38"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/grad_tests.rs",
+      "bytes": 16831,
+      "sha256": "EE5B72FEEC04B324D7A41C4B0474A383BA3AE587A3FDF0F65DF0FB8185D65591"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/indexing_tests.rs",
+      "bytes": 3728,
+      "sha256": "3D9E855B36A3E0B8683777B3D13C6D34859773F47E5FF309D612CBFCAFDD6BE4"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/layout_tests.rs",
+      "bytes": 5185,
+      "sha256": "25E6347E2C647838331254AD21D437F6AB59BC26DD98110C696D365F05DAA18E"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/matmul_tests.rs",
+      "bytes": 4717,
+      "sha256": "2E2F855B37A9384EBAFCCB4B6A029B7A9856F4442E7B3BAF8316C1C1A1DF1418"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/npy.py",
+      "bytes": 193,
+      "sha256": "E2547B01E13FC3807991286645DBA5EEA7C5B3D76E821BE2CFA7822BE7A2F818"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/pool_tests.rs",
+      "bytes": 3639,
+      "sha256": "B574C67CE8486578D55B3F27070F83BF1C1137173B9D3762D5CD2E7D25C9F8B3"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/pth_tests.rs",
+      "bytes": 919,
+      "sha256": "08496D5434BFB2382497F1E5D7F83EBE149BD4030B06882912D457D579D011A8"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/pth.py",
+      "bytes": 1432,
+      "sha256": "7EF7B4686691B33173F376F22DAA121E92C91BEC172994AFE3DEEBD53E77F0B7"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/quantized_tests.rs",
+      "bytes": 40425,
+      "sha256": "B7ADE6A22D53AE8084A18C4CCE435BFA39D22991D88CD38369B6E2F51509BE81"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/serialization_tests.rs",
+      "bytes": 1905,
+      "sha256": "98DB2DA64586EC61234767421A792E712F2C072FE2382B1FF589C771B03B7D57"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/tensor_tests.rs",
+      "bytes": 55035,
+      "sha256": "DBF30732F19ABE8E92B246E45A8C92BA009E24A92586B8B8D03F50B523C593E1"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/test_with_key.pt",
+      "bytes": 1338,
+      "sha256": "2775D95F17D2630E2534E3AE09462624955031407A67F0F3B52115C49601B747"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/test.npy",
+      "bytes": 208,
+      "sha256": "F314DDDDF18999D4890F4FEC8BB6539FC62B6F41861FA85E1C04C98A03097DDA"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/test.npz",
+      "bytes": 668,
+      "sha256": "999497E0C309302915E4DB2B16118CE097C68AAC66C08058FAC8DB3D58C7809A"
+    },
+    {
+      "path": "SRC/vendor/candle-core/tests/test.pt",
+      "bytes": 1165,
+      "sha256": "2BC164FA96F78EF8FCB8EAB5FDAE9B991EFE946B9B63071FDF1769DBA5D3FE25"
     },
     {
       "path": "SRC/vendor/imbl/.cargo_vcs_info.json",
@@ -11818,8 +12313,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2313113,
-      "sha256": "ED7854A63B920ABFB7D91C4B8533B9F7C6892E3BE09C5F140EA5B8AC92E61A73"
+      "bytes": 2326473,
+      "sha256": "A83247A5235017782106A7CB7AB9A6A90D5D175F1C681061D0C9421E17D5F519"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",

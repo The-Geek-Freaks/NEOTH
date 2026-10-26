@@ -362,7 +362,7 @@ zstd = "=0.14.3"
 # Both pure-Rust — no system liblzma linkage, no shell-out — so the
 # self-contained-binary rule (memory/neoth-hard-rule-self-contained)
 # stays honoured.
-zip     = { version = "1", default-features = false, features = ["deflate"] }
+zip     = { version = "=9.0.0", default-features = false, features = ["deflate"] }
 lzma-rs = "0.3"
 
 # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for

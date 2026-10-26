@@ -39,3 +39,6 @@ packaging/vendor-provenance/candle-core-0.8.4-zip9.patch text eol=lf whitespace=
 SRC/vendor/imbl/.github/dependabot.yml whitespace=-blank-at-eof
 # Preserve the pinned Silero model, upstream license and provenance bytes.
 SRC/neothd/assets/silero-vad/** -text
+# Preserve authenticated upstream whitespace in these two unchanged Candle files.
+SRC/vendor/candle-core/src/tensor_cat.rs whitespace=-blank-at-eol
+SRC/vendor/candle-core/tests/conv_tests.rs whitespace=-blank-at-eol

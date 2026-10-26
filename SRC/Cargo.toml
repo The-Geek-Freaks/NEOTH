@@ -45,6 +45,7 @@ zeroize    = { version = "1", features = ["zeroize_derive"] }
 unsafe_op_in_unsafe_fn = "warn"
 
 [patch.crates-io]
+candle-core = { path = "vendor/candle-core", version = "=0.8.4" }
 arrayref = { path = "vendor/arrayref", version = "=0.3.9" }
 imbl = { path = "vendor/imbl", version = "=6.1.0" }
 libudx = { path = "vendor/libudx" }

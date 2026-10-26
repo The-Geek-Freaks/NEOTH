@@ -320,7 +320,7 @@ fn extract_zip_text(
             ))
         }
         DocFormat::Pptx => {
-            let mut names = member_names(&archive);
+            let mut names = member_names(&archive)?;
             names.retain(|n| is_slide(n));
             names.sort_by_key(|n| slide_number(n));
             let mut out = String::new();
@@ -359,7 +359,7 @@ fn extract_zip_text(
             ))
         }
         DocFormat::Epub => {
-            let mut names = member_names(&archive);
+            let mut names = member_names(&archive)?;
             names.retain(|n| is_xhtml(n));
             names.sort();
             let mut out = String::new();
@@ -403,13 +403,17 @@ fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(), 
                 backend: "document",
                 reason: format!("inspect archive member {index}: {e}"),
             })?;
+        let member_name = file.name().map_err(|e| ExtractionError::Backend {
+            backend: "document",
+            reason: format!("decode archive member {index} name: {e}"),
+        })?;
         let member_size = file.size();
         if member_size > limits.member_bytes {
             return Err(ExtractionError::Backend {
                 backend: "document",
                 reason: format!(
                     "archive member `{}` declares {member_size} bytes, exceeding the {}-byte cap",
-                    file.name(),
+                    member_name,
                     limits.member_bytes
                 ),
             });
@@ -457,8 +461,17 @@ fn missing(fmt: &'static str, member: &'static str) -> impl Fn() -> ExtractionEr
     }
 }
 
-fn member_names(archive: &Archive) -> Vec<String> {
-    archive.file_names().map(|s| s.to_string()).collect()
+fn member_names(archive: &Archive) -> Result<Vec<String>, ExtractionError> {
+    archive
+        .file_names()
+        .map(|name| {
+            name.map(|name| name.into_owned())
+                .map_err(|e| ExtractionError::Backend {
+                    backend: "document",
+                    reason: format!("decode archive member name: {e}"),
+                })
+        })
+        .collect()
 }
 
 fn read_member(
@@ -1508,6 +1521,31 @@ mod tests {
         let asset = doc_asset(DOCX_MIME, b"PK\x03\x04 not a real zip".to_vec());
         let err = DocumentExtractor.extract(&asset).await.unwrap_err();
         assert!(matches!(err, ExtractionError::Backend { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn truncated_archive_directory_fails_before_document_selection() {
+        let mut bytes = make_zip(&[("word/document.xml", "<w:t>ok</w:t>")]);
+        assert!(extract_blocking(&doc_asset(DOCX_MIME, bytes.clone())).is_ok());
+        let central = bytes
+            .windows(4)
+            .position(|window| window == b"PK\x01\x02")
+            .expect("valid fixture has a central directory");
+        bytes.truncate(central);
+        assert!(zip::ZipArchive::new(Cursor::new(&bytes)).is_err());
+        for mime in [DOCX_MIME, PPTX_MIME, XLSX_MIME, EPUB_MIME] {
+            let error = extract_blocking(&doc_asset(mime, bytes.clone())).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    ExtractionError::Backend {
+                        backend: "document",
+                        reason,
+                    } if reason.starts_with("open ") && reason.contains(" archive:")
+                ),
+                "{mime}: {error:?}"
+            );
+        }
     }
 
     #[test]
