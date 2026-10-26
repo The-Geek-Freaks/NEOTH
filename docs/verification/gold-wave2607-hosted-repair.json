@@ -155,5 +155,18 @@
     "exceptionExpiry": "2026-11-01",
     "olderVersionRejection": "0.11.15",
     "hostedValidationPending": true
+  },
+  "focusedClippyFollowup": {
+    "failedRun": 40336506459,
+    "producer": "0503f7208d9b110337e0057ab22743276f6600a3",
+    "coreTestTargetsCompiled": true,
+    "failure": "clippy::type_complexity in memory/ctx/logical.rs current_state",
+    "repair": "Private LogicalCurrentStateRow alias; query/destructuring/validation unchanged; no lint suppression",
+    "reviewer": "/root/logical_clippy_repair",
+    "reviewMode": "PROMPT_ONLY_EXACT_EXCERPT",
+    "documentCasesExecuted": 0,
+    "costReplayCasesExecuted": 0,
+    "productionOwnerAddedToSourceBindings": true,
+    "newHostedPassRequired": true
   }
 }

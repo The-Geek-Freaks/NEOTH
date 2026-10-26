@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T14:21:23.6642778Z",
-  "validationStatus": "SOURCE_CANDIDATE_HOSTED_PENDING",
+  "capturedUtc": "2026-10-26T14:24:40.7906819Z",
+  "validationStatus": "STATIC_CLIPPY_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -153,8 +153,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 49438,
-      "sha256": "45A78CCA77144F1D71BC542780906118F6ACB15BBC4497E2A239B4A29D598B0A"
+      "bytes": 49478,
+      "sha256": "2BBACB9864CE24ABD4D437BB9E1CF41A22D7637008398828733576956F159B5A"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4573,8 +4573,8 @@
     },
     {
       "path": "docs/verification/gold-wave2607-hosted-repair.json",
-      "bytes": 6757,
-      "sha256": "111E1E94F4F2852855996BE26D1BD403FF56B5FD6AF37CB456044F4C11EBA65A"
+      "bytes": 7360,
+      "sha256": "C19AFC05C9616DD56832EC03CD913E222F645533319094C7A2E849F4D6639990"
     },
     {
       "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
@@ -5783,8 +5783,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2664233,
-      "sha256": "3BF2DF5AA330475099C1C061DE3A35F0353EEFC17EFA6F9C190C47C0466F6A91"
+      "bytes": 2664825,
+      "sha256": "EBDB512913BDB112135CBC0AECDC1CAFE6F0F50F51A1B179CF611AE45D1F4372"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8628,8 +8628,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical.rs",
-      "bytes": 17691,
-      "sha256": "387DD5143BFD6A6448E812E1FBE286DDB26042931AC4EEEC6489D1D12DA24B44"
+      "bytes": 17714,
+      "sha256": "8F99394DF4670818A22ADCB43DF43709A9F4651F3BE5720BE8E1AB7E9AFF6134"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical/tests.rs",

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_CANDIDATE_HOSTED_PENDING",
+  "status": "STATIC_CLIPPY_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 432821,
-    "sha256": "8702C972C59D22D0D13ABFBE0A0BFB4077E1533C00E605979EC320EA8C72495F"
+    "bytes": 432825,
+    "sha256": "BEB55BE2121B9E6818E578B73088CC9140A83F63EF2DA63CBDBAA44E9D4DFC5F"
   },
   "sourceInputs": 2360,
   "requiredNativeTests": [
@@ -85696,6 +85696,38 @@
       }
     ],
     "note": "Move runner-dependent proof directory initialization from invalid job-level runner context to a runtime step; source candidate unchanged; hosted execution still pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607-logical-row-type": {
+    "base": "9acb5369eb40e24a60ee077f44f4ea0076d9c65a",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 49478,
+        "sha256": "2BBACB9864CE24ABD4D437BB9E1CF41A22D7637008398828733576956F159B5A",
+        "blob": "b4089e9f1f3236bac46f49775a99da6882d4b0e3"
+      },
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 7360,
+        "sha256": "C19AFC05C9616DD56832EC03CD913E222F645533319094C7A2E849F4D6639990",
+        "blob": "11595b33cec8ff62ac347c57f89439a817a14e3c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2664825,
+        "sha256": "EBDB512913BDB112135CBC0AECDC1CAFE6F0F50F51A1B179CF611AE45D1F4372",
+        "blob": "0740682aa4695f0e77bce385967305b57869c005"
+      },
+      {
+        "path": "SRC/neothd/src/memory/ctx/logical.rs",
+        "bytes": 17714,
+        "sha256": "8F99394DF4670818A22ADCB43DF43709A9F4651F3BE5720BE8E1AB7E9AFF6134",
+        "blob": "beddb69393b5104c3ab65cfe77ef6273ab524f7e"
+      }
+    ],
+    "note": "Private SQL row type alias fixes observed type_complexity without behavior/query changes; bind production logical.rs in focused document receipt; previous62cases not executed due earlier lint failure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

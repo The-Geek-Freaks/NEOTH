@@ -345,16 +345,18 @@ pub fn status(conn: &Connection, identity: &str) -> Result<Option<LogicalStatus>
     current_state(conn, identity)
 }
 
+type LogicalCurrentStateRow = (
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 fn current_state(conn: &Connection, identity: &str) -> Result<Option<LogicalStatus>> {
-    let current: Option<(
-        i64,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = conn
+    let current: Option<LogicalCurrentStateRow> = conn
         .query_row(
             "SELECT d.current_source_id,d.current_revision,d.current_event_id,s.label,s.file_path,
              s.logical_id,s.logical_revision FROM logical_documents d

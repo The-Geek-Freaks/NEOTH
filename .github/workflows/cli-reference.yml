@@ -218,7 +218,7 @@ jobs:
                   raise SystemExit(f"source binding mismatch: {relative}")
               records.append({"test": name, "sourcePath": relative.as_posix(), "sourceSha256": actual, "junitClass": "neoth"})
               inputs[relative.as_posix()] = actual
-          for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml"):
+          for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/neothd/src/memory/ctx/logical.rs"):
               inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
           receipt = {
               "schema": "neoth.document-regressions.v1", "producer": os.environ["GITHUB_SHA"],
