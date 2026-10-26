@@ -354,7 +354,7 @@ flate2 = "1.0"
 # sealed segments. Level-3 chosen per HANDOFF §Workstream-F: good ratio
 # at low latency, suitable for JSON-heavy WAL payloads. `zstd` 0.13 wraps
 # the vendored libzstd; no system-zstd linkage, stays AIO-compatible.
-zstd = "0.13"
+zstd = "=0.14.3"
 
 # V03-09 Phase 2b (Session 19) -- archive extractors for the self-
 # update download path. release.yml publishes Windows releases as
@@ -691,7 +691,7 @@ neoth-openclaw-custody = { path = "../neoth-openclaw-custody", version = "1.0.0"
 # (feature `wasm-plugin-host`). Pinned to 36.0.16; the 2026 API is stable
 # enough for the Engine + Store + Linker surface we need. Compile-cost:
 # ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
-wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }
+wasmtime = { version = "=36.0.19", default-features = false, features = ["cranelift", "runtime"], optional = true }
 
 # PC-01 (clipboard slice, feature `os-clipboard`) — cross-platform OS clipboard.
 # `default-features = false` drops the `image-data` feature (we only ever move

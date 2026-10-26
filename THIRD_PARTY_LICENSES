@@ -330,19 +330,19 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `cpu-time 1.0.0` - `MIT/Apache-2.0` - https://crates.io/crates/cpu-time/1.0.0 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cpufeatures 0.2.17` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cpufeatures 0.3.0` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `cranelift-assembler-x64 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://crates.io/crates/cranelift-assembler-x64/0.123.16 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-assembler-x64-meta 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://crates.io/crates/cranelift-assembler-x64-meta/0.123.16 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-bforest 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-bitset 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-codegen 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-codegen-meta 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-codegen-shared 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-control 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-entity 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-frontend 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-isle 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-native 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `cranelift-srcgen 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-assembler-x64 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://crates.io/crates/cranelift-assembler-x64/0.123.19 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-assembler-x64-meta 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://crates.io/crates/cranelift-assembler-x64-meta/0.123.19 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-bforest 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-bitset 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-codegen 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-codegen-meta 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-codegen-shared 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-control 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-entity 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-frontend 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-isle 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-native 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `cranelift-srcgen 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `crc 3.4.0` - `MIT OR Apache-2.0` - https://github.com/mrhooray/crc-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `crc-catalog 2.5.0` - `MIT OR Apache-2.0` - https://github.com/akhilles/crc-catalog.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `crc32c 0.6.8` - `Apache-2.0/MIT` - https://github.com/zowens/crc32c - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -359,7 +359,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `cssparser-macros 0.7.0` - `MPL-2.0` - https://github.com/servo/rust-cssparser - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `ctor 0.10.1` - `Apache-2.0 OR MIT` - https://github.com/mmastrac/rust-ctor - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `ctr 0.9.2` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/block-modes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `ctutils 0.4.2` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `ctutils 0.4.6` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `cursor-icon 1.2.0` - `MIT OR Apache-2.0 OR Zlib` - https://github.com/rust-windowing/cursor-icon - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `curve25519-dalek 4.1.3` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `curve25519-dalek 5.0.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -739,7 +739,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `natord 1.0.9` - `MIT` - https://github.com/lifthrasiir/rust-natord - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `natural 0.5.0` - `MIT` - https://github.com/cjqed/rs-natural - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `ndarray 0.17.2` - `MIT OR Apache-2.0` - https://github.com/rust-ndarray/ndarray - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `negentropy 0.5.0` - `MIT` - https://github.com/rust-nostr/negentropy.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `negentropy 0.5.2` - `MIT` - https://github.com/rust-nostr/negentropy.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `netdev 0.45.0` - `MIT` - https://github.com/shellrow/netdev - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `netlink-packet-core 0.8.1` - `MIT` - https://github.com/rust-netlink/netlink-packet-core - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `netlink-packet-route 0.31.0` - `MIT` - https://github.com/rust-netlink/netlink-packet-route - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
@@ -892,8 +892,8 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `pulldown-cmark 0.12.2` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `pulldown-cmark 0.13.3` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `pulldown-cmark-escape 0.11.0` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `pulley-interpreter 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `pulley-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `pulley-interpreter 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `pulley-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `pulp 0.18.22` - `MIT` - https://github.com/sarah-ek/pulp/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `pulp 0.21.5` - `MIT` - https://github.com/sarah-ek/pulp/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `pxfm 0.1.29` - `BSD-3-Clause OR Apache-2.0` - https://github.com/awxkee/pxfm - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -903,7 +903,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `quick-xml 0.39.4` - `MIT` - https://github.com/tafia/quick-xml - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu
 - `quick-xml 0.41.0` - `MIT` - https://github.com/tafia/quick-xml - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `quinn 0.11.9` - `MIT OR Apache-2.0` - https://github.com/quinn-rs/quinn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `quinn-proto 0.11.15` - `MIT OR Apache-2.0` - https://github.com/quinn-rs/quinn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `quinn-proto 0.11.18` - `MIT OR Apache-2.0` - https://github.com/quinn-rs/quinn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `quinn-udp 0.5.14` - `MIT OR Apache-2.0` - https://github.com/quinn-rs/quinn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `quote 1.0.45` - `MIT OR Apache-2.0` - https://github.com/dtolnay/quote - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rand 0.10.1` - `MIT OR Apache-2.0` - https://github.com/rust-random/rand - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -916,7 +916,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `rand_core 0.9.5` - `MIT OR Apache-2.0` - https://github.com/rust-random/rand - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rand_distr 0.5.1` - `MIT OR Apache-2.0` - https://github.com/rust-random/rand_distr - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rand_distr 0.6.0` - `MIT OR Apache-2.0` - https://github.com/rust-random/rand_distr - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `rand_pcg 0.10.2` - `MIT OR Apache-2.0` - https://github.com/rust-random/rngs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `rand_pcg 0.10.2` - `MIT OR Apache-2.0` - https://github.com/rust-random/rngs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rand_xoshiro 0.7.0` - `MIT OR Apache-2.0` - https://github.com/rust-random/rngs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rangemap 1.7.1` - `MIT/Apache-2.0` - https://github.com/jeffparsons/rangemap - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rav1e 0.8.1` - `BSD-2-Clause` - https://github.com/xiph/rav1e/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -971,12 +971,12 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `rustix 0.38.44` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/rustix - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `rustix 1.1.4` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/rustix - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustix-linux-procfs 0.1.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/rustix-linux-procfs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `rustls 0.23.45` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/rustls - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `rustls 0.23.46` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/rustls - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-native-certs 0.8.4` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/rustls-native-certs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-pemfile 2.2.0` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/pemfile - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-pki-types 1.14.1` - `MIT OR Apache-2.0` - https://github.com/rustls/pki-types - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-platform-verifier 0.7.0` - `MIT OR Apache-2.0` - https://github.com/rustls/rustls-platform-verifier - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `rustls-webpki 0.103.15` - `ISC` - https://github.com/rustls/webpki - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `rustls-webpki 0.103.16` - `ISC` - https://github.com/rustls/webpki - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustversion 1.0.22` - `MIT OR Apache-2.0` - https://github.com/dtolnay/rustversion - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustybuzz 0.20.1` - `MIT` - https://github.com/harfbuzz/rustybuzz - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `ryu 1.0.23` - `Apache-2.0 OR BSL-1.0` - https://github.com/dtolnay/ryu - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1236,17 +1236,17 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `wasm_evt_listener 0.1.0` - `MIT` - https://github.com/Alorel/wasm-evt-listener-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `wasmparser 0.236.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `wasmprinter 0.236.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-environ 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-asm-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-cranelift 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-fiber 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-jit-debug 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-jit-icache-coherence 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-math 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-slab 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-unwinder 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `wasmtime-internal-versioned-export-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-environ 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-asm-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-cranelift 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-fiber 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-jit-debug 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-jit-icache-coherence 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-math 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-slab 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-unwinder 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `wasmtime-internal-versioned-export-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `wayland-backend 0.3.15` - `MIT` - https://github.com/smithay/wayland-rs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `wayland-client 0.31.14` - `MIT` - https://github.com/smithay/wayland-rs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `wayland-csd-frame 0.3.0` - `MIT` - https://github.com/rust-windowing/wayland-csd-frame - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
@@ -1263,7 +1263,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `web_atoms 0.2.4` - `MIT OR Apache-2.0` - https://github.com/servo/html5ever - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `webbrowser 1.2.4` - `MIT OR Apache-2.0` - https://github.com/amodm/webbrowser-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `webpki-roots 0.26.11` - `CDLA-Permissive-2.0` - https://github.com/rustls/webpki-roots - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `webpki-roots 1.0.7` - `CDLA-Permissive-2.0` - https://github.com/rustls/webpki-roots - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `webpki-roots 1.0.10` - `CDLA-Permissive-2.0` - https://github.com/rustls/webpki-roots - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `weezl 0.1.12` - `MIT OR Apache-2.0` - https://github.com/image-rs/weezl - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `widestring 1.2.1` - `MIT OR Apache-2.0` - https://github.com/VoidStarKat/widestring-rs - targets: aarch64-pc-windows-msvc, x86_64-pc-windows-msvc
 - `wildmatch 2.6.1` - `MIT` - https://github.com/becheran/wildmatch - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1352,9 +1352,9 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `zerovec-derive 0.11.3` - `Unicode-3.0` - https://github.com/unicode-org/icu4x - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zip 1.1.4` - `MIT` - https://github.com/zip-rs/zip2.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zmij 1.0.21` - `MIT` - https://github.com/dtolnay/zmij - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `zstd 0.13.3` - `MIT` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `zstd-safe 7.2.4` - `MIT OR Apache-2.0` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `zstd-sys 2.0.16+zstd.1.5.7` - `MIT/Apache-2.0` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `zstd 0.14.3` - `BSD-3-Clause` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `zstd-safe 8.2.0` - `BSD-3-Clause` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `zstd-sys 2.1.2+zstd.1.5.7` - `BSD-3-Clause` - https://github.com/gyscos/zstd-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zune-core 0.5.1` - `MIT OR Apache-2.0 OR Zlib` - https://github.com/etemesi254/zune-image - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zune-inflate 0.2.54` - `MIT OR Apache-2.0 OR Zlib` - https://crates.io/crates/zune-inflate/0.2.54 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zune-jpeg 0.5.15` - `MIT OR Apache-2.0 OR Zlib` - https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1389,8 +1389,8 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `candle-transformers 0.8.4` - `MIT OR Apache-2.0` - revision `468d1d525fe206a35d6962c02cfa7b9918b31076` - https://github.com/huggingface/candle
 - `clipboard-win 5.4.1` - `BSL-1.0` - revision `3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342` - https://github.com/doumanash/clipboard-win
 - `const-field-offset-macro 0.2.0` - `MIT OR Apache-2.0` - revision `443908daeed77db500781670448d3688e4be0b9a` - https://github.com/slint-ui/slint
-- `cranelift-assembler-x64 0.123.16` - `Apache-2.0 WITH LLVM-exception` - revision `5cd4bf51aad8ae193823d35a05bfa97dd8dc3f11` - https://github.com/bytecodealliance/wasmtime
-- `cranelift-assembler-x64-meta 0.123.16` - `Apache-2.0 WITH LLVM-exception` - revision `5cd4bf51aad8ae193823d35a05bfa97dd8dc3f11` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-assembler-x64 0.123.19` - `Apache-2.0 WITH LLVM-exception` - revision `0d6b8ead4e94b0ce76f925611b831b56570aef94` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-assembler-x64-meta 0.123.19` - `Apache-2.0 WITH LLVM-exception` - revision `0d6b8ead4e94b0ce76f925611b831b56570aef94` - https://github.com/bytecodealliance/wasmtime
 - `dasp_sample 0.11.0` - `MIT OR Apache-2.0` - revision `97c3bb9b2363c0b46ac1633858bf1054fd02a980` - https://github.com/rustaudio/sample
 - `decancer 3.3.3` - `MIT` - revision `86c57aaf0048ca07577de9a79e488909b5001ad6` - https://github.com/null8626/decancer
 - `delegate-display 3.0.0` - `MIT` - revision `e44b916223894222d3ae82a9fbd3e3f7c5ca634a` - https://github.com/alorel/delegate-display-rs
@@ -1430,7 +1430,6 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `matrix_indexed_db_futures 0.7.0` - `MIT` - revision `67cf3d50d0e826ba3aa297f45f22a74fcd46bb39` - https://github.com/matrix-org/rust-indexed-db
 - `matrix_indexed_db_futures_macros_internal 1.0.0` - `MIT` - revision `67cf3d50d0e826ba3aa297f45f22a74fcd46bb39` - https://github.com/matrix-org/rust-indexed-db
 - `n0-error-macros 1.0.0` - `MIT OR Apache-2.0` - revision `56019f01cd4c838edccd9f9b074953a45d87b6ef` - https://github.com/n0-computer/n0-error
-- `negentropy 0.5.0` - `MIT` - revision `94742ad2221e8350336fa0a40cf0fdb4a5228520` - https://github.com/rust-nostr/negentropy
 - `netwatch 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
 - `nostr 0.45.1` - `MIT` - revision `b5103642c0be30f04a4b7eb28de99c99ddb9fda1` - https://github.com/nostrdevkit/nostr
 - `nostr-database 0.45.1` - `MIT` - revision `ede118f4db5d8ec2a8b47e869220f7e723ed8775` - https://github.com/nostrdevkit/nostr
@@ -1524,9 +1523,9 @@ These upstreams publish a license expression but no standalone notice in the loc
 These crate archives contain no standalone notice file, but another locked crate from the same canonical upstream repository publishes the repository-level text reproduced below. The crate's exact SPDX expression in the inventory remains authoritative; carrying a repository's additional text does not change that expression.
 
 - `bitcoin_hashes 1.2.0` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin
-- `cranelift-bitset 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `cranelift-isle 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle
-- `cranelift-srcgen 0.123.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-bitset 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-isle 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle
+- `cranelift-srcgen 0.123.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
 - `defmt 0.3.100` - `MIT OR Apache-2.0` - https://github.com/knurling-rs/defmt
 - `defmt-parser 1.0.0` - `MIT OR Apache-2.0` - https://github.com/knurling-rs/defmt
 - `matrix-sdk 0.18.0` - `Apache-2.0` - vendor+https://github.com/matrix-org/matrix-rust-sdk@1c44fb66214667c6d00acaf72ab592493653708b#crates/matrix-sdk
@@ -1535,17 +1534,17 @@ These crate archives contain no standalone notice file, but another locked crate
 - `objc2-audio-toolbox 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - https://github.com/madsmtm/objc2
 - `objc2-core-audio 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - https://github.com/madsmtm/objc2
 - `objc2-core-audio-types 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - https://github.com/madsmtm/objc2
-- `pulley-interpreter 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley
-- `pulley-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros
+- `pulley-interpreter 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley
+- `pulley-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros
 - `selectors 0.38.0` - `MPL-2.0` - https://github.com/servo/stylo
 - `tract-extra 0.23.8` - `MIT OR Apache-2.0` - https://github.com/sonos/tract
 - `tract-transformers 0.23.8` - `MIT OR Apache-2.0` - https://github.com/sonos/tract
-- `wasmtime-internal-asm-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-jit-debug 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-jit-icache-coherence 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-math 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-slab 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-versioned-export-macros 36.0.16` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-asm-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-jit-debug 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-jit-icache-coherence 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-math 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-slab 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-versioned-export-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
 
 ### Published license and notice texts
 
@@ -4045,21 +4044,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
-#### SHA-256 `129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8`
-
-Applies to: `zstd 0.13.3`, `zstd-safe 7.2.4`, `zstd-sys 2.0.16+zstd.1.5.7`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-The MIT License (MIT)
-Copyright (c) 2016 Alexandre Bury
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
------ END UPSTREAM LICENSE OR NOTICE -----
-
 #### SHA-256 `12f1eaa092a787b62b6df7263db3ed58a351cab8234843fc6370335e884b32b2`
 
 Applies to: `mdns-sd 0.11.5`
@@ -4325,7 +4309,7 @@ Creator: Person: Daniel Thompson-Yvetot
 
 #### SHA-256 `143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4`
 
-Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `ambient-authority 0.0.2`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.1`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cc 1.2.63`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `coreaudio-rs 0.14.2`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hash32 0.3.1`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heapless 0.8.0`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `itertools 0.15.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `matrixmultiply 0.3.11`, `memo-map 0.3.4`, `mime 0.3.17`, `minijinja 2.24.0`, `muda 0.18.0`, `muda 0.19.3`, `ndarray 0.17.2`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openraft 0.9.25`, `openraft-macros 0.9.25`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rawpointer 0.2.1`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustls 0.23.45`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.28.0`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `validit 0.2.6`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
+Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `ambient-authority 0.0.2`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.1`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cc 1.2.63`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `coreaudio-rs 0.14.2`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hash32 0.3.1`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heapless 0.8.0`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `itertools 0.15.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `matrixmultiply 0.3.11`, `memo-map 0.3.4`, `mime 0.3.17`, `minijinja 2.24.0`, `muda 0.18.0`, `muda 0.19.3`, `ndarray 0.17.2`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openraft 0.9.25`, `openraft-macros 0.9.25`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rawpointer 0.2.1`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustls 0.23.46`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.28.0`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `validit 0.2.6`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -4871,34 +4855,6 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
------ END UPSTREAM LICENSE OR NOTICE -----
-
-#### SHA-256 `15af40d3405e83dc3274896a59a357cea8750f61ea3c41e62aac2216be7f5822`
-
-Applies to: `negentropy 0.5.0`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-MIT License
-
-Copyright (c) 2023 Yuki Kishimoto
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `1626f2c950cee975b5809748e288468141d09aa420314c7c9b35e6e62b772b2d`
@@ -12059,6 +12015,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `44b72d4db3e62b02c9747ade1ce31277699d3384f70596103c7788aa5535aa57`
+
+Applies to: `negentropy 0.5.2`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+MIT License
+
+Copyright (c) 2023-2025 Yuki Kishimoto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `4522d878147ce2c5f1e8a177279cfc838d1b1c0643128b371bda7809ec74984b`
 
 Applies to: `type1-encoding-parser 0.1.1`
@@ -12510,45 +12494,6 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
-#### SHA-256 `48341f685c87304089aa099b23c386f8bacc519ef555aa7a13e239908907b3fd`
-
-Applies to: `zstd-sys 2.0.16+zstd.1.5.7`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-The auto-generated bindings are under the 3-clause BSD license:
-
-BSD License
-
-For Zstandard software
-
-Copyright (c) 2016-present, Facebook, Inc. All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
- * Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
- * Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
- * Neither the name Facebook nor the names of its contributors may be used to
-   endorse or promote products derived from this software without specific
-   prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
------ END UPSTREAM LICENSE OR NOTICE -----
-
 #### SHA-256 `485215d5d9408bdaed32850aac9e7e3f7b2cca1af0c6a7d8c39c9a5bb83a7af1`
 
 Applies to: `web-time 1.1.0`
@@ -12983,7 +12928,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `4b2d0aca6789fa39e03d6738e869ea0988cceba210ca34ebb59c15c463e93a04`
 
-Applies to: `quinn 0.11.9`, `quinn-proto 0.11.15`, `quinn-udp 0.5.14`
+Applies to: `quinn 0.11.9`, `quinn-proto 0.11.18`, `quinn-udp 0.5.14`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2018 The quinn Developers
@@ -13766,7 +13711,7 @@ SOFTWARE.
 
 #### SHA-256 `50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a`
 
-Applies to: `anyerror 0.1.13`, `as-raw-xcb-connection 1.0.1`, `candle-core 0.8.4`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `ciborium 0.2.2`, `ciborium-io 0.2.2`, `ciborium-ll 0.2.2`, `clang-sys 1.8.1`, `cmov 0.5.4`, `cpal 0.18.2`, `ctutils 0.4.2`, `encode_unicode 1.0.0`, `encoding_rs 0.8.35`, `esaxx-rs 0.1.10`, `flume 0.11.1`, `gl_generator 0.14.0`, `hf-hub 0.5.0`, `identity-hash 0.1.0`, `imgref 1.12.1`, `khronos_api 3.1.0`, `kurbo 0.13.1`, `lru-slab 0.1.2`, `memfd 0.6.5`, `ntapi 0.4.3`, `polycool 0.4.0`, `qrcode 0.14.1`, `quinn 0.11.9`, `quinn-proto 0.11.15`, `quinn-udp 0.5.14`, `raw-window-metal 1.1.0`, `rustls-platform-verifier 0.7.0`, `safetensors 0.4.5`, `serdect 0.4.3`, `spm_precompiled 0.1.4`, `static_assertions 1.1.0`, `sys-locale 0.3.2`, `tinyvec 1.11.0`, `tokenizers 0.20.4`, `ug 0.1.0`, `unicode-linebreak 0.1.5`, `utf8_iter 1.0.4`, `x11rb 0.13.2`, `x11rb-protocol 0.13.2`, `zeroize 1.9.0`, `zeroize_derive 1.5.0`, `zune-core 0.5.1`, `zune-jpeg 0.5.15`
+Applies to: `anyerror 0.1.13`, `as-raw-xcb-connection 1.0.1`, `candle-core 0.8.4`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `ciborium 0.2.2`, `ciborium-io 0.2.2`, `ciborium-ll 0.2.2`, `clang-sys 1.8.1`, `cmov 0.5.4`, `cpal 0.18.2`, `ctutils 0.4.6`, `encode_unicode 1.0.0`, `encoding_rs 0.8.35`, `esaxx-rs 0.1.10`, `flume 0.11.1`, `gl_generator 0.14.0`, `hf-hub 0.5.0`, `identity-hash 0.1.0`, `imgref 1.12.1`, `khronos_api 3.1.0`, `kurbo 0.13.1`, `lru-slab 0.1.2`, `memfd 0.6.5`, `ntapi 0.4.3`, `polycool 0.4.0`, `qrcode 0.14.1`, `quinn 0.11.9`, `quinn-proto 0.11.18`, `quinn-udp 0.5.14`, `raw-window-metal 1.1.0`, `rustls-platform-verifier 0.7.0`, `safetensors 0.4.5`, `serdect 0.4.3`, `spm_precompiled 0.1.4`, `static_assertions 1.1.0`, `sys-locale 0.3.2`, `tinyvec 1.11.0`, `tokenizers 0.20.4`, `ug 0.1.0`, `unicode-linebreak 0.1.5`, `utf8_iter 1.0.4`, `x11rb 0.13.2`, `x11rb-protocol 0.13.2`, `zeroize 1.9.0`, `zeroize_derive 1.5.0`, `zune-core 0.5.1`, `zune-jpeg 0.5.15`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -15206,7 +15151,7 @@ at your option.
 
 #### SHA-256 `5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a`
 
-Applies to: `rustls-webpki 0.103.15`
+Applies to: `rustls-webpki 0.103.16`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Except as otherwise noted, this project is licensed under the following
@@ -18518,7 +18463,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c`
 
-Applies to: `hyper-rustls 0.27.9`, `rustls 0.23.45`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`
+Applies to: `hyper-rustls 0.27.9`, `rustls 0.23.46`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
@@ -20624,7 +20569,7 @@ SOFTWARE.
 
 #### SHA-256 `7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4`
 
-Applies to: `hyper-rustls 0.27.9`, `rustls 0.23.45`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`
+Applies to: `hyper-rustls 0.27.9`, `rustls 0.23.46`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 ISC License (ISC)
@@ -23909,7 +23854,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `91585c36e4fb9ab4ca0d3dfac5d66d3c0c62cc51f640a0e1196542daf2267eae`
 
-Applies to: `ctutils 0.4.2`
+Applies to: `ctutils 0.4.6`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2025-2026 The RustCrypto Project Developers
@@ -26190,14 +26135,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
-#### SHA-256 `a77b7cfeaf911ed410ffbe76f0cb2b24ad8a4d94e7ead5727e914425c416cc63`
-
-Applies to: `zstd-safe 7.2.4`, `zstd-sys 2.0.16+zstd.1.5.7`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-MIT or Apache-2.0
------ END UPSTREAM LICENSE OR NOTICE -----
-
 #### SHA-256 `a7cea8a5a56ba02950d098a7c56eed312fc745ceecd437e4aad2f7f8d38661b8`
 
 Applies to: `tree_magic_mini 3.2.2`
@@ -27750,7 +27687,7 @@ they are not recharacterized as an upstream copyright assertion.
 
 #### SHA-256 `ae6e99144a735503e5b54b92e09cf8dec2e7f2e25706ec5c98af2f7d2242dc75`
 
-Applies to: `ambient-authority 0.0.2`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cranelift-assembler-x64 0.123.16`, `cranelift-assembler-x64-meta 0.123.16`, `cranelift-bforest 0.123.16`, `cranelift-bitset 0.123.16`, `cranelift-codegen 0.123.16`, `cranelift-codegen-meta 0.123.16`, `cranelift-codegen-shared 0.123.16`, `cranelift-control 0.123.16`, `cranelift-entity 0.123.16`, `cranelift-frontend 0.123.16`, `cranelift-isle 0.123.16`, `cranelift-native 0.123.16`, `cranelift-srcgen 0.123.16`, `fs-set-times 0.20.3`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `pulley-interpreter 36.0.16`, `pulley-macros 36.0.16`, `regalloc2 0.12.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `target-lexicon 0.13.5`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wasmtime 36.0.16`, `wasmtime-environ 36.0.16`, `wasmtime-internal-asm-macros 36.0.16`, `wasmtime-internal-cranelift 36.0.16`, `wasmtime-internal-fiber 36.0.16`, `wasmtime-internal-jit-debug 36.0.16`, `wasmtime-internal-jit-icache-coherence 36.0.16`, `wasmtime-internal-math 36.0.16`, `wasmtime-internal-slab 36.0.16`, `wasmtime-internal-unwinder 36.0.16`, `wasmtime-internal-versioned-export-macros 36.0.16`, `winx 0.36.4`
+Applies to: `ambient-authority 0.0.2`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cranelift-assembler-x64 0.123.19`, `cranelift-assembler-x64-meta 0.123.19`, `cranelift-bforest 0.123.19`, `cranelift-bitset 0.123.19`, `cranelift-codegen 0.123.19`, `cranelift-codegen-meta 0.123.19`, `cranelift-codegen-shared 0.123.19`, `cranelift-control 0.123.19`, `cranelift-entity 0.123.19`, `cranelift-frontend 0.123.19`, `cranelift-isle 0.123.19`, `cranelift-native 0.123.19`, `cranelift-srcgen 0.123.19`, `fs-set-times 0.20.3`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `pulley-interpreter 36.0.19`, `pulley-macros 36.0.19`, `regalloc2 0.12.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `target-lexicon 0.13.5`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wasmtime 36.0.19`, `wasmtime-environ 36.0.19`, `wasmtime-internal-asm-macros 36.0.19`, `wasmtime-internal-cranelift 36.0.19`, `wasmtime-internal-fiber 36.0.19`, `wasmtime-internal-jit-debug 36.0.19`, `wasmtime-internal-jit-icache-coherence 36.0.19`, `wasmtime-internal-math 36.0.19`, `wasmtime-internal-slab 36.0.19`, `wasmtime-internal-unwinder 36.0.19`, `wasmtime-internal-versioned-export-macros 36.0.19`, `winx 0.36.4`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -30137,7 +30074,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec`
 
-Applies to: `ab_glyph 0.2.32`, `ab_glyph_rasterizer 0.1.10`, `alsa 0.11.0`, `arboard 3.6.1`, `auto_enums 0.8.8`, `derive_utils 0.15.1`, `erasable 1.3.0`, `fdeflate 0.3.7`, `field-offset 0.3.6`, `half 2.7.1`, `image 0.25.10`, `image-webp 0.2.4`, `linebender_resource_handle 0.1.1`, `linked_hash_set 0.1.6`, `matrix-pickle 0.2.2`, `matrix-pickle-derive 0.2.2`, `matrix-sdk 0.18.0`, `matrix-sdk-base 0.18.0`, `matrix-sdk-common 0.18.0`, `matrix-sdk-crypto 0.18.0`, `matrix-sdk-indexeddb 0.18.0`, `matrix-sdk-sqlite 0.18.0`, `matrix-sdk-store-encryption 0.18.0`, `miniz_oxide 0.8.9`, `num-conv 0.2.1`, `owned_ttf_parser 0.25.1`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `raw-window-handle 0.6.2`, `rc-box 1.3.0`, `resvg 0.47.0`, `simdutf8 0.1.5`, `sync_wrapper 1.0.2`, `time 0.3.47`, `time-core 0.1.8`, `time-macros 0.2.27`, `tiny-xlib 0.2.5`, `usvg 0.47.0`, `vodozemac 0.10.0`, `widestring 1.2.1`, `zstd-safe 7.2.4`, `zstd-sys 2.0.16+zstd.1.5.7`
+Applies to: `ab_glyph 0.2.32`, `ab_glyph_rasterizer 0.1.10`, `alsa 0.11.0`, `arboard 3.6.1`, `auto_enums 0.8.8`, `derive_utils 0.15.1`, `erasable 1.3.0`, `fdeflate 0.3.7`, `field-offset 0.3.6`, `half 2.7.1`, `image 0.25.10`, `image-webp 0.2.4`, `linebender_resource_handle 0.1.1`, `linked_hash_set 0.1.6`, `matrix-pickle 0.2.2`, `matrix-pickle-derive 0.2.2`, `matrix-sdk 0.18.0`, `matrix-sdk-base 0.18.0`, `matrix-sdk-common 0.18.0`, `matrix-sdk-crypto 0.18.0`, `matrix-sdk-indexeddb 0.18.0`, `matrix-sdk-sqlite 0.18.0`, `matrix-sdk-store-encryption 0.18.0`, `miniz_oxide 0.8.9`, `num-conv 0.2.1`, `owned_ttf_parser 0.25.1`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `raw-window-handle 0.6.2`, `rc-box 1.3.0`, `resvg 0.47.0`, `simdutf8 0.1.5`, `sync_wrapper 1.0.2`, `time 0.3.47`, `time-core 0.1.8`, `time-macros 0.2.27`, `tiny-xlib 0.2.5`, `usvg 0.47.0`, `vodozemac 0.10.0`, `widestring 1.2.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -30489,6 +30426,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `bf7017a73a95ea63bf3716b13ec2bcd79c92942356e3408c6fb66332bad6d977`
+
+Applies to: `zstd-sys 2.1.2+zstd.1.5.7`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+The auto-generated bindings are under the 3-clause BSD license:
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `c0fabcc308b450cb6fe62c9f56fae6abbeb9768eb80d992484c857d744846c2e`
@@ -32221,6 +32197,41 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `ce4868c8e4ebe47a7d4b3c93dbf6b802033e5ae2fa7638098173f80836daac60`
+
+Applies to: `zstd 0.14.3`, `zstd-safe 8.2.0`, `zstd-sys 2.1.2+zstd.1.5.7`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+BSD 3-Clause License
+
+Copyright (c) 2026, Alexandre Bury
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `ce592787ff2321feab698a4c612237f4378cc658ebb1d472913e5802cc47afb4`
@@ -34220,7 +34231,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8`
 
-Applies to: `webpki-roots 0.26.11`, `webpki-roots 1.0.7`
+Applies to: `webpki-roots 0.26.11`, `webpki-roots 1.0.10`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 # Community Data License Agreement - Permissive - Version 2.0

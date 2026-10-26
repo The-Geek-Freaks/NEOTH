@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "EXACT_UPSTREAM_LICENSES_ADDED_CANDIDATE_RETRY_PENDING",
+  "status": "HOSTED_DEPENDENCY_ADMITTED_PRODUCT_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 431553,
-    "sha256": "AEF286D246276F1207CD2757D477708CD4396B35C4081CA3B7FDA3A7B132CEDE"
+    "bytes": 431550,
+    "sha256": "6E66FBB94C0836558A1525E4B661C7171A837B13AA83465F2034E5D946ADB204"
   },
   "sourceInputs": 2353,
   "requiredNativeTests": [
@@ -85532,6 +85532,44 @@
       }
     ],
     "note": "Two additive Cranelift0.123.19 exact VCS license snapshots; audit22 passed in rejected candidate but complete notices and product acceptance still pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607DependencyAdmission": {
+    "base": "aded278df5107ab032c2892f23d87f975141ff26",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 6174,
+        "sha256": "9C754B1EEC023AB0EC99ACDB30573B9CFFFDEA27283EB66F09601A48A356739C",
+        "blob": "c10a0ad47d6fde8d5b54d9b8b8db95821a5708e2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2662411,
+        "sha256": "0AE36C335E215F4C4907560D0087B8465ABEA0848191854A376CE65BA5D4B181",
+        "blob": "18d117922bdf68d60f98e27fb3041a37f046a931"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 386961,
+        "sha256": "A5587829EBF19110FC0D13AE8C8D53A055EFFF5FBBD876A2F58EB8DC78394305",
+        "blob": "d29376602861e2b65b33500886fe0542d8481ba3"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46683,
+        "sha256": "0F28F4EBDABD6A69DF66109EFFDEF8D8A21BF3D3EA81E6857C730119C32E180C",
+        "blob": "d0a0998b2670189d0dd4efa60592f0f0302ad2da"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2313113,
+        "sha256": "ED7854A63B920ABFB7D91C4B8533B9F7C6892E3BE09C5F140EA5B8AC92E61A73",
+        "blob": "a0fac8f199aca3acf8af52496728e58742f1324b"
+      }
+    ],
+    "note": "Twelve exact package targets;22 required advisory IDs absent; all38 artifact files verified; exact candidate lock staged while user physical lock preserved. Full native/interop/security/Gold open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,7 +2,7 @@
   "schema": "neoth.wave2607.hosted-repair.v1",
   "capturedUtc": "2026-10-26T13:52:23.1192165Z",
   "baseProducer": "230bfb51dd48a26ee29dcacee5f9d438b6707e68",
-  "status": "HOSTED_ARTIFACTS_IMPORTED_NEW_PRODUCER_VALIDATION_PENDING",
+  "status": "HOSTED_DEPENDENCY_CANDIDATE_ADMITTED_PRODUCT_VALIDATION_PENDING",
   "fullRun": 40288073016,
   "failureTriage": {
     "windows": "cli::docgen::tests::cli_commands_md_is_up_to_date",
@@ -44,7 +44,7 @@
     "guard": "Deferred ZIP and Candle package entries must remain byte-equivalent as decoded lock entries; all remaining audit findings retained; no suppression",
     "reviewer": "/root/dependency_boundary_review",
     "failedRun": 40332506334,
-    "candidateAccepted": false,
+    "candidateAccepted": true,
     "currentTargets": [
       "negentropy 0.5.2",
       "quinn-proto 0.11.18",
@@ -119,7 +119,19 @@
       "normalizedLicenseSha256": "ae6e99144a735503e5b54b92e09cf8dec2e7f2e25706ec5c98af2f7d2242dc75",
       "method": "Registry crate digest -> cargo_vcs_info -> exact complete upstream tree and LICENSE; normalized text equals retained prior notice",
       "newSnapshots": 2
-    }
+    },
+    "admittedCandidate": {
+      "run": 40335497051,
+      "producer": "aded278df5107ab032c2892f23d87f975141ff26",
+      "proof": "work/gold-20260906/wave2607-hosted-repair/dependency-admission/ROOT_ADMISSION.json",
+      "lockSha256": "A5587829EBF19110FC0D13AE8C8D53A055EFFF5FBBD876A2F58EB8DC78394305",
+      "targetPackages": 12,
+      "requiredAbsentAdvisories": 22,
+      "remainingZipAdvisories": 3,
+      "productValidationPending": true,
+      "physicalDirtyLockPreserved": true
+    },
+    "zipApiBoundary": "ZIP9 file_names/name return fallible Cow values. Earlier broad source-compatibility conclusion was incomplete. A dedicated Candle/NEOTH consumer migration is required; ZIP9 was not imported."
   },
   "sourceRegistration": {
     "portable": 3034,

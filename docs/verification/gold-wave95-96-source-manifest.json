@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T13:59:25.8356086Z",
-  "validationStatus": "EXACT_UPSTREAM_LICENSES_ADDED_CANDIDATE_RETRY_PENDING",
+  "capturedUtc": "2026-10-26T14:02:49.1745517Z",
+  "validationStatus": "HOSTED_DEPENDENCY_ADMITTED_PRODUCT_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4568,8 +4568,8 @@
     },
     {
       "path": "docs/verification/gold-wave2607-hosted-repair.json",
-      "bytes": 5460,
-      "sha256": "F59B1631423A30917F7ED81AD563FD5EFBD64D5E4B51F387CC148A21D287E8F5"
+      "bytes": 6174,
+      "sha256": "9C754B1EEC023AB0EC99ACDB30573B9CFFFDEA27283EB66F09601A48A356739C"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5748,8 +5748,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2661456,
-      "sha256": "50E97D9DDC3493E650E6065096E3CDFA926D032E4D3633EDCFC722C6CCCC402C"
+      "bytes": 2662411,
+      "sha256": "0AE36C335E215F4C4907560D0087B8465ABEA0848191854A376CE65BA5D4B181"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5823,8 +5823,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 386972,
-      "sha256": "1AC582E445ECAE15F651F4075D2B4E4D7B688107CC6BB87E29546B79B9074A58"
+      "bytes": 386961,
+      "sha256": "A5587829EBF19110FC0D13AE8C8D53A055EFFF5FBBD876A2F58EB8DC78394305"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -6468,8 +6468,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46680,
-      "sha256": "3A4784462BFE96DDE028B81E710B86F9449B7588AB011B950057F3E30B0F1B4D"
+      "bytes": 46683,
+      "sha256": "0F28F4EBDABD6A69DF66109EFFDEF8D8A21BF3D3EA81E6857C730119C32E180C"
     },
     {
       "path": "SRC/neothd/src/adr/extractor.rs",
@@ -11758,8 +11758,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2313064,
-      "sha256": "509BD922454502F6A3405AC95495F9589106C613901AA65DA4B4C9EABF9F127D"
+      "bytes": 2313113,
+      "sha256": "ED7854A63B920ABFB7D91C4B8533B9F7C6892E3BE09C5F140EA5B8AC92E61A73"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",
