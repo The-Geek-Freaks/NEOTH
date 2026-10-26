@@ -24,7 +24,7 @@ index d0a0998b2670189d0dd4efa60592f0f0302ad2da..b3a1cfc6401fa5c83cfab08c5f1f3303
  
  # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
 diff --git a/SRC/neothd/src/media/document.rs b/SRC/neothd/src/media/document.rs
-index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..68ac4ded73af06fab9752edf1eb14a0596b81bb0 100644
+index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..5ba63ed5d1a60023dca72fe8297d054462068ca4 100644
 --- a/SRC/neothd/src/media/document.rs
 +++ b/SRC/neothd/src/media/document.rs
 @@ -320,7 +320,7 @@ fn extract_zip_text(
@@ -45,7 +45,7 @@ index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..68ac4ded73af06fab9752edf1eb14a05
              names.retain(|n| is_xhtml(n));
              names.sort();
              let mut out = String::new();
-@@ -403,13 +403,17 @@ fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(),
+@@ -403,14 +403,17 @@ fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(),
                  backend: "document",
                  reason: format!("inspect archive member {index}: {e}"),
              })?;
@@ -60,11 +60,12 @@ index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..68ac4ded73af06fab9752edf1eb14a05
                  reason: format!(
                      "archive member `{}` declares {member_size} bytes, exceeding the {}-byte cap",
 -                    file.name(),
-+                    member_name,
-                     limits.member_bytes
+-                    limits.member_bytes
++                    member_name, limits.member_bytes
                  ),
              });
-@@ -457,8 +461,17 @@ fn missing(fmt: &'static str, member: &'static str) -> impl Fn() -> ExtractionEr
+         }
+@@ -457,8 +460,17 @@ fn missing(fmt: &'static str, member: &'static str) -> impl Fn() -> ExtractionEr
      }
  }
  
@@ -84,7 +85,7 @@ index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..68ac4ded73af06fab9752edf1eb14a05
  }
  
  fn read_member(
-@@ -1510,6 +1523,31 @@ mod tests {
+@@ -1510,6 +1522,31 @@ mod tests {
          assert!(matches!(err, ExtractionError::Backend { .. }), "{err:?}");
      }
  

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2612_IMPORTED_VENDOR_PROVENANCE_GATE_HOSTED_PENDING",
+  "status": "W2612_HOSTED_FORMAT_IMPORTED_FINAL_CHECKS_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 451321,
-    "sha256": "EC1D4C57CDDD7CD3A93FC46841F69346FAAB6575155E1B05FB4CF89ECB9FC4AD"
+    "bytes": 451318,
+    "sha256": "5AB396DD6B6FFC0A0FAD2D4EC1ABBCCE14B2C33BE266DA407C4FA8CC6D663803"
   },
   "sourceInputs": 2464,
   "requiredNativeTests": [
@@ -17629,19 +17629,19 @@
     {
       "test": "media::document::tests::epub_preserves_table_header_and_data_cell_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_preserves_table_cell_and_row_boundaries",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::rtf_table_controls_keep_metadata_and_escaped_literals_isolated",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
@@ -17713,19 +17713,19 @@
     {
       "test": "media::document::tests::provenance_binds_exact_bytes_and_text_without_path_identity",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::provenance_distinguishes_source_revision_from_equal_text",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::provenance_hashes_unicode_safe_capped_text_with_visible_marker",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
@@ -17899,19 +17899,19 @@
     {
       "test": "media::document::tests::docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::docx_structure_omissions_preserve_text_and_distinguish_container_revisions",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
       "test": "media::document::tests::non_docx_documents_do_not_claim_docx_structure",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     },
     {
@@ -18301,25 +18301,25 @@
     {
       "test": "npz_roundtrip_preserves_named_tensors_and_unicode",
       "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
-      "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+      "sourceSha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8",
       "junitClass": "neoth::candle_zip_compat"
     },
     {
       "test": "pickle_discovers_metadata_and_reads_nonfirst_tensor_payload",
       "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
-      "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+      "sourceSha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8",
       "junitClass": "neoth::candle_zip_compat"
     },
     {
       "test": "truncated_archive_errors_propagate_through_npz_and_pickle",
       "sourcePath": "SRC/neothd/tests/candle_zip_compat.rs",
-      "sourceSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+      "sourceSha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8",
       "junitClass": "neoth::candle_zip_compat"
     },
     {
       "test": "media::document::tests::truncated_archive_directory_fails_before_document_selection",
       "sourcePath": "SRC/neothd/src/media/document.rs",
-      "sourceSha256": "171F700F609329409A8F3BC94D898FEA535FEDCFAB943B682A9651534B6BA888",
+      "sourceSha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
       "junitClass": "neoth"
     }
   ],
@@ -86860,6 +86860,56 @@
       }
     ],
     "note": "Run existing source verifier in mandatory Preflight before Cargo metadata; exact candidate64runtime proof retained; final full integration pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2612HostedFormatting": {
+    "base": "3343242d4a4f70b96fd2bd9cef941f3e41ac3779",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2612-zip9-admission.json",
+        "bytes": 12300,
+        "sha256": "ECF0667F020B61D5C8675D11F64833C423CDD8B0276E674E35FFB9FF42EB3CA5",
+        "blob": "ff05158018373b896096e37d1a76489250d561fc"
+      },
+      {
+        "path": "packaging/vendor-provenance/candle_zip_compat.rs",
+        "bytes": 4820,
+        "sha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8",
+        "blob": "a1007f9c47ddc1a7c491db11348ec88a8e38bef9"
+      },
+      {
+        "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+        "bytes": 1949,
+        "sha256": "2D1DC07ADD0B8FF945A493FE7C696FC155D3BB8BA45741356AC2A97C461B0157",
+        "blob": "ae813dae19331b5b4814d70d2b693f625214e2f6"
+      },
+      {
+        "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
+        "bytes": 8667,
+        "sha256": "B525955DFED52C03660A3173911737FCD410E66392865BEC2813CE051C7D4F2F",
+        "blob": "9642841ff94c314bf7d70a2e3cf93aa8a401c8be"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2675529,
+        "sha256": "2CFC41EABAA18DE2C9032BD98F4DAA6F8E226C6A911C21912DC980F965BFB8C9",
+        "blob": "117be4e7c6c5c9b8142adf4f9b0c978376a60bd0"
+      },
+      {
+        "path": "SRC/neothd/src/media/document.rs",
+        "bytes": 60479,
+        "sha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99",
+        "blob": "5ba63ed5d1a60023dca72fe8297d054462068ca4"
+      },
+      {
+        "path": "SRC/neothd/tests/candle_zip_compat.rs",
+        "bytes": 4820,
+        "sha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8",
+        "blob": "a1007f9c47ddc1a7c491db11348ec88a8e38bef9"
+      }
+    ],
+    "note": "Original bound rustfmt receipt40377272107 changes only document/test whitespace; current source spec and template synchronized; vendor97unchanged. Candidate64accepted,full pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

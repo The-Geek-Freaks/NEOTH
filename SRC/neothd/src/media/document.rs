@@ -413,8 +413,7 @@ fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(), 
                 backend: "document",
                 reason: format!(
                     "archive member `{}` declares {member_size} bytes, exceeding the {}-byte cap",
-                    member_name,
-                    limits.member_bytes
+                    member_name, limits.member_bytes
                 ),
             });
         }

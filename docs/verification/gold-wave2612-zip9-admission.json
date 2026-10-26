@@ -246,5 +246,19 @@
     "command": "python3 packaging/candle_zip_migration.py source",
     "scope": "Existing verifier authenticates official archive,97fileinventory,sevenpostimages,fixturetemplate,VCSidentity before Cargo metadata",
     "hostedValidationPending": true
+  },
+  "hostedFormatting": {
+    "run": 40377272107,
+    "producer": "3343242d4a4f70b96fd2bd9cef941f3e41ac3779",
+    "paths": [
+      "SRC/neothd/src/media/document.rs",
+      "SRC/neothd/tests/candle_zip_compat.rs"
+    ],
+    "patchSha256": "B85867E493F6B487D7915533B7A046081FCFD70E1F95551E6F94F914517CE65F",
+    "originalArchiveSha256": "DFFD1DD2D9F74C9BF73DF2FBD41BDD53B72ABC1D581A5442A75D09DF7170876E",
+    "scope": "Two whitespace-only rustfmt adjustments; no vendor file changed",
+    "sourceSpecAndTemplateSynchronized": true,
+    "sourcePatchSha256": "b525955dfed52c03660a3173911737fcd410e66392865bec2813ce051c7d4f2f",
+    "finalProducerValidationPending": true
   }
 }

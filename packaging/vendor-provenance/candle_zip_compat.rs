@@ -109,7 +109,11 @@ fn truncated_archive_errors_propagate_through_npz_and_pickle() -> anyhow::Result
 
     let pth = directory.path().join("truncated.pth");
     std::fs::write(&pth, FORTRAN_PTH)?;
-    assert!(PthTensors::new(&pth, None)?.get("tensor_fortran")?.is_some());
+    assert!(
+        PthTensors::new(&pth, None)?
+            .get("tensor_fortran")?
+            .is_some()
+    );
     truncate_directory(&pth)?;
     assert_zip_error(PthTensors::new(&pth, None));
     Ok(())

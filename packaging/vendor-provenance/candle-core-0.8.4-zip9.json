@@ -3,7 +3,7 @@
   "baseProducer": "0503f7208d9b110337e0057ab22743276f6600a3",
   "archiveSha256": "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1",
   "upstreamCommit": "468d1d525fe206a35d6962c02cfa7b9918b31076",
-  "patchSha256": "5a00574ccfe64d4805db1edb7ed37e99345c386f7f3e55ca793fe3a585876fce",
+  "patchSha256": "b525955dfed52c03660a3173911737fcd410e66392865bec2813ce051c7d4f2f",
   "changes": [
     {
       "path": "SRC/Cargo.toml",
@@ -18,7 +18,7 @@
     {
       "path": "SRC/neothd/src/media/document.rs",
       "before": "ee319cec6c1c88c09321a444ff51d827396916d5d955944ad377643c72ae7c7e",
-      "after": "171f700f609329409a8f3bc94d898fea535fedcfab943b682a9651534b6ba888"
+      "after": "587433001d63174ec8a90c412b07db5046bf69576116c35a0650cb9eec03be99"
     },
     {
       "path": "SRC/vendor/candle-core/Cargo.toml",
