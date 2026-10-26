@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T14:18:26.5813894Z",
+  "capturedUtc": "2026-10-26T14:21:23.6642778Z",
   "validationStatus": "SOURCE_CANDIDATE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/candle-zip-migration.yml",
-      "bytes": 8300,
-      "sha256": "CA95139C429DC3A13DB8570044F641F2030C80FBEE99FBD0190373F65C54ACDA"
+      "bytes": 8501,
+      "sha256": "B9F97302277168389A5BD5C269935197737F887F09D078ED11C170E3B5E39078"
     },
     {
       "path": ".github/workflows/capability-quality.yml",
@@ -4578,8 +4578,8 @@
     },
     {
       "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
-      "bytes": 3275,
-      "sha256": "29E25B4B96DC5C8A23BDBEC8B61BE9AD30C7955EBAC4D4527C5081813A33A5F5"
+      "bytes": 3721,
+      "sha256": "E3E60E2A0EBD6466A35C8120A42A52413ADD39EACC695946841B33D2F178E582"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5783,8 +5783,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2663884,
-      "sha256": "C265D3775716660EFF1B7F5A70D5CCAE8D0ADC87D20E46E70B5AB24B0A679582"
+      "bytes": 2664233,
+      "sha256": "3BF2DF5AA330475099C1C061DE3A35F0353EEFC17EFA6F9C190C47C0466F6A91"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

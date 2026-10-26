@@ -22,12 +22,17 @@ jobs:
     timeout-minutes: 90
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
-      PROOF: ${{ runner.temp }}/candle-zip-proof
       CARGO_BUILD_JOBS: '1'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
+      - name: Initialize runner-bound evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'PROOF=%s/candle-zip-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/candle-zip-proof"
       - name: Checkout exact main producer
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

@@ -32,8 +32,8 @@
   "sourceBindings": [
     {
       "path": ".github/workflows/candle-zip-migration.yml",
-      "sha256": "CA95139C429DC3A13DB8570044F641F2030C80FBEE99FBD0190373F65C54ACDA",
-      "bytes": 8300
+      "sha256": "B9F97302277168389A5BD5C269935197737F887F09D078ED11C170E3B5E39078",
+      "bytes": 8501
     },
     {
       "path": "packaging/candle_zip_migration.py",
@@ -74,5 +74,13 @@
   "localRuntimeExecuted": false,
   "productSourceImported": false,
   "hostedAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "workflowContextRepair": {
+    "failedRun": 40338537529,
+    "producer": "cadb82b3a0dbd2e33c6326a1b8c2e8b3b5776a76",
+    "cause": "runner context is not available in jobs.<job_id>.env",
+    "repair": "Initialize PROOF from RUNNER_TEMP in a step and publish through GITHUB_ENV",
+    "officialReference": "https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability",
+    "hostedValidationPending": true
+  }
 }

@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 432821,
-    "sha256": "9C935B87189AA3B8A8CA4E240A31B7DBCA2622B59D46C3A7AEFCC3CB577CA689"
+    "sha256": "8702C972C59D22D0D13ABFBE0A0BFB4077E1533C00E605979EC320EA8C72495F"
   },
   "sourceInputs": 2360,
   "requiredNativeTests": [
@@ -85670,6 +85670,32 @@
       }
     ],
     "note": "Prepared exact97fileCandle custody and ZIP9 source migration with hosted solver/audit/notices/behavior pipeline; no product source import or local runtime; proposed3integration+1document cases not yet registered as accepted tests.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2608-workflow-context": {
+    "base": "cadb82b3a0dbd2e33c6326a1b8c2e8b3b5776a76",
+    "sources": [
+      {
+        "path": ".github/workflows/candle-zip-migration.yml",
+        "bytes": 8501,
+        "sha256": "B9F97302277168389A5BD5C269935197737F887F09D078ED11C170E3B5E39078",
+        "blob": "755aba1815f8508eaf89da62d93ef0c2e10ba4aa"
+      },
+      {
+        "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
+        "bytes": 3721,
+        "sha256": "E3E60E2A0EBD6466A35C8120A42A52413ADD39EACC695946841B33D2F178E582",
+        "blob": "0aaa418f1c4e3197a09abffb5ad11ba7256583e4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2664233,
+        "sha256": "3BF2DF5AA330475099C1C061DE3A35F0353EEFC17EFA6F9C190C47C0466F6A91",
+        "blob": "c6b2d938a07f017502b0144d4b672ba8c63b836b"
+      }
+    ],
+    "note": "Move runner-dependent proof directory initialization from invalid job-level runner context to a runtime step; source candidate unchanged; hosted execution still pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
