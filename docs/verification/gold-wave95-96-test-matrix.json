@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2612_CANDIDATE64_ADMITTED_FULL_INTEGRATION_PENDING",
+  "status": "W2612_IMPORTED_VENDOR_PROVENANCE_GATE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 451320,
-    "sha256": "816FF9F3D3CEE35A9C51BE942A46536302ED2503761757BC36F421A409D0707D"
+    "bytes": 451321,
+    "sha256": "EC1D4C57CDDD7CD3A93FC46841F69346FAAB6575155E1B05FB4CF89ECB9FC4AD"
   },
   "sourceInputs": 2464,
   "requiredNativeTests": [
@@ -86834,6 +86834,32 @@
       }
     ],
     "note": "Exact hosted candidate40373737661 admitted64cases/97vendorfiles/103patchpaths;15costbindings,solver,audit,notices verified. Final main/full/interop/native/release remain pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2612PersistentCandleSourceGate": {
+    "base": "619304e4bef2870690d37f7af810bad193ce2476",
+    "sources": [
+      {
+        "path": ".github/workflows/preflight.yml",
+        "bytes": 7989,
+        "sha256": "F34D11FC9C26905B174E8BC908C7F064F6A730A403D5E9AC280DEE3C47C51843",
+        "blob": "b99b6a4c7856d5583e81c7cee2039e8ac8d57a7d"
+      },
+      {
+        "path": "docs/verification/gold-wave2612-zip9-admission.json",
+        "bytes": 11630,
+        "sha256": "F1ED6D18B9BA5408969068A09B5BC414C052A405E29600587CF46118F57F7184",
+        "blob": "d97a6fdd395437a162d91def5c623ba9396d22ec"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2675029,
+        "sha256": "5DBBC357603F0A5B54DA8A8EA35878DE57E3AC7772E7889AB610076261B49124",
+        "blob": "2c35c9a95d71f5e490d4132e8ebaba06963250bd"
+      }
+    ],
+    "note": "Run existing source verifier in mandatory Preflight before Cargo metadata; exact candidate64runtime proof retained; final full integration pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

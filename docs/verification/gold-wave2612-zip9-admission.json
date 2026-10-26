@@ -239,5 +239,12 @@
     "Audit warnings retained and not dismissed",
     "Full integration,Interop,native,device,release remain independent gates",
     "Raw backlog and Gold checkboxes unchanged"
-  ]
+  ],
+  "persistentSourceGate": {
+    "workflow": ".github/workflows/preflight.yml",
+    "step": "Verify imported Candle ZIP source provenance before Cargo metadata",
+    "command": "python3 packaging/candle_zip_migration.py source",
+    "scope": "Existing verifier authenticates official archive,97fileinventory,sevenpostimages,fixturetemplate,VCSidentity before Cargo metadata",
+    "hostedValidationPending": true
+  }
 }

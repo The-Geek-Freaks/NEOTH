@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T18:20:55.8261397Z",
-  "validationStatus": "W2612_CANDIDATE64_ADMITTED_FULL_INTEGRATION_PENDING",
+  "capturedUtc": "2026-10-26T18:23:08.1510568Z",
+  "validationStatus": "W2612_IMPORTED_VENDOR_PROVENANCE_GATE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -288,8 +288,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 7804,
-      "sha256": "00846A186ACCE3EF6095A35F52A95CFAD8410830FD08DB2140733C5F0513B6EE"
+      "bytes": 7989,
+      "sha256": "F34D11FC9C26905B174E8BC908C7F064F6A730A403D5E9AC280DEE3C47C51843"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -4603,8 +4603,8 @@
     },
     {
       "path": "docs/verification/gold-wave2612-zip9-admission.json",
-      "bytes": 11214,
-      "sha256": "3D4AC1615C76D982B349A0EAE4A20A74D72EE904B37C35985DACAC88F26ABE3D"
+      "bytes": 11630,
+      "sha256": "F1ED6D18B9BA5408969068A09B5BC414C052A405E29600587CF46118F57F7184"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5808,8 +5808,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2674637,
-      "sha256": "D08B4CC7F9175599199AC57158988022129B4554A27F4D9EE2310D4641822994"
+      "bytes": 2675029,
+      "sha256": "5DBBC357603F0A5B54DA8A8EA35878DE57E3AC7772E7889AB610076261B49124"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
