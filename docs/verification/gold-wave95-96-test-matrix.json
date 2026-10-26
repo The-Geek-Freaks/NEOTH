@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2612_HOSTED_FORMAT_IMPORTED_FINAL_CHECKS_PENDING",
+  "status": "W2612_SOURCE_AND_FORMAT_PASS_CADENCE_ALLOWLIST_ALIGNED",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 451318,
-    "sha256": "5AB396DD6B6FFC0A0FAD2D4EC1ABBCCE14B2C33BE266DA407C4FA8CC6D663803"
+    "bytes": 451323,
+    "sha256": "3CF2C1246EC659D9490239EC5D29274175F446AA30C53D91E867C89AC6CD535A"
   },
   "sourceInputs": 2464,
   "requiredNativeTests": [
@@ -86910,6 +86910,32 @@
       }
     ],
     "note": "Original bound rustfmt receipt40377272107 changes only document/test whitespace; current source spec and template synchronized; vendor97unchanged. Candidate64accepted,full pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2612CandleCadenceAllowlist": {
+    "base": "fbcaddaafb8ea53819b82ef81cf6290632824263",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2612-zip9-admission.json",
+        "bytes": 12657,
+        "sha256": "519917D0AD74ED8A57A9AF2FF8A6106749A337561AAB68D5F32A31F486E75E50",
+        "blob": "aafac2c5383c0c72e54dea4540c7000186b9b96b"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 73438,
+        "sha256": "B6629E5897DBEEC88A1DA59E3EED24F3E09C6AA4515B71F09CE172A7655A1ACC",
+        "blob": "cb0442db71fd0a3197d74849431a940d402fecc3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2675892,
+        "sha256": "B3328186CA66F5067652F937A873F7B3DD8B5121A227AE583BE4DA7399D6615E",
+        "blob": "654faba313fc0e60756a17e697959f6631908e62"
+      }
+    ],
+    "note": "Source provenance and formatting passed40377785930; exact preflight noncompiling allowlist extended by the source-only verifier command. Runtime/full boundaries unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

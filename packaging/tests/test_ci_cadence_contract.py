@@ -559,6 +559,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 "python3 packaging/imbl_provenance_gate.py",
                 "python3 packaging/tests/test_matrix_backport_provenance_gate.py",
                 "python3 packaging/matrix_backport_provenance_gate.py",
+                'python3 packaging/candle_zip_migration.py source --proof "$RUNNER_TEMP/candle-zip-source"',
                 "cargo metadata --locked --no-deps --format-version 1 > /dev/null",
                 "cargo fmt --all -- --check",
                 "\n".join(

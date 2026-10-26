@@ -245,7 +245,14 @@
     "step": "Verify imported Candle ZIP source provenance before Cargo metadata",
     "command": "python3 packaging/candle_zip_migration.py source",
     "scope": "Existing verifier authenticates official archive,97fileinventory,sevenpostimages,fixturetemplate,VCSidentity before Cargo metadata",
-    "hostedValidationPending": true
+    "hostedValidationPending": true,
+    "cadenceAllowlistRepair": {
+      "failedRun": 40377785930,
+      "sourceGatePassed": true,
+      "formatPassed": true,
+      "cause": "Existing exact noncompiling command allowlist omitted newly added source verifier invocation",
+      "repair": "Add only the exact source-mode command; no broad command allowance or compiler/runtime exception"
+    }
   },
   "hostedFormatting": {
     "run": 40377272107,
