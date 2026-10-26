@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "EXACT_DEPENDENCY_MINIMUM_CORRECTED_HOSTED_PENDING",
+  "status": "EXACT_UPSTREAM_LICENSES_ADDED_CANDIDATE_RETRY_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 431549,
-    "sha256": "C6DAD1B80A3141761F9FDF2D90FF9D7B70C6A090003126E9AD6A8404F996969B"
+    "bytes": 431553,
+    "sha256": "AEF286D246276F1207CD2757D477708CD4396B35C4081CA3B7FDA3A7B132CEDE"
   },
   "sourceInputs": 2353,
   "requiredNativeTests": [
@@ -85506,6 +85506,32 @@
       }
     ],
     "note": "Crypto-bigint0.7.10 requires ctutils^0.4.6; exact reviewed0.4.6 checksum replaces0.4.4. All12-target and22-advisory gates retained.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607CraneliftLicenses": {
+    "base": "2384e37d5dcaa2963a8ab31423ddad23c8736060",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 5460,
+        "sha256": "F59B1631423A30917F7ED81AD563FD5EFBD64D5E4B51F387CC148A21D287E8F5",
+        "blob": "30066d498e3632ba43b46aae0f00956e7c045a88"
+      },
+      {
+        "path": "packaging/rust-license-snapshots.json",
+        "bytes": 1374317,
+        "sha256": "D9486D54A6DA51F2B243E1E9CC8A96EB5BB3C9999D54F3FBE9A4FFD78D82432B",
+        "blob": "dfce108428af8df823b7cde96c0106dce856ae26"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2661456,
+        "sha256": "50E97D9DDC3493E650E6065096E3CDFA926D032E4D3633EDCFC722C6CCCC402C",
+        "blob": "f3e5d7d57b1830db7ce9c37646ac0e5f6adf35b9"
+      }
+    ],
+    "note": "Two additive Cranelift0.123.19 exact VCS license snapshots; audit22 passed in rejected candidate but complete notices and product acceptance still pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
