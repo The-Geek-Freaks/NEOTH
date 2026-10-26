@@ -51,7 +51,7 @@
       "rustls 0.23.46",
       "wasmtime 36.0.19",
       "crypto-bigint 0.7.10",
-      "ctutils 0.4.4",
+      "ctutils 0.4.6",
       "rustls-webpki 0.103.16",
       "webpki-root-certs 1.0.10",
       "webpki-roots 1.0.10",
@@ -101,7 +101,13 @@
       },
       "currentTargetWrapper": "Retain existing webpki-roots0.26.11 same registry/checksum with sole edge to1.0.10"
     },
-    "zstdSourceCheck": "Verified official0.14.3 archive digest; encode_all and stream::read::Decoder::new match the two WAL call sites; runtime acceptance pending"
+    "zstdSourceCheck": "Verified official0.14.3 archive digest; encode_all and stream::read::Decoder::new match the two WAL call sites; runtime acceptance pending",
+    "exactDependencyCorrection": {
+      "run": 40334512470,
+      "observed": "crypto-bigint0.7.10 requires ctutils^0.4.6; resolver selected0.4.6",
+      "correction": "Pin reviewed ctutils0.4.6 registry checksum; no intermediate-version guard relaxation",
+      "registryMetadata": "work/gold-20260906/wave2606-dependency-repair/crypto-bigint-0.7.10-dependencies.json"
+    }
   },
   "sourceRegistration": {
     "portable": 3034,

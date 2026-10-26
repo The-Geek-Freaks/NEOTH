@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "CURRENT_AUDIT_REPAIR_CANDIDATE_HOSTED_PENDING",
+  "status": "EXACT_DEPENDENCY_MINIMUM_CORRECTED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 431545,
-    "sha256": "9A2D28F369FC2E8BCBE2986A82C10ABC1AB539552B762A525758033056E71A73"
+    "bytes": 431549,
+    "sha256": "C6DAD1B80A3141761F9FDF2D90FF9D7B70C6A090003126E9AD6A8404F996969B"
   },
   "sourceInputs": 2353,
   "requiredNativeTests": [
@@ -85480,6 +85480,32 @@
       }
     ],
     "note": "Twelve exact targets and22 required-absent advisories derived from actual audit package identities; three ZIP findings and parent migrations remain open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607CtutilsRequirement": {
+    "base": "bee103749314adba4330f4f2df94b109eed318b9",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 33962,
+        "sha256": "CF803AA788C92B25CE272FE59E83AFF6EA170C3A76A6CEFA3D03BD89D93801B8",
+        "blob": "275a2b29e5b33a6dea327a202da87b65660f7dd2"
+      },
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 4815,
+        "sha256": "F46FC5A8932F9350C04E6BEADF083FF46BD2DFC2B91BF8D16F6D56FFCA5AA2DA",
+        "blob": "030cd61b2084d8b85ccf802019fc996eb366145c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2660918,
+        "sha256": "9B6A9E8F117EE0205FE8391F06B16847DEDF8348CC9B14F724D25A3EBD3AC77C",
+        "blob": "f9271ace86a37cdeb2a8f83b0f1b4b0a649e46b3"
+      }
+    ],
+    "note": "Crypto-bigint0.7.10 requires ctutils^0.4.6; exact reviewed0.4.6 checksum replaces0.4.4. All12-target and22-advisory gates retained.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
