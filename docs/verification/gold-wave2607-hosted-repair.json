@@ -180,6 +180,22 @@
     "workflowGuardUnchanged": true,
     "newHostedPassRequired": true,
     "pushPreflightRegression": "packaging/tests/test_ci_cadence_contract.py::CiCadenceContractTests::test_document_regression_selection_matches_reports_and_source_bindings",
-    "earlyGateScope": "Exact55unique report/matrix identities, Python ordinal order, unique native registration and13actual source hashes; executed remotely by existing push Preflight"
+    "earlyGateScope": "Exact55unique report/matrix identities, Python ordinal order, unique native registration and13actual source hashes; executed remotely by existing push Preflight",
+    "earlyGateHostedProof": {
+      "producer": "d0caeddeee91a2e06f2a60d77f5795b0bc0c93a4",
+      "preflight": 40342046741,
+      "codeQuality": 40342045979,
+      "conclusion": "success",
+      "productCasesAccepted": false
+    }
+  },
+  "compileCheckpointRetention": {
+    "cause": "Successful core compilation was discarded when a later Clippy or test gate failed",
+    "repair": "Save only after core typecheck success and no cancellation; cache upload optional; all actual build/test gates stay required",
+    "key": "OS/toolchain/lock/producer; prefer exact-lock previous checkpoints",
+    "timingBenefitMeasured": false,
+    "localRuntimeExecuted": false,
+    "pendingHosted": true,
+    "reviewer": "/root/dependency_boundary_review"
   }
 }

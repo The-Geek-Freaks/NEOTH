@@ -207,6 +207,29 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_cli_checkpoint_retains_successful_compile_without_accepting_failed_gates(self) -> None:
+        workflow = (WORKFLOWS / "cli-reference.yml").read_text(encoding="utf-8")
+        steps = workflow_steps(workflow_jobs(workflow)["generate"])
+        core = steps["Type-check core test targets before native validation"]
+        self.assertIn("id: check-core-tests", core)
+        self.assertNotIn("continue-on-error:", core)
+        self.assertIn("cargo check -p neoth --tests --locked --keep-going", core)
+        save = steps["Save completed CLI-reference Cargo checkpoint"]
+        self.assertIn("always() && !cancelled()", save)
+        self.assertIn("steps.check-core-tests.outcome == 'success'", save)
+        self.assertIn("steps.cli-reference-cargo-cache.outputs.cache-hit != 'true'", save)
+        self.assertIn("continue-on-error: true", save)
+        self.assertIn("timeout-minutes: 10", save)
+        restore = steps["Restore CLI-reference Cargo checkpoint"]
+        self.assertIn("${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}", restore)
+        for name in (
+            "Check exact Linux-quality workspace Clippy",
+            "Run exact document and migration regressions",
+            "Run exact cost replay and provider recovery regressions",
+        ):
+            self.assertNotIn("continue-on-error:", steps[name])
+        self.assertIn("-- -D warnings", steps["Check exact Linux-quality workspace Clippy"])
+
     def test_document_regression_selection_matches_reports_and_source_bindings(self) -> None:
         # Reject selection drift on push before the expensive Rust job starts.
         matrix = json.loads(

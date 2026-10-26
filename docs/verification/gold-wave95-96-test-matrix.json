@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "EARLY_DOCUMENT_SELECTION_GUARD_HOSTED_PENDING",
+  "status": "COMPILE_CHECKPOINT_RETENTION_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 432835,
-    "sha256": "1357F6CBD78C532500C0238E0CB5256ECD40CEA8D07114FFB4AA437B2E262C50"
+    "bytes": 432833,
+    "sha256": "D8E77ECB583FA7851DCFFFEF0E8A0E601BC5340EB128CC900576EAA5216C10CA"
   },
   "sourceInputs": 2360,
   "requiredNativeTests": [
@@ -85774,6 +85774,38 @@
       }
     ],
     "note": "Existing push Preflight validates exact55unique report/matrix identities, ordinal order and13source bindings before expensive Rust execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607CompileCheckpointRetention": {
+    "base": "d0caeddeee91a2e06f2a60d77f5795b0bc0c93a4",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 49823,
+        "sha256": "9964E5D36B0A814A2617405C659233B8E76868AA317FB74890152DF9366BD556",
+        "blob": "abcd55ee26427bba5eac6f5e8b57b9e138a5df54"
+      },
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 9049,
+        "sha256": "3BF33A18C06ACCCCAEE70B56400FA091F75906D6A1A3110EF72AABA1DA1BE8AA",
+        "blob": "6ba6e6287414483b24c6cc98f2da61542a885784"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 70055,
+        "sha256": "8CF08D3F9F847A6C8CC972E3E8C31348645DC00FC43E137B06F39880B0F0BBBA",
+        "blob": "0041ae64bd42bb3ef7681b73527a8a08ad21062a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2666776,
+        "sha256": "67ACEA175B1170DEB32F7E0A38EFAC33DEAEFD4800DB35BE593133FD4543B934",
+        "blob": "f9e986a233fd6312a13027ba7100e7fc3cad5cbd"
+      }
+    ],
+    "note": "Keep successful core compilation after later mandatory failure; producer cache key and exact-lock fallback; cache upload optional, all validation remains required",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

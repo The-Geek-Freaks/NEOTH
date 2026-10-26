@@ -109,7 +109,7 @@ jobs:
             ffmpeg
 
       # This cache family belongs to this workflow. Its key intentionally tracks
-      # the Rust toolchain and lockfile, while Cargo still validates all current
+      # the Rust toolchain, lockfile and producer, while Cargo validates all current
       # source inputs; it is an accelerator, never an acceptance receipt.
       # A same-OS/lock live-audio fallback also warms a cold main branch; it
       # contains the same four paths and never bypasses Cargo freshness checks.
@@ -122,8 +122,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-cli-reference-rust-1.91-cargo-
 
@@ -137,6 +139,7 @@ jobs:
       # native matrix. This checks default-feature core tests without linking
       # or executing them; it does not replace native behavior or GUI gates.
       - name: Type-check core test targets before native validation
+        id: check-core-tests
         timeout-minutes: 15
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
@@ -737,11 +740,12 @@ jobs:
           path: ${{ runner.temp }}/neoth-cli-reference/
           if-no-files-found: error
 
-      # Publish one immutable, successful compile checkpoint per lockfile.
-      # Failed or cancelled gates never save state, and cache contents do not
-      # constitute evidence for the strict source and release checks above.
+      # Retain a successful core compile even when a later gate fails. Cache
+      # state is only an accelerator; every requested test and lint stays required.
+      # Producer keys let later commits improve an earlier partial checkpoint.
       - name: Save completed CLI-reference Cargo checkpoint
-        if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && !cancelled() && steps.check-core-tests.outcome == 'success' && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
         timeout-minutes: 10
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
