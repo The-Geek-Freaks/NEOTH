@@ -790,7 +790,9 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
     Ok(event)
 }
 
-pub(super) fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
+pub(super) fn usage_event_from_terminal_payload(
+    payload: &[u8],
+) -> anyhow::Result<Option<UsageEvent>> {
     usage_event_from_terminal_payload_with_legacy(payload, |event| {
         // V2 did not retain original amounts or a historic price basis.
         let mut projected = provider_terminal_event(

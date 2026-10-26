@@ -480,16 +480,28 @@ mod tests {
     }
 
     fn versioned_terminal_payload(invocation: u8, ts: i64, ok: bool, version: u8) -> Vec<u8> {
-        let mut payload: serde_json::Value = serde_json::from_slice(
-            &producer_terminal_payload(invocation, ts, ok),
-        ).unwrap();
+        let mut payload: serde_json::Value =
+            serde_json::from_slice(&producer_terminal_payload(invocation, ts, ok)).unwrap();
         // Alternate known measurements and valid unmeasured v4 terminals.
         let measured = version == 3 || invocation % 2 == 1;
         let mut event = super::super::usage_log::provider_terminal_event(
-            ts, "openai_api", "gpt-5", measured.then_some(1), measured.then_some(2),
-            100, ok, None, None, false, &format!("{invocation:064x}"),
-            if ok { "complete" } else { "transport" }, "chat_provider_round",
-            Some("chat"), Some("chat_provider_round"), false, None,
+            ts,
+            "openai_api",
+            "gpt-5",
+            measured.then_some(1),
+            measured.then_some(2),
+            100,
+            ok,
+            None,
+            None,
+            false,
+            &format!("{invocation:064x}"),
+            if ok { "complete" } else { "transport" },
+            "chat_provider_round",
+            Some("chat"),
+            Some("chat_provider_round"),
+            false,
+            None,
         );
         payload["input_tokens"] = serde_json::json!(event.input_tokens);
         payload["output_tokens"] = serde_json::json!(event.output_tokens);
@@ -516,12 +528,25 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let now = crate::time::now_unix_i64();
         let (_, writer, join) = ready_authenticated_writer(home.path()).await;
-        for (ids, version, ts) in [(0..12, 3, now - RECENT_WINDOW_SECONDS - 10), (20..28, 4, now - 10)] {
+        for (ids, version, ts) in [
+            (0..12, 3, now - RECENT_WINDOW_SECONDS - 10),
+            (20..28, 4, now - 10),
+        ] {
             for invocation in ids {
                 let ok = invocation < 26;
                 let payload = versioned_terminal_payload(invocation, ts, ok, version);
-                let event_type = if ok { EVENT_TYPE_PROVIDER_RESPONSE } else { EVENT_TYPE_PROVIDER_ERROR };
-                writer.append_authenticated(crate::wal::HeaderBuilder::new(event_type, &payload).build(), payload).await.unwrap();
+                let event_type = if ok {
+                    EVENT_TYPE_PROVIDER_RESPONSE
+                } else {
+                    EVENT_TYPE_PROVIDER_ERROR
+                };
+                writer
+                    .append_authenticated(
+                        crate::wal::HeaderBuilder::new(event_type, &payload).build(),
+                        payload,
+                    )
+                    .await
+                    .unwrap();
             }
         }
         drop(writer);
@@ -535,8 +560,10 @@ mod tests {
         assert_eq!(report.observations[0].recent_samples, 8);
         assert_eq!(report.observations[0].recent_failures, 2);
         assert_eq!(report.observations[0].trend, CapabilityTrend::Degrading);
-        let outcome = crate::cli::doctor::run_all_checks(home.path()).into_iter()
-            .find(|outcome| outcome.name == "capability quality").unwrap();
+        let outcome = crate::cli::doctor::run_all_checks(home.path())
+            .into_iter()
+            .find(|outcome| outcome.name == "capability quality")
+            .unwrap();
         assert!(outcome.detail.contains("observed degradation"));
         assert!(!outcome.detail.contains("legacy terminal"));
     }
@@ -545,20 +572,48 @@ mod tests {
     fn versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback() {
         for version in [3, 4] {
             let payload = versioned_terminal_payload(1, 1, true, version);
-            assert!(matches!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &payload).unwrap(), TerminalPayload::Sample(_)));
+            assert!(matches!(
+                terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &payload).unwrap(),
+                TerminalPayload::Sample(_)
+            ));
             let original: serde_json::Value = serde_json::from_slice(&payload).unwrap();
             let mut changed = original.clone();
             changed["usage_snapshot"]["event_metadata"]["model"] = "other".into();
-            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            assert!(
+                terminal_sample_from_payload(
+                    EVENT_TYPE_PROVIDER_RESPONSE,
+                    &serde_json::to_vec(&changed).unwrap()
+                )
+                .is_err()
+            );
             let mut changed = original.clone();
             changed.as_object_mut().unwrap().remove("usage_snapshot");
-            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            assert!(
+                terminal_sample_from_payload(
+                    EVENT_TYPE_PROVIDER_RESPONSE,
+                    &serde_json::to_vec(&changed).unwrap()
+                )
+                .is_err()
+            );
             let mut changed = original.clone();
             changed["usage_snapshot"]["schema"] = "neoth.provider-usage-snapshot.v99".into();
-            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            assert!(
+                terminal_sample_from_payload(
+                    EVENT_TYPE_PROVIDER_RESPONSE,
+                    &serde_json::to_vec(&changed).unwrap()
+                )
+                .is_err()
+            );
             let mut future = original;
             future["usage_projection_schema"] = "neoth.provider-usage.v99".into();
-            assert!(matches!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&future).unwrap()).unwrap(), TerminalPayload::Legacy));
+            assert!(matches!(
+                terminal_sample_from_payload(
+                    EVENT_TYPE_PROVIDER_RESPONSE,
+                    &serde_json::to_vec(&future).unwrap()
+                )
+                .unwrap(),
+                TerminalPayload::Legacy
+            ));
         }
     }
 
