@@ -207,6 +207,54 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_document_regression_selection_matches_reports_and_source_bindings(self) -> None:
+        # Reject selection drift on push before the expensive Rust job starts.
+        matrix = json.loads(
+            (ROOT / "docs/verification/gold-wave95-96-test-matrix.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        reports = (
+            "gold-wave2599-docx-table-ranges.json",
+            "gold-wave2600-document-structure-persistence.json",
+            "gold-wave2602-vault-note-recovery.json",
+            "gold-wave2604-logical-document-lifecycle.json",
+            "gold-wave2601-ci-checkpoint-and-migration-expectation.json",
+        )
+        expected: list[str] = []
+        for name in reports:
+            report = json.loads(
+                (ROOT / "docs/verification" / name).read_text(encoding="utf-8")
+            )
+            expected.extend(
+                report.get("tests", report.get("observedWindows", {}).get("failures", []))
+            )
+            expected.extend(report.get("focusedAdditionalTests", []))
+        selection = matrix["wave2604DocumentRegressions"]
+        self.assertEqual(selection["requiredCount"], 55)
+        self.assertEqual(len(expected), 55)
+        self.assertEqual(len(set(expected)), 55)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
+        native = (
+            matrix["requiredNativeTests"]
+            + matrix["requiredNativeTestsByPlatform"]["Linux"]
+        )
+        source_hashes: dict[Path, str] = {}
+        for identity in expected:
+            with self.subTest(test=identity):
+                self.assertIsNotNone(re.fullmatch(r"[A-Za-z0-9_:]+", identity))
+                records = [
+                    record for record in native
+                    if record["test"] == identity and record["junitClass"] == "neoth"
+                ]
+                self.assertEqual(len(records), 1)
+                record = records[0]
+                source = (ROOT / record["sourcePath"]).resolve()
+                self.assertTrue(source.is_relative_to((ROOT / "SRC").resolve()))
+                if source not in source_hashes:
+                    source_hashes[source] = hashlib.sha256(source.read_bytes()).hexdigest()
+                self.assertEqual(source_hashes[source], record["sourceSha256"].lower())
+
     def test_linux_gui_fixture_workflow_cardinality_matches_matrix(self) -> None:
         matrix = json.loads(
             (ROOT / "docs/verification/gold-wave95-96-test-matrix.json").read_text(

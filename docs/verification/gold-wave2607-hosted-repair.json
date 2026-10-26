@@ -178,6 +178,8 @@
     "requiredCount": 55,
     "testIdentitySetUnchanged": true,
     "workflowGuardUnchanged": true,
-    "newHostedPassRequired": true
+    "newHostedPassRequired": true,
+    "pushPreflightRegression": "packaging/tests/test_ci_cadence_contract.py::CiCadenceContractTests::test_document_regression_selection_matches_reports_and_source_bindings",
+    "earlyGateScope": "Exact55unique report/matrix identities, Python ordinal order, unique native registration and13actual source hashes; executed remotely by existing push Preflight"
   }
 }

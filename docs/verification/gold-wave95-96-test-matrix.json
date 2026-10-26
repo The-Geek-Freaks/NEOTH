@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "PUBLISHED_SOURCE_PENDING_HOSTED_ACCEPTANCE",
+  "status": "EARLY_DOCUMENT_SELECTION_GUARD_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 432832,
-    "sha256": "AF3D2638E62E642369704093C4F39587D3D8F4ED63619480383970931390A19B"
+    "bytes": 432835,
+    "sha256": "1357F6CBD78C532500C0238E0CB5256ECD40CEA8D07114FFB4AA437B2E262C50"
   },
   "sourceInputs": 2360,
   "requiredNativeTests": [
@@ -85748,6 +85748,32 @@
       }
     ],
     "note": "Exact same55case identity set sorted ordinal to match Python selection guard; no executable local validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607EarlyDocumentSelectionGate": {
+    "base": "04b3ad18de1847a099d7b4e6abb0b3ddbc3623f7",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 8308,
+        "sha256": "0B43A45E1460068754D62F6E8F71A3CA484B38902D32482F55F3D553AF000F33",
+        "blob": "f837d78c28f022ff7473e882ca34ae87c845e8a6"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 68609,
+        "sha256": "CB2E26B9F548694FB7BE83D6AF23B878ADEAB3A4867795EAA24C34AE62784A14",
+        "blob": "d2cad171f0095a454602a96835b5bebb11780e88"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2666060,
+        "sha256": "4A5A476C4D4C7D52D5866A883663B3B54D0C563EBB74B343E5E77826EC22F5B9",
+        "blob": "f71f5b01c4e5e66633306eb01126f9b9e4308ce0"
+      }
+    ],
+    "note": "Existing push Preflight validates exact55unique report/matrix identities, ordinal order and13source bindings before expensive Rust execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
