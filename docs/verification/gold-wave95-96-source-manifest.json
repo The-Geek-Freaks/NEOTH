@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T14:44:49.9763304Z",
-  "validationStatus": "COMPILE_CHECKPOINT_RETENTION_HOSTED_PENDING",
+  "capturedUtc": "2026-10-26T16:06:16.0504157Z",
+  "validationStatus": "MAIN_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -153,8 +153,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 49823,
-      "sha256": "9964E5D36B0A814A2617405C659233B8E76868AA317FB74890152DF9366BD556"
+      "bytes": 50220,
+      "sha256": "2AFAF822789F60A8FE279A06C0547866840C8765CDF48E0086AFBC5F753C3884"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -740,6 +740,11 @@
       "path": "docs/converted-channel-relink.md",
       "bytes": 3780,
       "sha256": "3BD497F55E105C9DCF2FEDB03F72F0237D7CC85331EB9CC5AA629835E5A9D16F"
+    },
+    {
+      "path": "docs/COST_PROVENANCE.md",
+      "bytes": 2173,
+      "sha256": "6E6663D4B0CBC200975A5240B392F7A345D6C5ACB6C4C20B0AF27E2F51612243"
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
@@ -4582,6 +4587,11 @@
       "sha256": "E3E60E2A0EBD6466A35C8120A42A52413ADD39EACC695946841B33D2F178E582"
     },
     {
+      "path": "docs/verification/gold-wave2609-price-basis.json",
+      "bytes": 2515,
+      "sha256": "9851F603E214C70B618C1F88F8051E54D096390F1B9E54A9C45C7F2155992CF5"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5563,8 +5573,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 70055,
-      "sha256": "8CF08D3F9F847A6C8CC972E3E8C31348645DC00FC43E137B06F39880B0F0BBBA"
+      "bytes": 71891,
+      "sha256": "117F3E74842E3F9BACD0863F0EADF0606776B28455C01DD15D8E7079AC176816"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5783,8 +5793,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2666776,
-      "sha256": "67ACEA175B1170DEB32F7E0A38EFAC33DEAEFD4800DB35BE593133FD4543B934"
+      "bytes": 2668201,
+      "sha256": "ACA4FCFE7BEF501D3C532AF4C82B128DA5A08CB8A4415FF46AFBBDCF3E52D3B8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7968,8 +7978,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
-      "bytes": 93443,
-      "sha256": "6037D86390E329599751528E99BA3E7D9E1EBA6482784B22A80BF74F7D15D670"
+      "bytes": 106058,
+      "sha256": "CC2B18BD9F16AA692B6DF5480B32608BB52120D046A57E59564861BECFF74A80"
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
@@ -9013,13 +9023,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 371951,
-      "sha256": "62A96851854BBC8E965CF3E5864AED013C752ED00F06200B4195E884639FD6CC"
+      "bytes": 372056,
+      "sha256": "F7F603414F40E86BBFD7B31E1B8DFA9D2E5E9C1BFDF48D0C7276A346DDECBF19"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
-      "bytes": 62000,
-      "sha256": "91D21B9313AE4DFAEEAC7A5BEE6886F1FCA251286BF3E4A2228D8D315986CEB2"
+      "bytes": 62710,
+      "sha256": "64A1C85C74376E5025AE85827BB40FBB15B9B01568E86939C19E25161F2289E2"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -9048,8 +9058,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 319908,
-      "sha256": "9B7DA7D7F996B353D40DFCC299EF9D2CAB12BC3E47F4B90071A3C4277629EED0"
+      "bytes": 319931,
+      "sha256": "A569DFEBED3C985888407AB7D3192002C4CB9A91F19A247EAB1E8DCDF23CC55A"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -9070,6 +9080,11 @@
       "path": "SRC/neothd/src/providers/ouro/artifacts.rs",
       "bytes": 47470,
       "sha256": "CB9F906B658BAA67262710AE2EC7258F7FF48230AE276C8372BB5BC5E144200A"
+    },
+    {
+      "path": "SRC/neothd/src/providers/pricing_basis.rs",
+      "bytes": 7305,
+      "sha256": "36FA388C0BE17803841263603AAE546764A77D1D9ABF5C34851074A97FE788B4"
     },
     {
       "path": "SRC/neothd/src/providers/recursive_mas_adapter.rs",

@@ -1,0 +1,42 @@
+{
+  "schema": "neoth.gold-wave2609.v1",
+  "date": "2026-10-26",
+  "adoption": "ADOPT-20261012-A02",
+  "base": "982197a9b901daa2816d98c767177e9bca9a7f15",
+  "status": "MAIN_SOURCE_IMPLEMENTED_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "Preserve effective static rate, provider/model, FX and cache calculation constants with a content-addressed basis",
+    "Use the same reviewed PriceRow for terminal amounts and provenance",
+    "Persist basis in terminal WAL v4 and snapshot v2; require explicit null when no amount was computed",
+    "Keep v3 exact encoding and v2 legacy recomputation without inventing historical provenance",
+    "Recover original amount bits and basis through the existing idempotent usage repair; no extra request or debit"
+  ],
+  "tests": [
+    "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
+    "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
+    "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
+    "daemon::usage_log::tests::terminal_v4_rejects_outer_basis_and_model_mismatches",
+    "daemon::usage_log::tests::terminal_v4_requires_complete_basis_and_refuses_mixed_versions",
+    "daemon::usage_log::tests::terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis",
+    "providers::pricing_basis::tests::price_basis_rejects_invalid_rates_even_with_matching_digest",
+    "providers::pricing_basis::tests::price_basis_rejects_tampered_rates_policy_and_identity",
+    "providers::pricing_basis::tests::price_basis_roundtrip_preserves_exact_row_and_policy"
+  ],
+  "newPortableRegistrations": 9,
+  "review": {
+    "method": "Prompt-only source flow, schema and boundary review",
+    "result": "No static blocker; explicit null and missing-key cases included; hosted checks pending",
+    "agent": "/root/dependency_boundary_review"
+  },
+  "limitations": [
+    "Static estimate provenance is not a provider invoice, current-price guarantee or payment receipt",
+    "Generic externally supplied record_now/record_provider_call records do not acquire historical provenance",
+    "Seven-category attribution, tokenizer and remainder, reservation-rate history and operator UI remain open",
+    "Digest verifies canonical basis identity, not authenticity of coordinated rewritten WAL records"
+  ],
+  "localRuntimeExecuted": false,
+  "hostedFormatAccepted": false,
+  "hostedCompileAccepted": false,
+  "hostedRuntimeAccepted": false,
+  "goldCheckboxesClosed": 0
+}

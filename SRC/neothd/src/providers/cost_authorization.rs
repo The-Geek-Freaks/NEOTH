@@ -916,11 +916,12 @@ impl ProviderCallAuditTicket {
         payload.insert("ts_unix".into(), usage_event.ts_unix.into());
         payload.insert(
             "usage_projection_schema".into(),
-            "neoth.provider-usage.v3".into(),
+            "neoth.provider-usage.v4".into(),
         );
+        payload.insert("pricing_basis".into(), serde_json::to_value(&usage_event.pricing_basis)?);
         payload.insert(
             "usage_snapshot".into(),
-            crate::daemon::usage_log::terminal_usage_snapshot(&usage_event)?,
+            crate::daemon::usage_log::terminal_usage_snapshot_v2(&usage_event)?,
         );
         let payload = serde_json::to_vec(&payload).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -7935,7 +7936,7 @@ mod tests {
         assert!(frames[0].1.get("usage_snapshot").is_none());
         assert_eq!(
             frames[1].1["usage_projection_schema"],
-            "neoth.provider-usage.v3"
+            "neoth.provider-usage.v4"
         );
 
         std::fs::remove_file(&usage_blocker).unwrap();
@@ -7954,7 +7955,7 @@ mod tests {
         assert_eq!(events[0].provider, "local_ouro");
         assert_eq!(
             frames[1].1["usage_snapshot"],
-            crate::daemon::usage_log::terminal_usage_snapshot(&events[0]).unwrap()
+            crate::daemon::usage_log::terminal_usage_snapshot_v2(&events[0]).unwrap()
         );
         assert_eq!(frames[1].1["ts_unix"], events[0].ts_unix);
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);

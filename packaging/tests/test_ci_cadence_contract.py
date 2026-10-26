@@ -230,6 +230,45 @@ class CiCadenceContractTests(unittest.TestCase):
             self.assertNotIn("continue-on-error:", steps[name])
         self.assertIn("-- -D warnings", steps["Check exact Linux-quality workspace Clippy"])
 
+    def test_cost_regression_selection_matches_reports_and_source_bindings(self) -> None:
+        matrix = json.loads(
+            (ROOT / "docs/verification/gold-wave95-96-test-matrix.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        expected: list[str] = []
+        for name in (
+            "gold-wave2603-terminal-usage-replay.json",
+            "gold-wave2609-price-basis.json",
+        ):
+            report = json.loads(
+                (ROOT / "docs/verification" / name).read_text(encoding="utf-8")
+            )
+            expected.extend(report["tests"])
+        selection = matrix["wave2609CostReplayRegressions"]
+        self.assertEqual(selection["requiredCount"], 16)
+        self.assertEqual(len(expected), 16)
+        self.assertEqual(len(set(expected)), 16)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
+        self.assertIn(
+            "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",
+            expected,
+        )
+        source_hashes: dict[Path, str] = {}
+        for identity in expected:
+            with self.subTest(test=identity):
+                records = [
+                    record for record in matrix["requiredNativeTests"]
+                    if record["test"] == identity and record["junitClass"] == "neoth"
+                ]
+                self.assertEqual(len(records), 1)
+                record = records[0]
+                source = (ROOT / record["sourcePath"]).resolve()
+                self.assertTrue(source.is_relative_to((ROOT / "SRC").resolve()))
+                if source not in source_hashes:
+                    source_hashes[source] = hashlib.sha256(source.read_bytes()).hexdigest()
+                self.assertEqual(source_hashes[source], record["sourceSha256"].lower())
+
     def test_document_regression_selection_matches_reports_and_source_bindings(self) -> None:
         # Reject selection drift on push before the expensive Rust job starts.
         matrix = json.loads(

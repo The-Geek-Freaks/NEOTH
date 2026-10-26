@@ -95,6 +95,10 @@ pub struct UsageEvent {
     /// retained bundle. Missing means legacy/unavailable, never zero.
     #[serde(default)]
     pub prompt_tax: Option<crate::tokens::budget::PromptTax>,
+    /// Exact static calculation basis, available only on new terminal records.
+    /// Missing on historical rows; never reconstructed from today's prices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing_basis: Option<crate::providers::pricing_basis::PricingBasis>,
 }
 
 /// Aggregate of the optional per-leaf prompt-tax measurements. The observed
@@ -428,10 +432,9 @@ pub(crate) fn provider_terminal_event(
 ) -> UsageEvent {
     let reviewed_price = crate::providers::cost::lookup_price(provider, model);
     let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
-        (Some(input), Some(output), Some(_)) => {
-            Some(crate::providers::cost::actual_cost_usd_with_cache(
-                provider,
-                model,
+        (Some(input), Some(output), Some(price)) => {
+            Some(crate::providers::cost::cost_usd_for_price(
+                price,
                 input,
                 output,
                 cache_creation_tokens.unwrap_or_default(),
@@ -446,10 +449,9 @@ pub(crate) fn provider_terminal_event(
         _ => None,
     };
     let cache_savings_usd = match (cache_creation_tokens, cache_read_tokens, reviewed_price) {
-        (created, read, Some(_)) if created.is_some() || read.is_some() => {
-            Some(crate::providers::cost::cache_savings_usd(
-                provider,
-                model,
+        (created, read, Some(price)) if created.is_some() || read.is_some() => {
+            Some(crate::providers::cost::cache_savings_for_price(
+                price,
                 created.unwrap_or_default(),
                 read.unwrap_or_default(),
             ))
@@ -476,6 +478,9 @@ pub(crate) fn provider_terminal_event(
         call_type: call_type.map(str::to_owned),
         streaming,
         prompt_tax,
+        pricing_basis: reviewed_price
+            .filter(|_| cost_usd.is_some() || cache_savings_usd.is_some())
+            .map(|price| crate::providers::pricing_basis::PricingBasis::from_price(provider, model, price)),
     }
 }
 
@@ -524,6 +529,7 @@ pub fn record_now(
         call_type: None,
         streaming: false,
         prompt_tax: None,
+        pricing_basis: None,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -562,10 +568,9 @@ pub fn record_provider_call(
 ) -> std::io::Result<UsageEvent> {
     let reviewed_price = crate::providers::cost::lookup_price(provider, model);
     let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
-        (Some(input), Some(output), Some(_)) => {
-            Some(crate::providers::cost::actual_cost_usd_with_cache(
-                provider,
-                model,
+        (Some(input), Some(output), Some(price)) => {
+            Some(crate::providers::cost::cost_usd_for_price(
+                price,
                 input,
                 output,
                 cache_creation_tokens.unwrap_or_default(),
@@ -580,10 +585,9 @@ pub fn record_provider_call(
         _ => None,
     };
     let cache_savings_usd = match (cache_creation_tokens, cache_read_tokens, reviewed_price) {
-        (created, read, Some(_)) if created.is_some() || read.is_some() => {
-            Some(crate::providers::cost::cache_savings_usd(
-                provider,
-                model,
+        (created, read, Some(price)) if created.is_some() || read.is_some() => {
+            Some(crate::providers::cost::cache_savings_for_price(
+                price,
                 created.unwrap_or_default(),
                 read.unwrap_or_default(),
             ))
@@ -617,6 +621,7 @@ pub fn record_provider_call(
         call_type: None,
         streaming: false,
         prompt_tax: None,
+        pricing_basis: None,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -679,6 +684,22 @@ fn terminal_prompt_tax(
 /// floating-point result without inventing a new pricing or rounding policy.
 /// This is not a price-table snapshot or evidence of provider settlement.
 pub(crate) fn terminal_usage_snapshot(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(event.pricing_basis.is_none(), "legacy snapshot cannot contain pricing basis");
+    encode_usage_snapshot(event, false)
+}
+
+pub(crate) fn terminal_usage_snapshot_v2(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(
+        event.pricing_basis.is_some() == (event.cost_usd.is_some() || event.cache_savings_usd.is_some()),
+        "pricing basis availability differs from computed amounts"
+    );
+    if let Some(basis) = &event.pricing_basis {
+        basis.validate(&event.provider, &event.model)?;
+    }
+    encode_usage_snapshot(event, true)
+}
+
+fn encode_usage_snapshot(event: &UsageEvent, with_pricing: bool) -> anyhow::Result<serde_json::Value> {
     if event
         .cost_usd
         .is_some_and(|cost| !cost.is_finite() || cost.is_sign_negative())
@@ -692,8 +713,11 @@ pub(crate) fn terminal_usage_snapshot(event: &UsageEvent) -> anyhow::Result<serd
     let object = metadata.as_object_mut().expect("usage event is an object");
     object.remove("cost_usd");
     object.remove("cache_savings_usd");
+    if with_pricing {
+        object.insert("pricing_basis".into(), serde_json::to_value(&event.pricing_basis)?);
+    }
     Ok(serde_json::json!({
-        "schema": "neoth.provider-usage-snapshot.v1",
+        "schema": if with_pricing { "neoth.provider-usage-snapshot.v2" } else { "neoth.provider-usage-snapshot.v1" },
         "event_metadata": metadata,
         "cost_usd_bits": event.cost_usd.map(|value| format!("{:016x}", value.to_bits())),
         "cache_savings_usd_bits": event.cache_savings_usd.map(|value| format!("{:016x}", value.to_bits())),
@@ -737,7 +761,15 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
     event.cache_savings_usd = snapshot_amount(snapshot, "cache_savings_usd_bits")?;
     // Re-encoding enforces the complete versioned field set: optional fields
     // must be explicitly present as null, not silently supplied by defaults.
-    if terminal_usage_snapshot(&event)? != *snapshot {
+    let encoded = match snapshot.get("schema").and_then(serde_json::Value::as_str) {
+        Some("neoth.provider-usage-snapshot.v1") => {
+            anyhow::ensure!(metadata.get("pricing_basis").is_none(), "legacy snapshot has pricing basis field");
+            terminal_usage_snapshot(&event)?
+        }
+        Some("neoth.provider-usage-snapshot.v2") => terminal_usage_snapshot_v2(&event)?,
+        _ => anyhow::bail!("unsupported terminal usage snapshot schema"),
+    };
+    if encoded != *snapshot {
         anyhow::bail!("terminal usage snapshot has an unsupported schema or incomplete field set");
     }
     Ok(event)
@@ -746,7 +778,7 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
 fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
     usage_event_from_terminal_payload_with_legacy(payload, |event| {
         // V2 did not retain original amounts or a historic price basis.
-        provider_terminal_event(
+        let mut projected = provider_terminal_event(
             event.ts_unix,
             &event.provider,
             &event.model,
@@ -770,7 +802,9 @@ fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<Us
             event.call_type.as_deref(),
             event.streaming,
             event.prompt_tax,
-        )
+        );
+        projected.pricing_basis = None;
+        projected
     })
 }
 
@@ -779,13 +813,24 @@ fn usage_event_from_terminal_payload_with_legacy(
     legacy_projection: impl FnOnce(UsageEvent) -> UsageEvent,
 ) -> anyhow::Result<Option<UsageEvent>> {
     let value: serde_json::Value = serde_json::from_slice(payload)?;
+    let with_pricing = value.get("usage_projection_schema").and_then(serde_json::Value::as_str)
+        == Some("neoth.provider-usage.v4");
+    anyhow::ensure!(
+        with_pricing == value.get("pricing_basis").is_some(),
+        "terminal pricing basis field does not match projection version"
+    );
     let snapshot = match value.get("usage_projection_schema") {
-        Some(serde_json::Value::String(schema)) if schema == "neoth.provider-usage.v3" => {
-            Some(usage_event_from_snapshot(
-                value
-                    .get("usage_snapshot")
-                    .ok_or_else(|| anyhow::anyhow!("v3 terminal usage snapshot is missing"))?,
-            )?)
+        Some(serde_json::Value::String(schema))
+            if schema == "neoth.provider-usage.v3" || schema == "neoth.provider-usage.v4" => {
+            let snapshot = value.get("usage_snapshot")
+                .ok_or_else(|| anyhow::anyhow!("terminal usage snapshot is missing"))?;
+            let expected = if with_pricing {
+                "neoth.provider-usage-snapshot.v2"
+            } else {
+                "neoth.provider-usage-snapshot.v1"
+            };
+            anyhow::ensure!(snapshot.get("schema").and_then(serde_json::Value::as_str) == Some(expected), "mixed terminal usage snapshot version");
+            Some(usage_event_from_snapshot(snapshot)?)
         }
         Some(serde_json::Value::String(schema)) if schema == "neoth.provider-usage.v2" => {
             if value.get("usage_snapshot").is_some() {
@@ -854,6 +899,11 @@ fn usage_event_from_terminal_payload_with_legacy(
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `streaming` is missing"))?,
         prompt_tax: terminal_prompt_tax(&value)?,
+        pricing_basis: if with_pricing {
+            serde_json::from_value(value["pricing_basis"].clone())?
+        } else {
+            None
+        },
         cost_usd: None,
         cache_savings_usd: None,
     };
@@ -2213,6 +2263,176 @@ mod tests {
         );
     }
 
+    fn priced_terminal_event(
+        provider: &str, model: &str, input: Option<u32>, output: Option<u32>,
+        created: Option<u32>, read: Option<u32>,
+    ) -> UsageEvent {
+        provider_terminal_event(100, provider, model, input, output, 3, true, created, read,
+            true, &"a".repeat(64), "complete", "test.priced_usage", Some("test"), Some("direct"), false, None)
+    }
+
+    fn priced_terminal_payload(event: &UsageEvent) -> serde_json::Value {
+        serde_json::json!({
+            "usage_projection_schema": "neoth.provider-usage.v4",
+            "usage_snapshot": terminal_usage_snapshot_v2(event).unwrap(),
+            "pricing_basis": event.pricing_basis,
+            "invocation_id": event.invocation_id, "provider": event.provider,
+            "wire_model": event.model, "ok": event.ok, "terminal_kind": event.outcome,
+            "ts_unix": event.ts_unix, "latency_ms": event.latency_ms,
+            "input_tokens": event.input_tokens, "output_tokens": event.output_tokens,
+            "cache_creation_tokens": event.cache_creation_tokens,
+            "cache_read_tokens": event.cache_read_tokens, "automated": event.automated,
+            "call_scope": event.call_scope, "source": event.source,
+            "call_type": event.call_type, "streaming": event.streaming, "prompt_tax": event.prompt_tax,
+        })
+    }
+
+    #[test]
+    fn terminal_v4_preserves_historical_price_basis_without_current_lookup() {
+        let mut event = priced_terminal_event("openai_api", "gpt-4o", Some(100), Some(50), Some(20), Some(40));
+        let price = crate::providers::cost::PriceRow { input_eur_per_mtok: 0.123, output_eur_per_mtok: 0.456 };
+        event.cost_usd = Some(crate::providers::cost::cost_usd_for_price(price, 100, 50, 20, 40));
+        event.cache_savings_usd = Some(crate::providers::cost::cache_savings_for_price(price, 20, 40));
+        event.pricing_basis = Some(crate::providers::pricing_basis::PricingBasis::from_price("openai_api", "gpt-4o", price));
+        let payload = priced_terminal_payload(&event);
+        let restored = usage_event_from_terminal_payload_with_legacy(
+            &serde_json::to_vec(&payload).unwrap(), |_| panic!("v4 must not reprice"),
+        ).unwrap().unwrap();
+        assert_eq!(restored, event);
+        assert_eq!(restored.cost_usd.unwrap().to_bits(), event.cost_usd.unwrap().to_bits());
+        assert_eq!(restored.cache_savings_usd.unwrap().to_bits(), event.cache_savings_usd.unwrap().to_bits());
+        assert_ne!(restored.cost_usd, Some(crate::providers::cost::actual_cost_usd_with_cache("openai_api", "gpt-4o", 100, 50, 20, 40)));
+    }
+
+    #[test]
+    fn terminal_v4_keeps_unavailable_basis_distinct_from_free_zero() {
+        for (provider, model) in [("unknown", "model"), ("openai_api", "gpt-4o")] {
+            let event = priced_terminal_event(provider, model, None, None, None, None);
+            let payload = priced_terminal_payload(&event);
+            assert_eq!(event.cost_usd, None);
+            assert_eq!(event.pricing_basis, None);
+            assert!(payload.get("pricing_basis").unwrap().is_null());
+            assert!(payload["usage_snapshot"]["event_metadata"].get("pricing_basis").unwrap().is_null());
+            assert_eq!(decode_terminal(&payload).unwrap().unwrap(), event);
+        }
+        let event = priced_terminal_event("local_ouro", "local", None, None, None, None);
+        assert_eq!(event.cost_usd, Some(0.0));
+        assert!(event.pricing_basis.is_some());
+        assert_eq!(decode_terminal(&priced_terminal_payload(&event)).unwrap().unwrap(), event);
+        let unknown = priced_terminal_event("unknown", "model", Some(0), Some(0), Some(0), Some(0));
+        assert_eq!(unknown.cost_usd, None);
+        assert_eq!(unknown.pricing_basis, None);
+    }
+
+    #[test]
+    fn terminal_v4_cache_only_measurement_retains_its_exact_basis() {
+        let event = priced_terminal_event("anthropic_api", "claude-sonnet-4-6", None, None, Some(100), None);
+        assert_eq!(event.cost_usd, None);
+        assert!(event.cache_savings_usd.unwrap() < 0.0);
+        assert!(event.pricing_basis.is_some());
+        assert_eq!(decode_terminal(&priced_terminal_payload(&event)).unwrap().unwrap(), event);
+        let mut missing = event.clone();
+        missing.pricing_basis = None;
+        assert!(terminal_usage_snapshot_v2(&missing).is_err());
+        let mut phantom = event;
+        phantom.cache_savings_usd = None;
+        assert!(terminal_usage_snapshot_v2(&phantom).is_err());
+    }
+
+    #[test]
+    fn terminal_v4_requires_complete_basis_and_refuses_mixed_versions() {
+        let event = priced_terminal_event("openai_api", "gpt-4o", Some(100), Some(50), None, None);
+        let payload = priced_terminal_payload(&event);
+        for field in payload["pricing_basis"].as_object().unwrap().keys() {
+            let mut changed = payload.clone();
+            changed["pricing_basis"].as_object_mut().unwrap().remove(field);
+            assert!(decode_terminal(&changed).is_err(), "outer {field}");
+            let mut changed = payload.clone();
+            changed["usage_snapshot"]["event_metadata"]["pricing_basis"].as_object_mut().unwrap().remove(field);
+            assert!(decode_terminal(&changed).is_err(), "snapshot {field}");
+        }
+        let mut changed = payload.clone();
+        changed.as_object_mut().unwrap().remove("pricing_basis");
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload.clone();
+        changed["usage_snapshot"]["event_metadata"].as_object_mut().unwrap().remove("pricing_basis");
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload;
+        changed["usage_projection_schema"] = "neoth.provider-usage.v3".into();
+        assert!(decode_terminal(&changed).is_err());
+        let unavailable = priced_terminal_event("unknown", "model", None, None, None, None);
+        let unavailable_payload = priced_terminal_payload(&unavailable);
+        let mut changed = unavailable_payload.clone();
+        changed.as_object_mut().unwrap().remove("pricing_basis");
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = unavailable_payload;
+        changed["usage_snapshot"]["event_metadata"].as_object_mut().unwrap().remove("pricing_basis");
+        assert!(decode_terminal(&changed).is_err());
+        let (_, legacy) = frozen_terminal_fixture();
+        let mut changed = legacy.clone();
+        changed["pricing_basis"] = serde_json::Value::Null;
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = legacy.clone();
+        changed["usage_snapshot"]["event_metadata"]["pricing_basis"] = serde_json::Value::Null;
+        assert!(decode_terminal(&changed).is_err());
+        let restored = decode_terminal(&legacy).unwrap().unwrap();
+        assert!(serde_json::to_value(restored).unwrap().get("pricing_basis").is_none());
+        let mut old_v2 = legacy;
+        old_v2["usage_projection_schema"] = "neoth.provider-usage.v2".into();
+        old_v2.as_object_mut().unwrap().remove("usage_snapshot");
+        assert_eq!(decode_terminal(&old_v2).unwrap().unwrap().pricing_basis, None);
+    }
+
+    #[test]
+    fn terminal_v4_rejects_outer_basis_and_model_mismatches() {
+        let event = priced_terminal_event("openai_api", "gpt-4o", Some(100), Some(50), None, None);
+        let payload = priced_terminal_payload(&event);
+        let mut changed = payload.clone();
+        changed["pricing_basis"] = serde_json::Value::Null;
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload.clone();
+        changed["wire_model"] = "gpt-5".into();
+        assert!(decode_terminal(&changed).is_err());
+        let mut changed = payload;
+        changed["usage_snapshot"]["event_metadata"]["model"] = "gpt-5".into();
+        assert!(decode_terminal(&changed).is_err());
+    }
+
+    #[test]
+    fn terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis() {
+        let event = priced_terminal_event("openai_api", "gpt-4o", Some(100), Some(50), None, None);
+        let payload = priced_terminal_payload(&event);
+        for conflict in [false, true] {
+            let home = tempdir().unwrap();
+            let mut segment = crate::wal::segment_header::SegmentHeader::new(1, 1, 1, 100_000_000_000, [0; 16]).to_le_bytes().to_vec();
+            let mut second_event = event.clone();
+            if conflict {
+                second_event.pricing_basis = Some(crate::providers::pricing_basis::PricingBasis::from_price(
+                    "openai_api", "gpt-4o", crate::providers::cost::PriceRow { input_eur_per_mtok: 1.0, output_eur_per_mtok: 2.0 },
+                ));
+            }
+            let second = priced_terminal_payload(&second_event);
+            for record in [&payload, &second] {
+                let bytes = serde_json::to_vec(record).unwrap();
+                let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE, &bytes).build();
+                segment.extend_from_slice(&crate::wal::frame::encode_frame(&header, &bytes));
+            }
+            let wal = home.path().join("wal");
+            fs::create_dir_all(&wal).unwrap();
+            fs::write(wal.join("priced-usage-000001.wal"), segment).unwrap();
+            if conflict {
+                assert!(repair_from_terminal_wal(home.path()).is_err());
+                assert!(!usage_dir(home.path()).exists());
+            } else {
+                assert_eq!(repair_from_terminal_wal(home.path()).unwrap(), 1);
+                assert_eq!(repair_from_terminal_wal(home.path()).unwrap(), 0);
+                let text = fs::read_to_string(jsonl_file_for_ts(home.path(), event.ts_unix)).unwrap();
+                assert_eq!(text.lines().count(), 1);
+                assert_eq!(serde_json::from_str::<UsageEvent>(&text).unwrap(), event);
+            }
+        }
+    }
+
     fn frozen_terminal_fixture() -> (UsageEvent, serde_json::Value) {
         let mut event = provider_terminal_event(
             100,
@@ -2233,6 +2453,7 @@ mod tests {
             false,
             Some(crate::tokens::budget::PromptTax::default()),
         );
+        event.pricing_basis = None;
         // Deliberately differs from today's lookup: replay must retain the
         // amount recorded by the old producer, not recompute current prices.
         event.cost_usd = Some(1.2345678901234567);

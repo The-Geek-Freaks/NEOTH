@@ -11,6 +11,10 @@
 //! request-bound `permissions::Action::PaidProviderCall { .. }` gate. The display
 //! heuristic must never become an authorization input.
 
+use super::pricing_basis::{
+    CACHE_CREATE_MULTIPLIER, CACHE_CREATE_PREMIUM, CACHE_READ_MULTIPLIER,
+    CACHE_READ_SAVINGS, EUR_PER_USD,
+};
 use crate::providers::Request;
 use crate::providers::meter::Meter;
 
@@ -239,13 +243,23 @@ pub fn actual_cost_usd_with_cache(
     cache_read_tokens: u32,
 ) -> f64 {
     let price = lookup_price(provider, model).unwrap_or_else(PriceRow::unknown_high_estimate);
+    cost_usd_for_price(price, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+}
+
+pub(crate) fn cost_usd_for_price(
+    price: PriceRow,
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+) -> f64 {
     // PriceRow holds EUR per Mtok with the 0.92 conversion baked in.
     // Reverse the rate to recover USD per Mtok.
-    const EUR_TO_USD_INV: f64 = 1.0 / 0.92;
+    const EUR_TO_USD_INV: f64 = 1.0 / EUR_PER_USD;
     let input_usd_per_mtok = price.input_eur_per_mtok as f64 * EUR_TO_USD_INV;
     let output_usd_per_mtok = price.output_eur_per_mtok as f64 * EUR_TO_USD_INV;
     let billable_input_token_equivalents =
-        input_tokens as f64 + cache_creation_tokens as f64 * 1.25 + cache_read_tokens as f64 * 0.10;
+        input_tokens as f64 + cache_creation_tokens as f64 * CACHE_CREATE_MULTIPLIER + cache_read_tokens as f64 * CACHE_READ_MULTIPLIER;
     let input_usd = (billable_input_token_equivalents / 1_000_000.0) * input_usd_per_mtok;
     let output_usd = (output_tokens as f64 / 1_000_000.0) * output_usd_per_mtok;
     input_usd + output_usd
@@ -269,12 +283,20 @@ pub fn cache_savings_usd(
     let Some(price) = lookup_price(provider, model) else {
         return 0.0;
     };
-    const EUR_TO_USD_INV: f64 = 1.0 / 0.92;
+    cache_savings_for_price(price, cache_creation_tokens, cache_read_tokens)
+}
+
+pub(crate) fn cache_savings_for_price(
+    price: PriceRow,
+    cache_creation_tokens: u32,
+    cache_read_tokens: u32,
+) -> f64 {
+    const EUR_TO_USD_INV: f64 = 1.0 / EUR_PER_USD;
     let input_usd_per_tok = price.input_eur_per_mtok as f64 * EUR_TO_USD_INV / 1_000_000.0;
     // cache_read costs 10% of normal input → saves 90%
-    let read_savings = cache_read_tokens as f64 * input_usd_per_tok * 0.90;
+    let read_savings = cache_read_tokens as f64 * input_usd_per_tok * CACHE_READ_SAVINGS;
     // cache_creation costs 125% of normal input → 25% premium (cost, not saving)
-    let write_premium = cache_creation_tokens as f64 * input_usd_per_tok * 0.25;
+    let write_premium = cache_creation_tokens as f64 * input_usd_per_tok * CACHE_CREATE_PREMIUM;
     read_savings - write_premium
 }
 
