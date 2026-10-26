@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       october_2026:
-        description: Prepare four October security patch targets; ZIP parent migration remains open
+        description: Prepare twelve exact October security targets; ZIP parent migration remains open
         required: false
         default: false
         type: boolean
@@ -312,7 +312,7 @@ jobs:
         run: |
           python3 packaging/arrayref_provenance_gate.py
           python3 packaging/imbl_provenance_gate.py --source-only
-      - name: Prepare only the reviewed Wasmtime manifest requirement
+      - name: Prepare only the reviewed Wasmtime and Zstd manifest requirements
         shell: bash
         run: |
           set -euo pipefail
@@ -321,15 +321,16 @@ jobs:
           from pathlib import Path
           proof = Path(os.environ["PROOF"])
           baseline = tomllib.loads((proof / "baseline-Cargo.lock").read_text())
-          for name, version in (("negentropy", "0.5.0"), ("quinn-proto", "0.11.15"), ("rustls", "0.23.45"), ("wasmtime", "36.0.16"), ("zip", "1.1.4")):
-              rows = [p for p in baseline["package"] if p["name"] == name]
+          for name, version in (("negentropy", "0.5.0"), ("quinn-proto", "0.11.15"), ("rustls", "0.23.45"), ("wasmtime", "36.0.16"), ("crypto-bigint", "0.7.5"), ("ctutils", "0.4.2"), ("rustls-webpki", "0.103.15"), ("webpki-root-certs", "1.0.7"), ("webpki-roots", "1.0.7"), ("zstd", "0.13.3"), ("zstd-safe", "7.2.4"), ("zstd-sys", "2.0.16+zstd.1.5.7"), ("zip", "1.1.4")):
+              rows = [p for p in baseline["package"] if p["name"] == name and not (name == "webpki-roots" and p["version"] == "0.26.11")]
               if len(rows) != 1 or rows[0]["version"] != version:
                   raise SystemExit(f"Baseline target absent or ambiguous: {name}@{version}")
           path = Path("SRC/neothd/Cargo.toml")
           source = path.read_text(encoding="utf-8")
           for before, after in (
               ('wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }',
-               'wasmtime = { version = "=36.0.18", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
+               'wasmtime = { version = "=36.0.19", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
+              ('zstd = "0.13"', 'zstd = "=0.14.3"'),
           ):
               if source.count(before) != 1:
                   raise SystemExit("Reviewed manifest preimage absent or ambiguous")
@@ -337,7 +338,7 @@ jobs:
           path.write_text(source, encoding="utf-8", newline="\n")
           (Path(os.environ["PROOF"]) / "manifest.expected-after.toml").write_bytes(path.read_bytes())
           PY
-      - name: Resolve only the four exact patch targets
+      - name: Resolve only the twelve exact patch targets
         shell: bash
         run: |
           set -euo pipefail
@@ -349,11 +350,19 @@ jobs:
               ("negentropy", "0.5.0", "0.5.2"),
               ("quinn-proto", "0.11.15", "0.11.18"),
               ("rustls", "0.23.45", "0.23.46"),
-              ("wasmtime", "36.0.16", "36.0.18"),
+              ("wasmtime", "36.0.16", "36.0.19"),
+              ("crypto-bigint", "0.7.5", "0.7.10"),
+              ("ctutils", "0.4.2", "0.4.4"),
+              ("rustls-webpki", "0.103.15", "0.103.16"),
+              ("webpki-root-certs", "1.0.7", "1.0.10"),
+              ("webpki-roots", "1.0.7", "1.0.10"),
+              ("zstd", "0.13.3", "0.14.3"),
+              ("zstd-safe", "7.2.4", "8.2.0"),
+              ("zstd-sys", "2.0.16+zstd.1.5.7", "2.1.2+zstd.1.5.7"),
           )
           for name, before, after in targets:
               lock = tomllib.loads(Path("SRC/Cargo.lock").read_text())
-              rows = [p for p in lock["package"] if p["name"] == name]
+              rows = [p for p in lock["package"] if p["name"] == name and not (name == "webpki-roots" and p["version"] == "0.26.11")]
               (proof / "last-resolution-Cargo.lock").write_bytes(Path("SRC/Cargo.lock").read_bytes())
               (proof / "last-target-rows.json").write_text(json.dumps({"target": name, "rows": rows}, indent=2) + "\n")
               if len(rows) != 1 or rows[0]["version"] not in (before, after):
@@ -390,11 +399,19 @@ jobs:
               "negentropy": ("0.5.2", "a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec"),
               "quinn-proto": ("0.11.18", "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"),
               "rustls": ("0.23.46", "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"),
-              "wasmtime": ("36.0.18", "70095b9fe63cc2a87ed206729e11544610decc184c62898c5d201ff1d666d82e"),
+              "wasmtime": ("36.0.19", "60e5f244a2c9d40afa9e9a607ee7f048c0648bb1c22cc28b130c5fc71e23d71d"),
+              "crypto-bigint": ("0.7.10", "9c035cb64cba03dad2fb921f3e218785e8cf9a41790da5eb3a1400f62fa2be11"),
+              "ctutils": ("0.4.4", "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"),
+              "rustls-webpki": ("0.103.16", "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"),
+              "webpki-root-certs": ("1.0.10", "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"),
+              "webpki-roots": ("1.0.10", "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"),
+              "zstd": ("0.14.3", "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"),
+              "zstd-safe": ("8.2.0", "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"),
+              "zstd-sys": ("2.1.2+zstd.1.5.7", "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"),
           }
           registry = "registry+https://github.com/rust-lang/crates.io-index"
           for name, (version, checksum) in targets.items():
-              rows = [p for p in candidate["package"] if p["name"] == name]
+              rows = [p for p in candidate["package"] if p["name"] == name and not (name == "webpki-roots" and p["version"] == "0.26.11")]
               if len(rows) != 1 or rows[0]["version"] != version or rows[0].get("source") != registry or rows[0].get("checksum") != checksum:
                   raise SystemExit(f"Unexpected exact package or provenance: {name}")
           # The independent Candle -> ZIP migration must not be hidden in this
@@ -427,8 +444,14 @@ jobs:
           if first != second:
               raise SystemExit("Locked metadata changed between resolutions")
           for name, (version, _) in targets.items():
-              if [p["version"] for p in first["packages"] if p["name"] == name] != [version]:
+              if [p["version"] for p in first["packages"] if p["name"] == name and not (name == "webpki-roots" and p["version"] == "0.26.11")] != [version]:
                   raise SystemExit(f"Exact target missing or duplicated in metadata: {name}")
+          # Keep the existing compatibility wrapper; it delegates root data to
+          # the updated 1.x package, and is not itself a second data target.
+          wrapper = [p for p in candidate["package"] if p["name"] == "webpki-roots" and p["version"] == "0.26.11"]
+          original_wrapper = [p for p in baseline["package"] if p["name"] == "webpki-roots" and p["version"] == "0.26.11"]
+          if len(wrapper) != 1 or len(original_wrapper) != 1 or wrapper[0].get("source") != registry or wrapper[0].get("checksum") != original_wrapper[0].get("checksum") or wrapper[0].get("dependencies") != ["webpki-roots 1.0.10"]:
+              raise SystemExit("Unexpected webpki-roots compatibility wrapper")
           if any(p["name"] in {"rsa", "bitmaps"} for p in first["packages"]):
               raise SystemExit("Previously removed dependency reintroduced")
           if Path("SRC/neothd/Cargo.toml").read_bytes() != (proof / "manifest.expected-after.toml").read_bytes():
@@ -465,12 +488,16 @@ jobs:
               "RUSTSEC-2026-0342", "RUSTSEC-2026-0340", "RUSTSEC-2026-0338",
               "RUSTSEC-2026-0347", "RUSTSEC-2026-0348", "RUSTSEC-2026-0349",
               "RUSTSEC-2026-0346", "RUSTSEC-2026-0363",
-              "RUSTSEC-2026-0367", "RUSTSEC-2026-0368",
+              "RUSTSEC-2026-0387", "RUSTSEC-2026-0385", "RUSTSEC-2026-0382",
+              "RUSTSEC-2026-0380", "RUSTSEC-2026-0379", "RUSTSEC-2026-0383",
+              "RUSTSEC-2026-0381", "RUSTSEC-2026-0391", "RUSTSEC-2026-0398",
+              "RUSTSEC-2026-0403", "RUSTSEC-2026-0410",
           }
-          if len(expected_ids) != 13:
-              raise SystemExit("Expected exactly thirteen unique targeted advisory IDs")
+          if len(expected_ids) != 22:
+              raise SystemExit("Expected exactly twenty-two unique targeted advisory IDs")
           (proof / "target-advisories.json").write_text(json.dumps(sorted(expected_ids), indent=2) + "\n")
-          if any(item["advisory"]["id"] in expected_ids for item in findings):
+          target_names = {"negentropy", "quinn-proto", "rustls", "wasmtime", "crypto-bigint", "ctutils", "rustls-webpki", "webpki-root-certs", "webpki-roots", "zstd", "zstd-safe", "zstd-sys"}
+          if any(item["advisory"]["id"] in expected_ids or item["package"]["name"] in target_names for item in findings):
               raise SystemExit("A targeted advisory remains")
           if not isinstance(audit.get("database"), dict) or not isinstance(audit.get("warnings"), dict):
               raise SystemExit("Incomplete audit result")
@@ -491,7 +518,7 @@ jobs:
               "maxAgeDays": 14, "ageSeconds": age_seconds,
               "fetchDiagnostics": "audit.stderr.txt",
           }, indent=2) + "\n")
-          remaining = {"exitCode": result.returncode, "database": database, "vulnerabilities": findings, "warnings": audit["warnings"], "deferredParentMigration": {"parent": "candle-core@0.8.4", "dependency": "zip@1.1.4", "advisory": "RUSTSEC-2026-0369", "accepted": False}, "fullSecurityAccepted": False}
+          remaining = {"exitCode": result.returncode, "database": database, "vulnerabilities": findings, "warnings": audit["warnings"], "deferredParentMigration": {"parent": "candle-core@0.8.4", "dependency": "zip@1.1.4", "advisories": ["RUSTSEC-2026-0367", "RUSTSEC-2026-0368", "RUSTSEC-2026-0369"], "accepted": False}, "fullSecurityAccepted": False}
           (proof / "remaining-findings.json").write_text(json.dumps(remaining, indent=2) + "\n")
           PY
       - name: Generate and verify notices for this candidate
@@ -517,7 +544,7 @@ jobs:
           receipt = {
               "producer": os.environ["EXPECTED_HEAD"], "run": os.environ["GITHUB_RUN_ID"],
               "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "ROOT_REVIEW_REQUIRED",
-              "targetAdvisoriesRemoved": 13, "productCompiled": False,
+              "targetAdvisoriesRemoved": 22, "productCompiled": False,
               "zipParentMigrationAccepted": False,
               "productTestsRun": False, "fullSecurityAccepted": False, "goldAccepted": False,
           }

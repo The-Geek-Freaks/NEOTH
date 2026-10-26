@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2607.hosted-repair.v1",
-  "capturedUtc": "2026-10-26T13:43:58.5390996Z",
+  "capturedUtc": "2026-10-26T13:52:23.1192165Z",
   "baseProducer": "230bfb51dd48a26ee29dcacee5f9d438b6707e68",
   "status": "HOSTED_ARTIFACTS_IMPORTED_NEW_PRODUCER_VALIDATION_PENDING",
   "fullRun": 40288073016,
@@ -49,15 +49,59 @@
       "negentropy 0.5.2",
       "quinn-proto 0.11.18",
       "rustls 0.23.46",
-      "wasmtime 36.0.18"
+      "wasmtime 36.0.19",
+      "crypto-bigint 0.7.10",
+      "ctutils 0.4.4",
+      "rustls-webpki 0.103.16",
+      "webpki-root-certs 1.0.10",
+      "webpki-roots 1.0.10",
+      "zstd 0.14.3",
+      "zstd-safe 8.2.0",
+      "zstd-sys 2.1.2+zstd.1.5.7"
     ],
     "failureEvidence": "Retain last resolver lock and target multiplicity before guard and after each subprocess",
     "deferred": [
-      "Candle parent migration and ZIP RUSTSEC-2026-0369",
+      "Candle parent migration and three ZIP advisories RUSTSEC-2026-0367/0368/0369",
       "zvariant/zvariant_derive maintained parent migration"
     ],
     "reason": "Candle-core 0.8.4 retains ZIP1.1.4 when the direct dependency adds ZIP9.0.0",
-    "targetedAdvisories": 13
+    "targetedAdvisories": 22,
+    "followupFailure": {
+      "run": 40333302679,
+      "reason": "The initial split counted only one of three ZIP findings. Audit also exposed eleven newer non-ZIP findings; none suppressed.",
+      "resolution": "Target22 is exact union of original eleven non-ZIP IDs and current eleven non-ZIP IDs; all target-package findings must also be absent.",
+      "ids": [
+        "RUSTSEC-2026-0338",
+        "RUSTSEC-2026-0339",
+        "RUSTSEC-2026-0340",
+        "RUSTSEC-2026-0341",
+        "RUSTSEC-2026-0342",
+        "RUSTSEC-2026-0346",
+        "RUSTSEC-2026-0347",
+        "RUSTSEC-2026-0348",
+        "RUSTSEC-2026-0349",
+        "RUSTSEC-2026-0363",
+        "RUSTSEC-2026-0365",
+        "RUSTSEC-2026-0379",
+        "RUSTSEC-2026-0380",
+        "RUSTSEC-2026-0381",
+        "RUSTSEC-2026-0382",
+        "RUSTSEC-2026-0383",
+        "RUSTSEC-2026-0385",
+        "RUSTSEC-2026-0387",
+        "RUSTSEC-2026-0391",
+        "RUSTSEC-2026-0398",
+        "RUSTSEC-2026-0403",
+        "RUSTSEC-2026-0410"
+      ],
+      "database": {
+        "advisory-count": 1378,
+        "last-commit": "a78282a1414d6c28cc228c4eae3570451affb0dc",
+        "last-updated": "2026-10-26T14:45:01+01:00"
+      },
+      "currentTargetWrapper": "Retain existing webpki-roots0.26.11 same registry/checksum with sole edge to1.0.10"
+    },
+    "zstdSourceCheck": "Verified official0.14.3 archive digest; encode_all and stream::read::Decoder::new match the two WAL call sites; runtime acceptance pending"
   },
   "sourceRegistration": {
     "portable": 3034,

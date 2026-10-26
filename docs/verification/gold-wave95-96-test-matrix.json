@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_ARTIFACTS_IMPORTED_NEW_PRODUCER_VALIDATION_PENDING",
+  "status": "CURRENT_AUDIT_REPAIR_CANDIDATE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 431557,
-    "sha256": "7A50985ABF50AA3C8C73C2AA4E5F27181D4F0EC01DF2C0C6617A1D7EF2667D14"
+    "bytes": 431545,
+    "sha256": "9A2D28F369FC2E8BCBE2986A82C10ABC1AB539552B762A525758033056E71A73"
   },
   "sourceInputs": 2353,
   "requiredNativeTests": [
@@ -85454,6 +85454,32 @@
       }
     ],
     "note": "Same-producer hosted formatting and generated CLI reference imported; four exact dependency targets retain ZIP/Candle deferred findings; no new native or Gold acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607CurrentAudit": {
+    "base": "5d00ee9bf041ffe9ab82320ca7ae29ac8a73a5ec",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 33962,
+        "sha256": "545256A9782EFF736BEF3F0E4D0A7AABF9821188451E29891F05B347358870B7",
+        "blob": "cb490da464382faf0e8928b929e209bbf71df585"
+      },
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 4437,
+        "sha256": "5C81D24AEAD5B5DE767EF9845E71DCC326142AA5B27C8038CA608289EC554C4B",
+        "blob": "60ee7d8695abcb112a8e842a334b07983b3fb591"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2660584,
+        "sha256": "32BB5629FE4F50E7471A9520813E8C0D88C0BC36C3CC393BCE359AD1BC2EAEC0",
+        "blob": "9c51f4745f63de693a37d984a529d8de76a13fd7"
+      }
+    ],
+    "note": "Twelve exact targets and22 required-absent advisories derived from actual audit package identities; three ZIP findings and parent migrations remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
