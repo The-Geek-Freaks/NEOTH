@@ -1653,6 +1653,9 @@ Show a per-CronRole count summary (total, enabled, disabled breakdown). Calls cl
 
 Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search
 
+- `--logical-request <PATH>` — Apply an explicit logical-document JSON request. Use "-" for stdin
+- `--logical-status <ID>` — Inspect one logical document's current source, revision and event
+- `--logical-epoch` — Read the current logical-document request epoch
 - `--search <QUERY>` — Run a hybrid search and print hits
 - `--index <PATH>` — Index a file from disk. The file path is recorded; label defaults to the file stem unless overridden with `--label`
 - `--index-stdin` — Index whatever arrives on stdin. Requires `--label`

@@ -4,10 +4,10 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+use super::IndexReport;
 use super::logical_request::{
     self, LogicalAction, LogicalMutationRequest, ValidatedLogicalMutation,
 };
-use super::IndexReport;
 
 pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS ctx_logical_state (
@@ -75,7 +75,10 @@ pub struct LogicalStatus {
 pub const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 
 fn decode_request(request_json: &[u8]) -> Result<ValidatedLogicalMutation> {
-    ensure!(request_json.len() <= MAX_REQUEST_BYTES, "logical request exceeds 10 MiB");
+    ensure!(
+        request_json.len() <= MAX_REQUEST_BYTES,
+        "logical request exceeds 10 MiB"
+    );
     let request: LogicalMutationRequest =
         serde_json::from_slice(request_json).context("decode logical document request")?;
     logical_request::validate(request)
@@ -96,7 +99,10 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
     let request = decode_request(request_json)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Must precede replay: a deleted old registration must never resurrect.
-    ensure!(epoch(&tx)? == request.authorization_epoch(), "stale logical authorization epoch");
+    ensure!(
+        epoch(&tx)? == request.authorization_epoch(),
+        "stale logical authorization epoch"
+    );
     if let Some(report) = replay(&tx, &request)? {
         tx.commit()?;
         return Ok(report);
@@ -106,7 +112,9 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
     match request.action() {
         LogicalAction::Register => ensure!(current.is_none(), "logical identity already exists"),
         LogicalAction::Revise | LogicalAction::MetadataRename => {
-            let current = current.as_ref().context("logical identity does not exist")?;
+            let current = current
+                .as_ref()
+                .context("logical identity does not exist")?;
             let expected = expected.context("missing logical current-state guard")?;
             ensure!(
                 current.source_id == expected.source_id
@@ -119,14 +127,21 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
 
     let mut report = match request.action() {
         LogicalAction::Register | LogicalAction::Revise => {
-            let indexed = request.indexed_content().context("missing indexed content")?;
+            let indexed = request
+                .indexed_content()
+                .context("missing indexed content")?;
             let index = indexed.request();
-            let collision: Option<i64> = tx.query_row(
-                "SELECT id FROM sources WHERE label=?1", [&index.label], |row| row.get(0),
-            ).optional()?;
+            let collision: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM sources WHERE label=?1",
+                    [&index.label],
+                    |row| row.get(0),
+                )
+                .optional()?;
             ensure!(
-                collision.is_none() || (request.action() == LogicalAction::Revise
-                    && collision == current.as_ref().map(|state| state.source_id)),
+                collision.is_none()
+                    || (request.action() == LogicalAction::Revise
+                        && collision == current.as_ref().map(|state| state.source_id)),
                 "logical target label belongs to another source"
             );
             if let Some(current) = &current {
@@ -134,10 +149,16 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
                 super::delete_for_label(&tx, &current.label)?;
             }
             let indexed_report = super::index_document_in_transaction(&tx, index)?;
-            let revision = request.content_revision_id().context("missing content revision")?;
+            let revision = request
+                .content_revision_id()
+                .context("missing content revision")?;
             tx.execute(
                 "UPDATE sources SET logical_id=?1, logical_revision=?2 WHERE id=?3",
-                params![request.logical_document_id(), revision, indexed_report.source_id],
+                params![
+                    request.logical_document_id(),
+                    revision,
+                    indexed_report.source_id
+                ],
             )?;
             if request.action() == LogicalAction::Register {
                 tx.execute(
@@ -152,32 +173,50 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
                     params![indexed_report.source_id, revision, request.logical_event_id(), request.logical_document_id()],
                 )?;
             }
-            from_index_report(&request, &indexed, indexed_report, index.file_path.clone(), revision)
+            from_index_report(
+                &request,
+                &indexed,
+                indexed_report,
+                index.file_path.clone(),
+                revision,
+            )
         }
         LogicalAction::MetadataRename => {
             let current = current.as_ref().context("missing current source")?;
             logical_request::lineage_metadata_bytes(
-                &current.label, current.file_path.as_deref(), &request,
+                &current.label,
+                current.file_path.as_deref(),
+                &request,
             )?;
-            let (label, path) = request.rename_metadata().context("missing rename metadata")?;
-            let collision: Option<i64> = tx.query_row(
-                "SELECT id FROM sources WHERE label=?1", [label], |row| row.get(0),
-            ).optional()?;
-            ensure!(collision.is_none() || collision == Some(current.source_id),
-                "logical target label belongs to another source");
+            let (label, path) = request
+                .rename_metadata()
+                .context("missing rename metadata")?;
+            let collision: Option<i64> = tx
+                .query_row("SELECT id FROM sources WHERE label=?1", [label], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            ensure!(
+                collision.is_none() || collision == Some(current.source_id),
+                "logical target label belongs to another source"
+            );
             let mut report = current_result(&tx, &current.current_event_id)?;
-            ensure!(report.source_id == current.source_id
-                && report.content_revision_id == current.content_revision_id
-                && report.logical_document_id == request.logical_document_id()
-                && report.logical_event_id == current.current_event_id,
-                "logical current result does not match source");
+            ensure!(
+                report.source_id == current.source_id
+                    && report.content_revision_id == current.content_revision_id
+                    && report.logical_document_id == request.logical_document_id()
+                    && report.logical_event_id == current.current_event_id,
+                "logical current result does not match source"
+            );
             tx.execute(
                 "UPDATE sources SET label=?1,file_path=?2 WHERE id=?3",
                 params![label, path, current.source_id],
             )?;
             for table in ["chunks", "chunks_trigram"] {
-                tx.execute(&format!("UPDATE {table} SET file_path=?1 WHERE source_id=?2"),
-                    params![path, current.source_id])?;
+                tx.execute(
+                    &format!("UPDATE {table} SET file_path=?1 WHERE source_id=?2"),
+                    params![path, current.source_id],
+                )?;
             }
             tx.execute(
                 "UPDATE logical_documents SET current_event_id=?1 WHERE logical_id=?2",
@@ -199,17 +238,27 @@ pub fn apply(conn: &mut Connection, request_json: &[u8]) -> Result<LogicalReport
     tx.execute(
         "INSERT INTO logical_document_events(event_id,logical_id,action,request_sha256,epoch,
          source_id_at_result,revision_at_result,result_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-        params![request.logical_event_id(), request.logical_document_id(), action_name(request.action()),
-            request.request_semantics_sha256(), request.authorization_epoch(), report.source_id,
-            report.content_revision_id, serde_json::to_string(&report)?],
+        params![
+            request.logical_event_id(),
+            request.logical_document_id(),
+            action_name(request.action()),
+            request.request_semantics_sha256(),
+            request.authorization_epoch(),
+            report.source_id,
+            report.content_revision_id,
+            serde_json::to_string(&report)?
+        ],
     )?;
     tx.commit().context("commit logical document mutation")?;
     Ok(report)
 }
 
 fn from_index_report(
-    request: &ValidatedLogicalMutation, indexed: &logical_request::IndexedContentRef<'_>,
-    report: IndexReport, path: Option<String>, revision: &str,
+    request: &ValidatedLogicalMutation,
+    indexed: &logical_request::IndexedContentRef<'_>,
+    report: IndexReport,
+    path: Option<String>,
+    revision: &str,
 ) -> LogicalReport {
     LogicalReport {
         logical_document_id: request.logical_document_id().to_owned(),
@@ -244,23 +293,37 @@ fn action_name(action: LogicalAction) -> &'static str {
 
 fn current_result(conn: &Connection, event: &str) -> Result<LogicalReport> {
     let json: String = conn.query_row(
-        "SELECT result_json FROM logical_document_events WHERE event_id=?1", [event], |row| row.get(0),
+        "SELECT result_json FROM logical_document_events WHERE event_id=?1",
+        [event],
+        |row| row.get(0),
     )?;
     serde_json::from_str(&json).context("decode stored logical document result")
 }
 
-fn replay(tx: &Transaction<'_>, request: &ValidatedLogicalMutation) -> Result<Option<LogicalReport>> {
+fn replay(
+    tx: &Transaction<'_>,
+    request: &ValidatedLogicalMutation,
+) -> Result<Option<LogicalReport>> {
     let stored: Option<(String, String, String, String)> = tx.query_row(
         "SELECT logical_id,action,request_sha256,result_json FROM logical_document_events WHERE event_id=?1",
         [request.logical_event_id()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
     ).optional()?;
-    let Some((owner, action, digest, json)) = stored else { return Ok(None) };
-    ensure!(owner == request.logical_document_id() && action == action_name(request.action())
-        && digest == request.request_semantics_sha256(), "logical event reused with different semantics");
+    let Some((owner, action, digest, json)) = stored else {
+        return Ok(None);
+    };
+    ensure!(
+        owner == request.logical_document_id()
+            && action == action_name(request.action())
+            && digest == request.request_semantics_sha256(),
+        "logical event reused with different semantics"
+    );
     let current = current_state(tx, &owner)?.context("logical replay owner missing")?;
     let mut report: LogicalReport = serde_json::from_str(&json)?;
-    ensure!(report.logical_document_id == owner
-        && report.logical_event_id == request.logical_event_id(), "logical stored result identity mismatch");
+    ensure!(
+        report.logical_document_id == owner
+            && report.logical_event_id == request.logical_event_id(),
+        "logical stored result identity mismatch"
+    );
     report.current_event_id = current.current_event_id;
     report.is_current = report.current_event_id == report.logical_event_id;
     report.replayed = true;
@@ -268,7 +331,11 @@ fn replay(tx: &Transaction<'_>, request: &ValidatedLogicalMutation) -> Result<Op
 }
 
 pub fn epoch(conn: &Connection) -> Result<i64> {
-    let value: i64 = conn.query_row("SELECT epoch FROM ctx_logical_state WHERE singleton=1", [], |row| row.get(0))?;
+    let value: i64 = conn.query_row(
+        "SELECT epoch FROM ctx_logical_state WHERE singleton=1",
+        [],
+        |row| row.get(0),
+    )?;
     ensure!(value >= 0, "invalid logical authorization epoch");
     Ok(value)
 }
@@ -279,60 +346,107 @@ pub fn status(conn: &Connection, identity: &str) -> Result<Option<LogicalStatus>
 }
 
 fn current_state(conn: &Connection, identity: &str) -> Result<Option<LogicalStatus>> {
-    let current: Option<(i64,String,String,String,Option<String>,Option<String>,Option<String>)> =
-        conn.query_row(
+    let current: Option<(
+        i64,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = conn
+        .query_row(
             "SELECT d.current_source_id,d.current_revision,d.current_event_id,s.label,s.file_path,
              s.logical_id,s.logical_revision FROM logical_documents d
              JOIN sources s ON s.id=d.current_source_id WHERE d.logical_id=?1",
-            [identity], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,
-                row.get(4)?,row.get(5)?,row.get(6)?)),
-        ).optional()?;
-    let Some((source_id,revision,event,label,path,source_owner,source_revision)) = current else {
+            [identity],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((source_id, revision, event, label, path, source_owner, source_revision)) = current
+    else {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM logical_documents WHERE logical_id=?1)",
-            [identity], |row| row.get(0),
+            [identity],
+            |row| row.get(0),
         )?;
         ensure!(!exists, "logical current source is missing");
         return Ok(None);
     };
-    ensure!(source_owner.as_deref() == Some(identity) && source_revision.as_deref() == Some(revision.as_str()),
-        "logical source projection mismatch");
+    ensure!(
+        source_owner.as_deref() == Some(identity)
+            && source_revision.as_deref() == Some(revision.as_str()),
+        "logical source projection mismatch"
+    );
     Ok(Some(LogicalStatus {
-        logical_document_id: identity.to_owned(), authorization_epoch: epoch(conn)?,
-        source_id, content_revision_id: revision, current_event_id: event, label, file_path: path,
+        logical_document_id: identity.to_owned(),
+        authorization_epoch: epoch(conn)?,
+        source_id,
+        content_revision_id: revision,
+        current_event_id: event,
+        label,
+        file_path: path,
     }))
 }
 
 pub(super) fn refuse_legacy_replacement(tx: &Transaction<'_>, label: &str) -> Result<()> {
     let bound: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM sources WHERE label=?1 AND logical_id IS NOT NULL)",
-        [label], |row| row.get(0),
+        [label],
+        |row| row.get(0),
     )?;
-    ensure!(!bound, "logical source requires an explicit guarded revision");
+    ensure!(
+        !bound,
+        "logical source requires an explicit guarded revision"
+    );
     Ok(())
 }
 
 pub(super) fn remove_owner_for_source(tx: &Transaction<'_>, source_id: i64) -> Result<()> {
     // Cascade events from the logical owner, not from the replaced physical source.
-    tx.execute("DELETE FROM logical_documents WHERE current_source_id=?1", [source_id])?;
+    tx.execute(
+        "DELETE FROM logical_documents WHERE current_source_id=?1",
+        [source_id],
+    )?;
     Ok(())
 }
 
 pub(super) fn advance_after_purge(tx: &Transaction<'_>, removed: usize) -> Result<()> {
     if removed > 0 {
-        let next = epoch(tx)?.checked_add(1).context("logical authorization epoch exhausted")?;
-        ensure!(tx.execute("UPDATE ctx_logical_state SET epoch=?1 WHERE singleton=1", [next])? == 1,
-            "logical authorization epoch row missing");
+        let next = epoch(tx)?
+            .checked_add(1)
+            .context("logical authorization epoch exhausted")?;
+        ensure!(
+            tx.execute(
+                "UPDATE ctx_logical_state SET epoch=?1 WHERE singleton=1",
+                [next]
+            )? == 1,
+            "logical authorization epoch row missing"
+        );
     }
     Ok(())
 }
 
-
 /// Historical test fixtures must remove successor objects before downgrading.
 #[cfg(test)]
 pub(crate) fn remove_schema_for_legacy_fixture(conn: &Connection) -> Result<()> {
-    let owners: i64 = conn.query_row("SELECT count(*) FROM logical_documents", [], |row| row.get(0))?;
-    ensure!(owners == 0, "legacy fixture must not discard logical owners");
+    let owners: i64 = conn.query_row("SELECT count(*) FROM logical_documents", [], |row| {
+        row.get(0)
+    })?;
+    ensure!(
+        owners == 0,
+        "legacy fixture must not discard logical owners"
+    );
     conn.execute_batch(
         "DROP TABLE logical_document_events;
          DROP INDEX sources_logical_identity;

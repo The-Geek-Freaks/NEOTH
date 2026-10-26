@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       october_2026:
-        description: Prepare October security patches without product compilation
+        description: Prepare four October security patch targets; ZIP parent migration remains open
         required: false
         default: false
         type: boolean
@@ -312,7 +312,7 @@ jobs:
         run: |
           python3 packaging/arrayref_provenance_gate.py
           python3 packaging/imbl_provenance_gate.py --source-only
-      - name: Prepare only the two reviewed manifest requirements
+      - name: Prepare only the reviewed Wasmtime manifest requirement
         shell: bash
         run: |
           set -euo pipefail
@@ -328,8 +328,6 @@ jobs:
           path = Path("SRC/neothd/Cargo.toml")
           source = path.read_text(encoding="utf-8")
           for before, after in (
-              ('zip     = { version = "1", default-features = false, features = ["deflate"] }',
-               'zip     = { version = "=9.0.0", default-features = false, features = ["deflate"] }'),
               ('wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }',
                'wasmtime = { version = "=36.0.18", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
           ):
@@ -339,12 +337,12 @@ jobs:
           path.write_text(source, encoding="utf-8", newline="\n")
           (Path(os.environ["PROOF"]) / "manifest.expected-after.toml").write_bytes(path.read_bytes())
           PY
-      - name: Resolve only the five exact patch targets
+      - name: Resolve only the four exact patch targets
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os, subprocess, tomllib
+          import json, os, subprocess, tomllib
           from pathlib import Path
           proof = Path(os.environ["PROOF"])
           targets = (
@@ -352,11 +350,12 @@ jobs:
               ("quinn-proto", "0.11.15", "0.11.18"),
               ("rustls", "0.23.45", "0.23.46"),
               ("wasmtime", "36.0.16", "36.0.18"),
-              ("zip", "1.1.4", "9.0.0"),
           )
           for name, before, after in targets:
               lock = tomllib.loads(Path("SRC/Cargo.lock").read_text())
               rows = [p for p in lock["package"] if p["name"] == name]
+              (proof / "last-resolution-Cargo.lock").write_bytes(Path("SRC/Cargo.lock").read_bytes())
+              (proof / "last-target-rows.json").write_text(json.dumps({"target": name, "rows": rows}, indent=2) + "\n")
               if len(rows) != 1 or rows[0]["version"] not in (before, after):
                   raise SystemExit(f"Current target absent, ambiguous or unreviewed: {name}")
               # Earlier resolution may already satisfy an exact manifest edit.
@@ -367,6 +366,7 @@ jobs:
                        "-p", selector, "--precise", after],
                       stdout=log, stderr=subprocess.STDOUT,
                   )
+              (proof / "last-resolution-Cargo.lock").write_bytes(Path("SRC/Cargo.lock").read_bytes())
               if result.returncode:
                   raise SystemExit(f"Precise resolution failed: {selector}; see artifact log")
           PY
@@ -391,13 +391,19 @@ jobs:
               "quinn-proto": ("0.11.18", "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"),
               "rustls": ("0.23.46", "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"),
               "wasmtime": ("36.0.18", "70095b9fe63cc2a87ed206729e11544610decc184c62898c5d201ff1d666d82e"),
-              "zip": ("9.0.0", "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e"),
           }
           registry = "registry+https://github.com/rust-lang/crates.io-index"
           for name, (version, checksum) in targets.items():
               rows = [p for p in candidate["package"] if p["name"] == name]
               if len(rows) != 1 or rows[0]["version"] != version or rows[0].get("source") != registry or rows[0].get("checksum") != checksum:
                   raise SystemExit(f"Unexpected exact package or provenance: {name}")
+          # The independent Candle -> ZIP migration must not be hidden in this
+          # patch batch. Retain its exact package entries and audit findings.
+          for name in ("zip", "candle-core", "candle-nn", "candle-transformers"):
+              before = [p for p in baseline["package"] if p["name"] == name]
+              after = [p for p in candidate["package"] if p["name"] == name]
+              if not before or before != after:
+                  raise SystemExit(f"Deferred parent-migration package changed: {name}")
           def keyed(packages):
               result = {(p["name"], p["version"], p.get("source")): p for p in packages}
               if len(result) != len(packages):
@@ -458,11 +464,11 @@ jobs:
               "RUSTSEC-2026-0365", "RUSTSEC-2026-0341", "RUSTSEC-2026-0339",
               "RUSTSEC-2026-0342", "RUSTSEC-2026-0340", "RUSTSEC-2026-0338",
               "RUSTSEC-2026-0347", "RUSTSEC-2026-0348", "RUSTSEC-2026-0349",
-              "RUSTSEC-2026-0346", "RUSTSEC-2026-0363", "RUSTSEC-2026-0369",
+              "RUSTSEC-2026-0346", "RUSTSEC-2026-0363",
               "RUSTSEC-2026-0367", "RUSTSEC-2026-0368",
           }
-          if len(expected_ids) != 14:
-              raise SystemExit("Expected exactly fourteen unique targeted advisory IDs")
+          if len(expected_ids) != 13:
+              raise SystemExit("Expected exactly thirteen unique targeted advisory IDs")
           (proof / "target-advisories.json").write_text(json.dumps(sorted(expected_ids), indent=2) + "\n")
           if any(item["advisory"]["id"] in expected_ids for item in findings):
               raise SystemExit("A targeted advisory remains")
@@ -485,7 +491,7 @@ jobs:
               "maxAgeDays": 14, "ageSeconds": age_seconds,
               "fetchDiagnostics": "audit.stderr.txt",
           }, indent=2) + "\n")
-          remaining = {"exitCode": result.returncode, "database": database, "vulnerabilities": findings, "warnings": audit["warnings"], "fullSecurityAccepted": False}
+          remaining = {"exitCode": result.returncode, "database": database, "vulnerabilities": findings, "warnings": audit["warnings"], "deferredParentMigration": {"parent": "candle-core@0.8.4", "dependency": "zip@1.1.4", "advisory": "RUSTSEC-2026-0369", "accepted": False}, "fullSecurityAccepted": False}
           (proof / "remaining-findings.json").write_text(json.dumps(remaining, indent=2) + "\n")
           PY
       - name: Generate and verify notices for this candidate
@@ -511,7 +517,8 @@ jobs:
           receipt = {
               "producer": os.environ["EXPECTED_HEAD"], "run": os.environ["GITHUB_RUN_ID"],
               "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "ROOT_REVIEW_REQUIRED",
-              "targetAdvisoriesRemoved": 14, "productCompiled": False,
+              "targetAdvisoriesRemoved": 13, "productCompiled": False,
+              "zipParentMigrationAccepted": False,
               "productTestsRun": False, "fullSecurityAccepted": False, "goldAccepted": False,
           }
           (proof / "candidate.json").write_text(json.dumps(receipt, indent=2) + "\n")

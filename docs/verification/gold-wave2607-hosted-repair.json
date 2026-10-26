@@ -1,0 +1,73 @@
+{
+  "schema": "neoth.wave2607.hosted-repair.v1",
+  "capturedUtc": "2026-10-26T13:43:58.5390996Z",
+  "baseProducer": "230bfb51dd48a26ee29dcacee5f9d438b6707e68",
+  "status": "HOSTED_ARTIFACTS_IMPORTED_NEW_PRODUCER_VALIDATION_PENDING",
+  "fullRun": 40288073016,
+  "failureTriage": {
+    "windows": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "macos": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "observationMethod": "Bounded plain text inspection of original digest-verified JUnit artifacts and failed-job log; no XML parser or full case admission",
+    "junitHeaderObservation": {
+      "windows": {
+        "errors": 0,
+        "failures": 1,
+        "tests": 19417
+      },
+      "macos": {
+        "errors": 0,
+        "failures": 1,
+        "tests": 19539
+      }
+    },
+    "linux": "cargo fmt check"
+  },
+  "imports": [
+    {
+      "run": 39562605545,
+      "artifact": 12328083038,
+      "archiveSha256": "e8e9a843a859fd318b1f57df839db74b9c740846068ad120474c587136bae07b",
+      "paths": 8,
+      "patchSha256": "0a9a0746192038092e8bee495493c0fa8d561d69cb3e5f73ebdd9c2b95828999",
+      "kind": "hosted rustfmt patch"
+    },
+    {
+      "run": 40288073016,
+      "artifact": 12634313975,
+      "archiveSha256": "803b0ca93aba973a3d5b38f0edcbf7e0924906e19d96dbb460889ffbd93cd8fe",
+      "fileSha256": "40A949B6EB6F21B955B987309CE6D4726BBBD0503DF299658A108F6BCADA00B3",
+      "delta": "Three logical-document command flags; source-head and artifact file checksum verified",
+      "kind": "generated CLI reference"
+    }
+  ],
+  "dependencyRepair": {
+    "guard": "Deferred ZIP and Candle package entries must remain byte-equivalent as decoded lock entries; all remaining audit findings retained; no suppression",
+    "reviewer": "/root/dependency_boundary_review",
+    "failedRun": 40332506334,
+    "candidateAccepted": false,
+    "currentTargets": [
+      "negentropy 0.5.2",
+      "quinn-proto 0.11.18",
+      "rustls 0.23.46",
+      "wasmtime 36.0.18"
+    ],
+    "failureEvidence": "Retain last resolver lock and target multiplicity before guard and after each subprocess",
+    "deferred": [
+      "Candle parent migration and ZIP RUSTSEC-2026-0369",
+      "zvariant/zvariant_derive maintained parent migration"
+    ],
+    "reason": "Candle-core 0.8.4 retains ZIP1.1.4 when the direct dependency adds ZIP9.0.0",
+    "targetedAdvisories": 13
+  },
+  "sourceRegistration": {
+    "portable": 3034,
+    "newTests": 0
+  },
+  "localExecutableValidationRan": false,
+  "localXmlParserRan": false,
+  "nativeAccepted": false,
+  "fullSecurityAccepted": false,
+  "goldAccepted": false,
+  "goldCheckboxesClosed": 0,
+  "originalEvidence": "work/gold-20260906/wave2607-hosted-repair"
+}

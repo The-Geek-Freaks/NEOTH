@@ -240,8 +240,14 @@ pub async fn run_ctx(args: CtxArgs) -> Result<()> {
 async fn read_logical_request<R: tokio::io::AsyncRead + Unpin>(reader: R) -> Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
     let mut bytes = Vec::new();
-    reader.take(ctx::logical::MAX_REQUEST_BYTES as u64 + 1).read_to_end(&mut bytes).await?;
-    ensure!(bytes.len() <= ctx::logical::MAX_REQUEST_BYTES, "logical request exceeds 10 MiB");
+    reader
+        .take(ctx::logical::MAX_REQUEST_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    ensure!(
+        bytes.len() <= ctx::logical::MAX_REQUEST_BYTES,
+        "logical request exceeds 10 MiB"
+    );
     ctx::logical::validate_request(&bytes)?;
     Ok(bytes)
 }
@@ -251,7 +257,8 @@ async fn run_logical_mode(args: &CtxArgs, store_path: &Path) -> Result<String> {
         let bytes = if path == Path::new("-") {
             read_logical_request(tokio::io::stdin()).await?
         } else {
-            let file = tokio::fs::File::open(path).await
+            let file = tokio::fs::File::open(path)
+                .await
                 .with_context(|| format!("read logical request {}", path.display()))?;
             read_logical_request(file).await?
         };
@@ -260,9 +267,13 @@ async fn run_logical_mode(args: &CtxArgs, store_path: &Path) -> Result<String> {
         let report = ctx::logical::apply(&mut conn, &bytes)?;
         let table = format!(
             "{} {}: source {}, revision {}, event {} (replayed={}, current={})",
-            report.action, report.logical_document_id, report.source_id,
-            report.content_revision_id, report.logical_event_id,
-            report.replayed, report.is_current,
+            report.action,
+            report.logical_document_id,
+            report.source_id,
+            report.content_revision_id,
+            report.logical_event_id,
+            report.replayed,
+            report.is_current,
         );
         return render_logical(&report, args.output, &table);
     }
@@ -273,24 +284,36 @@ async fn run_logical_mode(args: &CtxArgs, store_path: &Path) -> Result<String> {
             Some(status) => {
                 let table = format!(
                     "{}: source {}, revision {}, event {}, epoch {}",
-                    status.logical_document_id, status.source_id, status.content_revision_id,
-                    status.current_event_id, status.authorization_epoch,
+                    status.logical_document_id,
+                    status.source_id,
+                    status.content_revision_id,
+                    status.current_event_id,
+                    status.authorization_epoch,
                 );
                 render_logical(&status, args.output, &table)
             }
             None => render_logical(
                 &serde_json::json!({"logical_document_id": identity, "found": false}),
-                args.output, &format!("logical document {identity}: not found"),
+                args.output,
+                &format!("logical document {identity}: not found"),
             ),
         };
     }
     ensure!(args.logical_epoch, "missing logical ctx action");
     let conn = store::open(store_path)?;
     let epoch = ctx::logical::epoch(&conn)?;
-    render_logical(&serde_json::json!({"epoch": epoch}), args.output, &format!("epoch: {epoch}"))
+    render_logical(
+        &serde_json::json!({"epoch": epoch}),
+        args.output,
+        &format!("epoch: {epoch}"),
+    )
 }
 
-fn render_logical<T: serde::Serialize>(value: &T, output: OutputFormat, table: &str) -> Result<String> {
+fn render_logical<T: serde::Serialize>(
+    value: &T,
+    output: OutputFormat,
+    table: &str,
+) -> Result<String> {
     match output {
         OutputFormat::Json => Ok(serde_json::to_string_pretty(value)?),
         OutputFormat::Jsonl => Ok(serde_json::to_string(value)?),
@@ -406,7 +429,9 @@ mod logical_tests {
     }
 
     fn args(words: &[&str]) -> CtxArgs {
-        TestCli::try_parse_from(std::iter::once("ctx").chain(words.iter().copied())).unwrap().ctx
+        TestCli::try_parse_from(std::iter::once("ctx").chain(words.iter().copied()))
+            .unwrap()
+            .ctx
     }
 
     fn request() -> Vec<u8> {
@@ -414,19 +439,31 @@ mod logical_tests {
             "action": "register", "logical_document_id": "doc-1",
             "logical_event_id": "register-1", "authorization_epoch": 0,
             "index": {"label": "manual", "content": "retained document body"}
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     #[test]
     fn logical_cli_actions_allow_defaults_and_reject_explicit_conflicts() {
         let actions: [&[&str]; 3] = [
-            &["--logical-request", "-"], &["--logical-status", "doc-1"], &["--logical-epoch"],
+            &["--logical-request", "-"],
+            &["--logical-status", "doc-1"],
+            &["--logical-epoch"],
         ];
         let conflicts: [&[&str]; 14] = [
-            &["--search", "query"], &["--index", "file"], &["--index-stdin"],
-            &["--stats"], &["--doctor"], &["--purge"], &["--retrieve", "key"],
-            &["--savings"], &["--label", "name"], &["--category", "docs"],
-            &["--all"], &["--content-type", "prose"], &["--limit", "20"],
+            &["--search", "query"],
+            &["--index", "file"],
+            &["--index-stdin"],
+            &["--stats"],
+            &["--doctor"],
+            &["--purge"],
+            &["--retrieve", "key"],
+            &["--savings"],
+            &["--label", "name"],
+            &["--category", "docs"],
+            &["--all"],
+            &["--content-type", "prose"],
+            &["--limit", "20"],
             &["--content-type", "code"],
         ];
         for action in actions {
@@ -434,19 +471,27 @@ mod logical_tests {
             assert_eq!(parsed.content_type, "prose");
             assert_eq!(parsed.limit, 20);
             for conflict in conflicts {
-                let argv = std::iter::once("ctx").chain(action.iter().copied())
+                let argv = std::iter::once("ctx")
+                    .chain(action.iter().copied())
                     .chain(conflict.iter().copied());
-                assert!(TestCli::try_parse_from(argv).is_err(), "{action:?} {conflict:?}");
+                assert!(
+                    TestCli::try_parse_from(argv).is_err(),
+                    "{action:?} {conflict:?}"
+                );
             }
         }
         for left in 0..actions.len() {
             for right in left + 1..actions.len() {
-                let argv = std::iter::once("ctx").chain(actions[left].iter().copied())
+                let argv = std::iter::once("ctx")
+                    .chain(actions[left].iter().copied())
                     .chain(actions[right].iter().copied());
                 assert!(TestCli::try_parse_from(argv).is_err());
             }
         }
-        assert_eq!(args(&["--logical-request", "-"]).logical_request, Some(PathBuf::from("-")));
+        assert_eq!(
+            args(&["--logical-request", "-"]).logical_request,
+            Some(PathBuf::from("-"))
+        );
     }
 
     #[tokio::test]
@@ -455,7 +500,10 @@ mod logical_tests {
         exact.resize(ctx::logical::MAX_REQUEST_BYTES, b' ');
         assert_eq!(read_logical_request(exact.as_slice()).await.unwrap(), exact);
         exact.push(b' ');
-        let error = read_logical_request(exact.as_slice()).await.unwrap_err().to_string();
+        let error = read_logical_request(exact.as_slice())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("10 MiB"), "{error}");
     }
 
@@ -466,7 +514,10 @@ mod logical_tests {
         let file = dir.path().join("request.json");
         let mut selected = args(&["--logical-request", "placeholder"]);
         selected.logical_request = Some(file.clone());
-        for bytes in [b"{bad".as_slice(), br#"{"action":"register","unexpected":true}"#.as_slice()] {
+        for bytes in [
+            b"{bad".as_slice(),
+            br#"{"action":"register","unexpected":true}"#.as_slice(),
+        ] {
             std::fs::write(&file, bytes).unwrap();
             assert!(run_logical_mode(&selected, &db).await.is_err());
             assert!(!db.parent().unwrap().exists());
@@ -490,26 +541,36 @@ mod logical_tests {
         let first: Value = serde_json::from_str(&first).unwrap();
         assert_eq!(first["replayed"], false);
         assert!(first["raw_container_sha256"].is_null());
-        let replay: Value = serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
+        let replay: Value =
+            serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
         assert_eq!(replay["replayed"], true);
         assert_eq!(replay["source_id"], first["source_id"]);
 
         let mut selected = args(&["--logical-status", "doc-1"]);
         selected.output = OutputFormat::Json;
-        let status: Value = serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
+        let status: Value =
+            serde_json::from_str(&run_logical_mode(&selected, &db).await.unwrap()).unwrap();
         assert_eq!(status["current_event_id"], "register-1");
         assert_eq!(status["source_id"], first["source_id"]);
         selected.logical_status = Some("absent".into());
         selected.output = OutputFormat::Jsonl;
         let missing = run_logical_mode(&selected, &db).await.unwrap();
         assert_eq!(missing.lines().count(), 1);
-        assert_eq!(serde_json::from_str::<Value>(&missing).unwrap(),
-            json!({"logical_document_id":"absent","found":false}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&missing).unwrap(),
+            json!({"logical_document_id":"absent","found":false})
+        );
         selected.output = OutputFormat::Table;
-        assert_eq!(run_logical_mode(&selected, &db).await.unwrap(), "logical document absent: not found");
+        assert_eq!(
+            run_logical_mode(&selected, &db).await.unwrap(),
+            "logical document absent: not found"
+        );
 
         let mut selected = args(&["--logical-epoch"]);
         selected.output = OutputFormat::Jsonl;
-        assert_eq!(run_logical_mode(&selected, &db).await.unwrap(), r#"{"epoch":0}"#);
+        assert_eq!(
+            run_logical_mode(&selected, &db).await.unwrap(),
+            r#"{"epoch":0}"#
+        );
     }
 }

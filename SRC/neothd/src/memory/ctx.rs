@@ -128,7 +128,10 @@ pub fn index_document(conn: &mut Connection, req: &IndexRequest) -> Result<Index
     Ok(report)
 }
 
-fn index_document_in_transaction(tx: &rusqlite::Transaction<'_>, req: &IndexRequest) -> Result<IndexReport> {
+fn index_document_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    req: &IndexRequest,
+) -> Result<IndexReport> {
     let provenance = req.document_provenance.as_ref();
     if let Some(provenance) = provenance {
         provenance.validate_for_content(&req.content)?;
@@ -720,9 +723,11 @@ pub fn purge(conn: &mut Connection, scope: PurgeScope<'_>) -> Result<usize> {
     let tx = conn.transaction()?;
     let n = match scope {
         PurgeScope::Source(label) => {
-            let source: Option<i64> = tx.query_row(
-                "SELECT id FROM sources WHERE label=?1", [label], |row| row.get(0),
-            ).optional()?;
+            let source: Option<i64> = tx
+                .query_row("SELECT id FROM sources WHERE label=?1", [label], |row| {
+                    row.get(0)
+                })
+                .optional()?;
             if let Some(source) = source {
                 logical::remove_owner_for_source(&tx, source)?;
             }

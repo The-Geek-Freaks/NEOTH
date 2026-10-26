@@ -3064,7 +3064,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         .context("create W848 document-claim applied-once ledger")?;
 
     conn.execute_batch(crate::memory::ctx::logical::SCHEMA_SQL)
-        .context("create A03 logical-document lifecycle" )?;
+        .context("create A03 logical-document lifecycle")?;
 
     // Stamp schema version (idempotent).
     conn.execute(
