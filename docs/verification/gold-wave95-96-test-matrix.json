@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_COMPILE_RUNTIME_PENDING",
+  "status": "CANDIDATE_PIPELINE_PREPARED_HOSTED_VALIDATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 433354,
-    "sha256": "656B973C5C0A6F69C8421358951D4647367A4A6512FDA6F7DCE261C6DF52B43B"
+    "bytes": 433362,
+    "sha256": "55F03B02E82ED844B19F4CE5F4070742B458B27024C7659EEA3808A301A9EF9B"
   },
   "sourceInputs": 2363,
   "requiredNativeTests": [
@@ -86084,6 +86084,38 @@
       }
     ],
     "note": "Imported exact-source hosted rustfmt artifact12666578529 from run40358774638, API and internal hashes checked. No behavior change; 18 focused cases and 3045 portable registrations. Local runtime prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2608BundledCostProof": {
+    "base": "153da28268408d36e874e886a5605ad73e4f1f35",
+    "sources": [
+      {
+        "path": ".github/workflows/candle-zip-migration.yml",
+        "bytes": 12949,
+        "sha256": "345335C847218431BCAF3CA7382025B8F302403E8ECA6B7BB68C0D097CC347CD",
+        "blob": "e4820e87dcfe4ecc68a18fc6416f961ac23c6c10"
+      },
+      {
+        "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
+        "bytes": 4267,
+        "sha256": "C80D7F291316FC7897E10B56A5DB1A5F9CED63B2BDACD27E44F19F60D895ECA9",
+        "blob": "a75728a8b1199800d3f9e69d0eb4681bd44933e3"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 73329,
+        "sha256": "C0B0DDA3D5F60606EEFC23CF20B996E1D0F8A42371CFCC9782CCBDB3C54CAF90",
+        "blob": "74fae0f10fb2c51b225a0a1d3f29c0a236a10971"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2670080,
+        "sha256": "A89311FCB724B58FF5CF27DE05BCE9097920C139228D9F57E73D91FD8F4A35F9",
+        "blob": "89736bdea7863f6e7f5834c4803327a585299830"
+      }
+    ],
+    "note": "Run18 exact cost/capability regressions using already compiled ZIP candidate; bind15 actual candidate inputs; export requires all individual passes. No additional build stream and no local runtime. Prompt-only independent review completed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

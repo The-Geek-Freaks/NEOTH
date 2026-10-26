@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2608.candle-zip-candidate.v1",
-  "capturedUtc": "2026-10-26T14:17:42.8396482Z",
+  "capturedUtc": "2026-10-26T16:35:14.0405818Z",
   "baseProducer": "0503f7208d9b110337e0057ab22743276f6600a3",
   "status": "SOURCE_AND_HOSTED_PIPELINE_PREPARED_NOT_DISPATCHED",
   "upstreamArchiveSha256": "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1",
@@ -32,8 +32,8 @@
   "sourceBindings": [
     {
       "path": ".github/workflows/candle-zip-migration.yml",
-      "sha256": "B9F97302277168389A5BD5C269935197737F887F09D078ED11C170E3B5E39078",
-      "bytes": 8501
+      "sha256": "345335C847218431BCAF3CA7382025B8F302403E8ECA6B7BB68C0D097CC347CD",
+      "bytes": 12949
     },
     {
       "path": "packaging/candle_zip_migration.py",
@@ -67,8 +67,8 @@
     }
   ],
   "activeValidation": {
-    "producer": "0503f7208d9b110337e0057ab22743276f6600a3",
-    "run": 40336506459,
+    "producer": "982197a9b901daa2816d98c767177e9bca9a7f15",
+    "run": 40354173687,
     "separate": true
   },
   "localRuntimeExecuted": false,
@@ -82,5 +82,16 @@
     "repair": "Initialize PROOF from RUNNER_TEMP in a step and publish through GITHUB_ENV",
     "officialReference": "https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability",
     "hostedValidationPending": true
+  },
+  "bundledCostReplay": {
+    "count": 18,
+    "sourceInputs": 15,
+    "selection": "wave2609CostReplayRegressions",
+    "execution": "Same candidate library after archive consumer tests; no second build stream",
+    "exportGuard": "Exact source-bound discovery and one-test pass for all18 before export",
+    "acceptance": "Candidate runtime only; final main/full/native acceptance remains separate",
+    "review": "Prompt-only review; shell counters use assignment under set-e",
+    "hostedAccepted": false,
+    "measuredTimeSaving": null
   }
 }

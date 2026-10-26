@@ -230,6 +230,32 @@ class CiCadenceContractTests(unittest.TestCase):
             self.assertNotIn("continue-on-error:", steps[name])
         self.assertIn("-- -D warnings", steps["Check exact Linux-quality workspace Clippy"])
 
+    def test_candle_candidate_requires_cost_evidence_before_export(self) -> None:
+        workflow = (WORKFLOWS / "candle-zip-migration.yml").read_text(encoding="utf-8")
+        job = workflow_jobs(workflow)["candidate"]
+        steps = workflow_steps(job)
+        names = list(steps)
+        resolver = "Resolve ZIP 9 without reconstructing lock records"
+        selection = "Bind exact cost regressions to candidate inputs"
+        archive = "Exercise Candle and actual NEOTH archive consumers"
+        cost = "Exercise exact cost and capability regressions on candidate"
+        export = "Require nonempty test receipts and export exact candidate"
+        for before, after in zip(
+            (resolver, selection, archive, cost),
+            (selection, archive, cost, export),
+        ):
+            self.assertLess(names.index(before), names.index(after))
+        for name in (selection, cost, export):
+            self.assertNotIn("continue-on-error:", steps[name])
+            self.assertNotIn("if:", steps[name])
+        self.assertIn("set -euo pipefail", steps[cost])
+        self.assertIn('-- --exact --list', steps[cost])
+        self.assertIn('-- --exact --test-threads=1', steps[cost])
+        self.assertIn('test "$visited" -eq 18', steps[cost])
+        self.assertIn('test "$failed" -eq 0', steps[cost])
+        self.assertIn("sourceSha256", steps[selection])
+        self.assertIn('"SRC/Cargo.lock"', steps[selection])
+
     def test_cost_regression_selection_matches_reports_and_source_bindings(self) -> None:
         matrix = json.loads(
             (ROOT / "docs/verification/gold-wave95-96-test-matrix.json").read_text(

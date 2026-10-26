@@ -76,6 +76,45 @@ jobs:
           cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-2.json"
           sha256sum -c "$PROOF/stable-lock.SHA256SUMS"
           python3 packaging/candle_zip_migration.py resolved --proof "$PROOF"
+      - name: Bind exact cost regressions to candidate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          proof = Path(os.environ["PROOF"])
+          matrix_path = "docs/verification/gold-wave95-96-test-matrix.json"
+          reports = ["docs/verification/gold-wave2603-terminal-usage-replay.json", "docs/verification/gold-wave2609-price-basis.json"]
+          matrix = json.loads((root / matrix_path).read_bytes())
+          spec = matrix["wave2609CostReplayRegressions"]
+          names = spec["requiredTests"]
+          expected = [name for path in reports for name in json.loads((root / path).read_bytes())["tests"]]
+          if spec["requiredCount"] != 18 or len(names) != 18 or len(set(names)) != 18 or names != sorted(expected):
+              raise SystemExit("candidate cost selection differs from 18 report-bound identities")
+          if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
+              raise SystemExit("invalid candidate cost identity")
+          allowed = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/daemon/capability_decay.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs"}
+          inputs = {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in [matrix_path, *reports]}
+          records = []
+          for name in names:
+              matches = [r for r in matrix["requiredNativeTests"] if r["test"] == name and r["junitClass"] == "neoth"]
+              if len(matches) != 1 or matches[0]["sourcePath"] not in allowed:
+                  raise SystemExit("missing or ambiguous cost source")
+              record = matches[0]
+              path = record["sourcePath"]
+              actual = hashlib.sha256((root / path).read_bytes()).hexdigest()
+              if actual != record["sourceSha256"].lower():
+                  raise SystemExit("cost source digest mismatch")
+              inputs[path] = actual
+              records.append(record)
+          for path in [".github/workflows/candle-zip-migration.yml", "packaging/candle_zip_migration.py", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/Cargo.lock", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/tokens/budget.rs"]:
+              inputs[path] = hashlib.sha256((root / path).read_bytes()).hexdigest()
+          receipt = {"schema": "neoth.candle-zip.cost-replay.v1", "producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "count": 18, "cases": names, "records": records, "inputs": inputs}
+          (proof / "cost-selection.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          (proof / "cost-fixture-names.txt").write_text("\n".join(names) + "\n")
+          PY
       - name: Install pinned audit tool
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
         with:
@@ -128,6 +167,37 @@ jobs:
           cargo test -p neoth --lib --locked media::document::tests:: -- --test-threads=1 2>&1 | tee "$PROOF/document-tests.log"
           cargo test -p neoth --lib --locked tools::managed_browser::tests::controlled_zip_fixture -- --test-threads=1 2>&1 | tee "$PROOF/browser-tests.log"
           cargo test -p neoth --lib --locked updater::self_update::tests::zip_extractor_rejects_wrong_root_duplicates_and_links -- --exact --test-threads=1 2>&1 | tee "$PROOF/updater-tests.log"
+      - name: Exercise exact cost and capability regressions on candidate
+        working-directory: SRC
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          visited=0
+          failed=0
+          while IFS= read -r identity; do
+            test -n "$identity"
+            visited=$((visited + 1))
+            if ! cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$PROOF/cost-$visited.discovery.log"; then
+              failed=$((failed + 1))
+              continue
+            fi
+            if ! test "$(grep -Fxc "$identity: test" "$PROOF/cost-$visited.discovery.log")" -eq 1; then
+              failed=$((failed + 1))
+              continue
+            fi
+            if cargo test -p neoth --lib --locked "$identity" -- --exact --test-threads=1 2>&1 | tee "$PROOF/cost-$visited.test.log"; then
+              if ! test "$(grep -Fxc "test $identity ... ok" "$PROOF/cost-$visited.test.log")" -eq 1 ||
+                 ! test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$PROOF/cost-$visited.test.log")" -eq 1; then
+                failed=$((failed + 1))
+              fi
+            else
+              failed=$((failed + 1))
+            fi
+          done < "$PROOF/cost-fixture-names.txt"
+          printf 'selected=18\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed" > "$PROOF/cost-final-counts.txt"
+          test "$visited" -eq 18
+          test "$failed" -eq 0
       - name: Require nonempty test receipts and export exact candidate
         shell: bash
         run: |
