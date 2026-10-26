@@ -34,7 +34,7 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
             '[[package]]\nname = "anymap3"\nversion = "1.1.0"\n'
             'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
             f'checksum = "{gate.ANYMAP3_CHECKSUM}"\n\n'
-            '[[package]]\nname = "quinn-proto"\nversion = "0.11.15"\n'
+            '[[package]]\nname = "quinn-proto"\nversion = "0.11.18"\n'
             'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
             f'checksum = "{gate.QUINN_PROTO_CHECKSUM}"\n',
             encoding="utf-8",
@@ -124,13 +124,13 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
 
     def test_canonical_quinn_proto_old_source_duplicate_and_checksum_fail(self) -> None:
         canonical = (
-            'name = "quinn-proto"\nversion = "0.11.15"\n'
+            'name = "quinn-proto"\nversion = "0.11.18"\n'
             'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
             f'checksum = "{gate.QUINN_PROTO_CHECKSUM}"'
         )
         with self.fixture_root() as temporary:
             root = Path(temporary); lock = root / gate.LOCK_RELATIVE
-            lock.write_text(lock.read_text(encoding="utf-8").replace('version = "0.11.15"', 'version = "0.11.14"', 1), encoding="utf-8")
+            lock.write_text(lock.read_text(encoding="utf-8").replace('version = "0.11.18"', 'version = "0.11.15"', 1), encoding="utf-8")
             with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical quinn-proto"):
                 gate.validate(root, today=date(2026, 10, 31))
         with self.fixture_root() as temporary:

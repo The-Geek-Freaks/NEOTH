@@ -35,12 +35,12 @@ TRIVY_EXCEPTION_EXPIRY_DATE = date(2026, 11, 1)
 TRIVY_EXCEPTION_STATEMENT = (
     "The immutable authenticated Matrix SDK reference lock is not the root\n"
     "workspace resolver; the patched root workspace lock is enforced by the\n"
-    "Matrix provenance gate and resolves quinn-proto 0.11.15."
+    "Matrix provenance gate and resolves quinn-proto 0.11.18."
 )
 QUINN_PROTO = "quinn-proto"
-QUINN_PROTO_VERSION = "0.11.15"
-QUINN_PROTO_CHECKSUM = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
-TRIVY_IGNORE_SHA256 = "0eb5d0f692c6dcdf0ffc76353cc401e68fc16a02a94103e2444fa2299f8a6cf5"
+QUINN_PROTO_VERSION = "0.11.18"
+QUINN_PROTO_CHECKSUM = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
+TRIVY_IGNORE_SHA256 = "00953345c472eba4a40348be4982e771365da8e9465f383b9a85f1f5198d0372"
 
 SDK = "matrix-sdk"
 CRYPTO = "matrix-sdk-crypto"
@@ -621,7 +621,7 @@ def _require_patch_and_lock(root: Path) -> None:
         raise MatrixBackportProvenanceError("workspace must contain one canonical anymap3@1.1.0")
     quinn_proto = [p for p in packages if isinstance(p, dict) and p.get("name") == QUINN_PROTO]
     if len(quinn_proto) != 1 or (quinn_proto[0].get("version"), quinn_proto[0].get("source"), quinn_proto[0].get("checksum")) != (QUINN_PROTO_VERSION, REGISTRY_SOURCE, QUINN_PROTO_CHECKSUM):
-        raise MatrixBackportProvenanceError("workspace must contain one canonical quinn-proto@0.11.15")
+        raise MatrixBackportProvenanceError("workspace must contain one canonical quinn-proto@0.11.18")
 
 def _require_0318_exception(root: Path, today: date) -> None:
     if today >= EXPIRY_DATE: raise MatrixBackportProvenanceError(f"{ADVISORY} exception expired on {EXPIRY_DATE.isoformat()}")

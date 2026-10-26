@@ -143,5 +143,17 @@
   "fullSecurityAccepted": false,
   "goldAccepted": false,
   "goldCheckboxesClosed": 0,
-  "originalEvidence": "work/gold-20260906/wave2607-hosted-repair"
+  "originalEvidence": "work/gold-20260906/wave2607-hosted-repair",
+  "matrixGateFollowup": {
+    "failedRun": 40336438328,
+    "producer": "0503f7208d9b110337e0057ab22743276f6600a3",
+    "cause": "Exact Matrix root-lock quinn-proto guard still required0.11.15 after admitted0.11.18 upgrade",
+    "version": "0.11.18",
+    "checksum": "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc",
+    "trivyIgnoreSha256": "00953345c472eba4a40348be4982e771365da8e9465f383b9a85f1f5198d0372",
+    "exceptionScopeUnchanged": true,
+    "exceptionExpiry": "2026-11-01",
+    "olderVersionRejection": "0.11.15",
+    "hostedValidationPending": true
+  }
 }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_DEPENDENCY_ADMITTED_PRODUCT_RUNTIME_PENDING",
+  "status": "STATIC_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 431550,
-    "sha256": "6E66FBB94C0836558A1525E4B661C7171A837B13AA83465F2034E5D946ADB204"
+    "bytes": 431528,
+    "sha256": "E2D922A64B779DFC1A24B2644582EB7AC9045DB7D8E1AA2673EB6D3B2E51B8B3"
   },
   "sourceInputs": 2353,
   "requiredNativeTests": [
@@ -85570,6 +85570,44 @@
       }
     ],
     "note": "Twelve exact package targets;22 required advisory IDs absent; all38 artifact files verified; exact candidate lock staged while user physical lock preserved. Full native/interop/security/Gold open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607-matrix-quinn-binding": {
+    "base": "0503f7208d9b110337e0057ab22743276f6600a3",
+    "sources": [
+      {
+        "path": ".trivyignore.yaml",
+        "bytes": 1676,
+        "sha256": "00953345C472EBA4A40348BE4982E771365DA8E9465F383B9A85F1F5198D0372",
+        "blob": "48845686096682696496f28ca0470de68b17325f"
+      },
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 6757,
+        "sha256": "111E1E94F4F2852855996BE26D1BD403FF56B5FD6AF37CB456044F4C11EBA65A",
+        "blob": "d3e5af06c66b5ada167250f8cc84c52ab5d33c53"
+      },
+      {
+        "path": "packaging/matrix_backport_provenance_gate.py",
+        "bytes": 54050,
+        "sha256": "A5FB72AAF300C5A791CC05862F0894F3261E3ECB9EFD8C46863EE69788D467DD",
+        "blob": "a0403e09aae4d510c857a72754c5c33fd662354f"
+      },
+      {
+        "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+        "bytes": 11894,
+        "sha256": "3538330CE181CA79E05559709B5BC68723BEC5026FCC03EF6C36F0CEC253BA86",
+        "blob": "6284e95b22242fa5425c4bd4bec51f27e124ed8e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2663005,
+        "sha256": "57E0A93C2525ACA88A56E7DAE184C2F131397F3FC74F3A3F7D122025A669D67A",
+        "blob": "4ee8b49b05cc91e14bbc0c77380ad4c0779db1c9"
+      }
+    ],
+    "note": "Bind Matrix canonical quinn-proto check to independently admitted0.11.18 checksum; preserve exact Trivy exception path/expiry and reject old0.11.15; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -22,7 +22,7 @@ vulnerabilities:
     statement: >-
       The immutable authenticated Matrix SDK reference lock is not the root
       workspace resolver; the patched root workspace lock is enforced by the
-      Matrix provenance gate and resolves quinn-proto 0.11.15.
+      Matrix provenance gate and resolves quinn-proto 0.11.18.
 secrets:
   - id: gcp-service-account
     paths:
