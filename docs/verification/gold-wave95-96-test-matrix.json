@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_CLIPPY_REPAIR_HOSTED_PENDING",
+  "status": "PUBLISHED_SOURCE_PENDING_HOSTED_ACCEPTANCE",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 432825,
-    "sha256": "BEB55BE2121B9E6818E578B73088CC9140A83F63EF2DA63CBDBAA44E9D4DFC5F"
+    "bytes": 432832,
+    "sha256": "AF3D2638E62E642369704093C4F39587D3D8F4ED63619480383970931390A19B"
   },
   "sourceInputs": 2360,
   "requiredNativeTests": [
@@ -85244,6 +85244,12 @@
       "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
       "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
       "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+      "memory::ctx::logical::tests::logical_conflicting_event_label_and_legacy_replacement_preserve_every_projection",
+      "memory::ctx::logical::tests::logical_purge_epoch_write_failure_and_exhaustion_roll_back_all_deleted_rows",
+      "memory::ctx::logical::tests::logical_receipt_and_rename_failures_roll_back_source_fts_vocabulary_and_ledger",
+      "memory::ctx::logical::tests::logical_register_revise_rename_and_historical_replay_keep_one_current_source",
+      "memory::ctx::logical::tests::logical_source_category_and_all_purge_reject_old_replay_without_resurrection",
+      "memory::ctx::logical::tests::logical_two_connections_reject_stale_guard_even_when_content_revision_is_unchanged",
       "memory::ctx::logical_request::tests::logical_canonicalization_sorts_nested_objects_and_separates_fields",
       "memory::ctx::logical_request::tests::logical_content_limit_and_epoch_overflow_fail_before_effects",
       "memory::ctx::logical_request::tests::logical_digest_binds_each_semantic_field_and_independent_event",
@@ -85252,12 +85258,6 @@
       "memory::ctx::logical_request::tests::logical_raw_container_remains_unknown_without_provenance",
       "memory::ctx::logical_request::tests::logical_rename_has_no_content_and_counts_lineage_once",
       "memory::ctx::logical_request::tests::logical_wire_rejects_unknown_outer_index_and_provenance_fields",
-      "memory::ctx::logical::tests::logical_conflicting_event_label_and_legacy_replacement_preserve_every_projection",
-      "memory::ctx::logical::tests::logical_purge_epoch_write_failure_and_exhaustion_roll_back_all_deleted_rows",
-      "memory::ctx::logical::tests::logical_receipt_and_rename_failures_roll_back_source_fts_vocabulary_and_ledger",
-      "memory::ctx::logical::tests::logical_register_revise_rename_and_historical_replay_keep_one_current_source",
-      "memory::ctx::logical::tests::logical_source_category_and_all_purge_reject_old_replay_without_resurrection",
-      "memory::ctx::logical::tests::logical_two_connections_reject_stale_guard_even_when_content_revision_is_unchanged",
       "memory::ctx::tests::corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit",
       "memory::ctx::tests::document_structure_survives_reopen_and_all_search_modes_as_source_ranges",
       "memory::ctx::tests::repeated_source_structure_counts_against_the_search_payload_budget",
@@ -85728,6 +85728,26 @@
       }
     ],
     "note": "Private SQL row type alias fixes observed type_complexity without behavior/query changes; bind production logical.rs in focused document receipt; previous62cases not executed due earlier lint failure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2607OrdinalDocumentSelection": {
+    "base": "0a165c7c3743787924c3c59ef9100f6b4fcd5739",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2607-hosted-repair.json",
+        "bytes": 7948,
+        "sha256": "528FB4DCF0B0AA634E27F615009FEFC4BD55CC793D44FFDD516C5F5DE0398ED2",
+        "blob": "4d68db4121744fa77e23806f0be2072ab5303c96"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2665567,
+        "sha256": "90AF458454CF61D8B9BBF19C95175FBFFE88A39B7359C0B4144608B1C2A971A9",
+        "blob": "fb0a931527e180bd8b01c35165d24e9bbbb08f15"
+      }
+    ],
+    "note": "Exact same55case identity set sorted ordinal to match Python selection guard; no executable local validation",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

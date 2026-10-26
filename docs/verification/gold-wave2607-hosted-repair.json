@@ -168,5 +168,16 @@
     "costReplayCasesExecuted": 0,
     "productionOwnerAddedToSourceBindings": true,
     "newHostedPassRequired": true
+  },
+  "focusedSelectionOrdering": {
+    "observedStaticallyOn": "0a165c7c3743787924c3c59ef9100f6b4fcd5739",
+    "queuedRun": 40339804527,
+    "cause": "The matrix stored logical_request before logical::tests; Python workflow requires ordinal-sorted report identities",
+    "repair": "Sort only the 55 requiredTests with StringComparer.Ordinal; exact same unique identity set and native registrations",
+    "reviewer": "/root/dependency_boundary_review",
+    "requiredCount": 55,
+    "testIdentitySetUnchanged": true,
+    "workflowGuardUnchanged": true,
+    "newHostedPassRequired": true
   }
 }
