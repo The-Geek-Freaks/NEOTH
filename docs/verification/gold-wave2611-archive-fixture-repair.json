@@ -1,0 +1,55 @@
+{
+  "schema": "neoth.wave2611.archive-fixture-repair.v1",
+  "capturedUtc": "2026-10-26T17:56:50.9973729Z",
+  "baseProducer": "b8d5ee2eb286a6d7f487d7bd349fd5634ab6bd5f",
+  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "failedRun": 40371299443,
+  "failedJob": 121742532746,
+  "failedStep": "Exercise Candle and actual NEOTH archive consumers",
+  "priorFunctionalPasses": [
+    "npz_roundtrip_preserves_named_tensors_and_unicode",
+    "pickle_discovers_metadata_and_reads_nonfirst_tensor_payload"
+  ],
+  "cause": {
+    "package": "zip",
+    "version": "9.0.0",
+    "archiveSha256": "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e",
+    "source": "https://static.crates.io/crates/zip/zip-9.0.0.crate",
+    "behavior": "types.rs name() tries UTF8 then exhaustive CP437; 0xff maps to U+00A0 even when flag11 is set",
+    "invalidPremise": "Expected filename iterator error on a byte accepted by ZIP9 CP437 decoding",
+    "typesSourceSha256": "22A4490D6BCBCC91DAD4CC3A79B5577E82E7C3024CEBBA80AB552518B5AABA2F",
+    "cp437SourceSha256": "062B8BA1C10220C888B4BA9AC6970D3E298BBBEAB4CA372F07BBDB956BA636BE"
+  },
+  "repair": [
+    "Keep production name()? and fallible file_names collection unchanged",
+    "Use valid NPZ/PTH/DOCX positive controls, then truncate the central directory and end record",
+    "Require malformed archive constructor precondition and real eager/lazy NPZ,PTH,document errors",
+    "Exercise DOCX,PPTX,XLSX,EPUB document entry points before format-specific selection"
+  ],
+  "integrationTests": [
+    "npz_roundtrip_preserves_named_tensors_and_unicode",
+    "pickle_discovers_metadata_and_reads_nonfirst_tensor_payload",
+    "truncated_archive_errors_propagate_through_npz_and_pickle"
+  ],
+  "documentTest": "media::document::tests::truncated_archive_directory_fails_before_document_selection",
+  "patchSha256": "5a00574ccfe64d4805db1edb7ed37e99345c386f7f3e55ca793fe3a585876fce",
+  "templateSha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+  "staticPatchApplyCheck": true,
+  "independentReview": {
+    "agent": "/root/dependency_boundary_review",
+    "mode": "PROMPT_ONLY_SUPPLIED_EXCERPTS",
+    "blockingFindings": 0
+  },
+  "localRuntimeExecuted": false,
+  "candidateAccepted": false,
+  "productImported": false,
+  "cost18Accepted": false,
+  "goldAccepted": false,
+  "limitations": [
+    "No filename iterator-error branch proof or invalidUTF8-rejection claim",
+    "No new CP437 tensor-name compatibility claim",
+    "Prior focused62 acceptance belongs only to982197a9",
+    "Final candidate archive,solver,audit,notices and18cost runtime admission remain required",
+    "Full integration,Interop,native,device,release and Gold remain open"
+  ]
+}

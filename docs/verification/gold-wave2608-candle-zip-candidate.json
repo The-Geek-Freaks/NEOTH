@@ -17,14 +17,14 @@
   },
   "candidatePaths": 7,
   "integrationCases": 3,
-  "newDocumentCase": "media::document::tests::malformed_utf8_archive_names_fail_before_document_selection",
+  "newDocumentCase": "media::document::tests::truncated_archive_directory_fails_before_document_selection",
   "boundaries": [
     "No production source, lock or vendor import until exact hosted candidate and Root admission",
     "Candle family, CPU/CUDA/Metal feature surface retained; native CUDA/Metal validation remains open",
     "Source gate authenticates all97 files and seven exact changed pre/postimages",
     "Solver-produced lock; one ZIP9 and path Candle; unchanged sibling Candle identities; complete delta retained",
     "No ZIP advisory ignore; retained other findings/warnings; fresh audit database provenance",
-    "Named NPZ, unicode names, real official PTH payload, invalid UTF8 and existing document/browser/updater boundaries",
+    "Named NPZ, unicode names, real official PTH payload, malformed central-directory rejection and existing document/browser/updater boundaries",
     "NPZ writer now explicitly propagates finish failure",
     "Full97-file patch export enforced even for ignored upstream fixtures",
     "Candle upstream checkout bytes preserved; patch LF and required blank-context markers explicitly retained"
@@ -47,18 +47,18 @@
     },
     {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
-      "sha256": "34CAD6B0E1DA5585E4BE2DCE57E4FE5BEFD072C1ED6CD7E9AE84FD1C776DA0F4",
-      "bytes": 8954
+      "sha256": "5A00574CCFE64D4805DB1EDB7ED37E99345C386F7F3E55CA793FE3A585876FCE",
+      "bytes": 8636
     },
     {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
-      "sha256": "BB42F99BE1919B67A41E413598801B148E58B5D3C8DB7B4193C0BD9024DC1F4B",
+      "sha256": "A4C8336956ECCEB044FFFC764FDD22DF3F4A0D5417583D510901CABD3400B62E",
       "bytes": 1949
     },
     {
       "path": "packaging/vendor-provenance/candle_zip_compat.rs",
-      "sha256": "1D399FBF303DFC1DDCFE833AB88B484B29A28D7993DB8270EC05D721CF4E72D9",
-      "bytes": 5016
+      "sha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E",
+      "bytes": 4780
     },
     {
       "path": ".gitattributes",
@@ -93,5 +93,12 @@
     "review": "Prompt-only review; shell counters use assignment under set-e",
     "hostedAccepted": false,
     "measuredTimeSaving": null
+  },
+  "fixturePremiseCorrection": {
+    "report": "docs/verification/gold-wave2611-archive-fixture-repair.json",
+    "failedRun": 40371299443,
+    "supersededClaim": "invalidUTF8 must produce filename iterator error",
+    "replacement": "Actual malformed-archive propagation with valid fixture controls",
+    "hostedValidationPending": true
   }
 }

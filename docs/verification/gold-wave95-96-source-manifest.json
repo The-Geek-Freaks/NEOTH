@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-26T16:35:40.3925993Z",
-  "validationStatus": "CANDIDATE_PIPELINE_PREPARED_HOSTED_VALIDATION_PENDING",
+  "capturedUtc": "2026-10-26T17:57:24.9554304Z",
+  "validationStatus": "W2611_STATIC_FIXTURE_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4583,13 +4583,23 @@
     },
     {
       "path": "docs/verification/gold-wave2608-candle-zip-candidate.json",
-      "bytes": 4267,
-      "sha256": "C80D7F291316FC7897E10B56A5DB1A5F9CED63B2BDACD27E44F19F60D895ECA9"
+      "bytes": 4634,
+      "sha256": "1716CDC2B426E582091F793E81BF676DE0991495EDEAA183BC3BFFA9DBDB5655"
     },
     {
       "path": "docs/verification/gold-wave2609-price-basis.json",
       "bytes": 4460,
       "sha256": "E081711FB61F7FBF8425B8C98AF89AD3414BE20164A112BC4F145C1653898976"
+    },
+    {
+      "path": "docs/verification/gold-wave2610-focused-acceptance.json",
+      "bytes": 2557,
+      "sha256": "EE1E275398248976FB9920B19515B4D54BC179DD9CD0D9F0EE4692C9AD732D90"
+    },
+    {
+      "path": "docs/verification/gold-wave2611-archive-fixture-repair.json",
+      "bytes": 2721,
+      "sha256": "B93BD5574C05411E327FCA848401CDA2A93D9785CE0797CB5944A901BA61E9E7"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5698,18 +5708,18 @@
     },
     {
       "path": "packaging/vendor-provenance/candle_zip_compat.rs",
-      "bytes": 5016,
-      "sha256": "1D399FBF303DFC1DDCFE833AB88B484B29A28D7993DB8270EC05D721CF4E72D9"
+      "bytes": 4780,
+      "sha256": "A88DE039BA7041B0BB56E919016881C9FAB82B8F7805DFD0485A92B294D6BA2E"
     },
     {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
       "bytes": 1949,
-      "sha256": "BB42F99BE1919B67A41E413598801B148E58B5D3C8DB7B4193C0BD9024DC1F4B"
+      "sha256": "A4C8336956ECCEB044FFFC764FDD22DF3F4A0D5417583D510901CABD3400B62E"
     },
     {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
-      "bytes": 8954,
-      "sha256": "34CAD6B0E1DA5585E4BE2DCE57E4FE5BEFD072C1ED6CD7E9AE84FD1C776DA0F4"
+      "bytes": 8636,
+      "sha256": "5A00574CCFE64D4805DB1EDB7ED37E99345C386F7F3E55CA793FE3A585876FCE"
     },
     {
       "path": "packaging/vendor-provenance/candle-core-0.8.4.crate",
@@ -5793,8 +5803,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2670080,
-      "sha256": "A89311FCB724B58FF5CF27DE05BCE9097920C139228D9F57E73D91FD8F4A35F9"
+      "bytes": 2672635,
+      "sha256": "78264E0FC2DEBEFA1EB9FE24CE6DAB376511CA0761F3E17F804AC3F3467C3664"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

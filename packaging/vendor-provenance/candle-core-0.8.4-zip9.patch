@@ -24,7 +24,7 @@ index d0a0998b2670189d0dd4efa60592f0f0302ad2da..b3a1cfc6401fa5c83cfab08c5f1f3303
  
  # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
 diff --git a/SRC/neothd/src/media/document.rs b/SRC/neothd/src/media/document.rs
-index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..b890a784199a3bd3d8f9a476fefbe8ae51b884ea 100644
+index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..68ac4ded73af06fab9752edf1eb14a0596b81bb0 100644
 --- a/SRC/neothd/src/media/document.rs
 +++ b/SRC/neothd/src/media/document.rs
 @@ -320,7 +320,7 @@ fn extract_zip_text(
@@ -84,43 +84,33 @@ index 7f21c50becd9990e7bb4a2387147798d4e2e34ea..b890a784199a3bd3d8f9a476fefbe8ae
  }
  
  fn read_member(
-@@ -1510,6 +1523,41 @@ mod tests {
+@@ -1510,6 +1523,31 @@ mod tests {
          assert!(matches!(err, ExtractionError::Backend { .. }), "{err:?}");
      }
  
 +    #[test]
-+    fn malformed_utf8_archive_names_fail_before_document_selection() {
-+        let mut bytes = make_zip(&[("bad", ""), ("word/document.xml", "<w:t>ok</w:t>")]);
-+        // Change only the first local/central filename; leave payloads and CRCs intact.
++    fn truncated_archive_directory_fails_before_document_selection() {
++        let mut bytes = make_zip(&[("word/document.xml", "<w:t>ok</w:t>")]);
++        assert!(extract_blocking(&doc_asset(DOCX_MIME, bytes.clone())).is_ok());
 +        let central = bytes
 +            .windows(4)
-+            .position(|v| v == b"PK\x01\x02")
-+            .unwrap();
-+        assert_eq!(&bytes[..4], b"PK\x03\x04");
-+        for (header, flags, name) in [(0, 6, 30), (central, 8, 46)] {
-+            let offset = header + flags;
-+            let value = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) | (1 << 11);
-+            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-+            bytes[header + name] = 0xff;
++            .position(|window| window == b"PK\x01\x02")
++            .expect("valid fixture has a central directory");
++        bytes.truncate(central);
++        assert!(zip::ZipArchive::new(Cursor::new(&bytes)).is_err());
++        for mime in [DOCX_MIME, PPTX_MIME, XLSX_MIME, EPUB_MIME] {
++            let error = extract_blocking(&doc_asset(mime, bytes.clone())).unwrap_err();
++            assert!(
++                matches!(
++                    &error,
++                    ExtractionError::Backend {
++                        backend: "document",
++                        reason,
++                    } if reason.starts_with("open ") && reason.contains(" archive:")
++                ),
++                "{mime}: {error:?}"
++            );
 +        }
-+        let mut archive = open_zip(bytes);
-+        assert!(archive.file_names().any(|name| name.is_err()));
-+        let error = member_names(&archive).unwrap_err();
-+        assert!(matches!(
-+            error,
-+            ExtractionError::Backend {
-+                backend: "document",
-+                ..
-+            }
-+        ));
-+        let error = validate_archive(&mut archive, ARCHIVE_LIMITS).unwrap_err();
-+        assert!(matches!(
-+            error,
-+            ExtractionError::Backend {
-+                backend: "document",
-+                ..
-+            }
-+        ));
 +    }
 +
      #[test]

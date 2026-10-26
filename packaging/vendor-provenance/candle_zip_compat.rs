@@ -74,24 +74,16 @@ fn pickle_discovers_metadata_and_reads_nonfirst_tensor_payload() -> anyhow::Resu
     Ok(())
 }
 
-fn corrupt_filename(bytes: &mut [u8]) {
+fn truncate_directory(path: &Path) -> anyhow::Result<()> {
+    let mut bytes = std::fs::read(path)?;
+    // Keep real member bytes; remove the central directory and end record.
     let central = bytes
         .windows(4)
-        .position(|v| v == b"PK\x01\x02")
-        .unwrap();
-    assert_eq!(&bytes[..4], b"PK\x03\x04");
-    for (header, flags, name) in [(0, 6, 30), (central, 8, 46)] {
-        let offset = header + flags;
-        let value = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) | (1 << 11);
-        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-        bytes[header + name] = 0xff;
-    }
-}
-
-fn require_invalid_name(path: &Path) -> anyhow::Result<()> {
-    // Establish that the fixture reaches ZIP 9's fallible name decoder.
-    let archive = ZipArchive::new(File::open(path)?)?;
-    assert!(archive.file_names().any(|name| name.is_err()));
+        .position(|window| window == b"PK\x01\x02")
+        .expect("valid fixture has a central directory");
+    bytes.truncate(central);
+    assert!(ZipArchive::new(std::io::Cursor::new(&bytes)).is_err());
+    std::fs::write(path, bytes)?;
     Ok(())
 }
 
@@ -99,27 +91,26 @@ fn assert_zip_error<T>(result: candle_core::Result<T>) {
     match result {
         Err(Error::Zip(_)) => {}
         Err(error) => panic!("expected ZIP error, got {error:?}"),
-        Ok(_) => panic!("invalid filename was accepted"),
+        Ok(_) => panic!("truncated archive was accepted"),
     }
 }
 
 #[test]
-fn invalid_names_propagate_through_npz_and_pickle() -> anyhow::Result<()> {
+fn truncated_archive_errors_propagate_through_npz_and_pickle() -> anyhow::Result<()> {
     let directory = tempdir()?;
-    let npz = directory.path().join("invalid.npz");
+    let npz = directory.path().join("truncated.npz");
     let tensor = Tensor::from_vec(vec![1_i64, 2, 3, 4], (2, 2), &Device::Cpu)?;
     Tensor::write_npz(&[("probe", &tensor)], &npz)?;
-    let mut bytes = std::fs::read(&npz)?;
-    corrupt_filename(&mut bytes);
-    std::fs::write(&npz, bytes)?;
-    require_invalid_name(&npz)?;
+    assert_tensor(&Tensor::read_npz(&npz)?[0].1, vec![vec![1, 2], vec![3, 4]]);
+    assert!(NpzTensors::new(&npz)?.get("probe")?.is_some());
+    truncate_directory(&npz)?;
     assert_zip_error(Tensor::read_npz(&npz));
     assert_zip_error(NpzTensors::new(&npz));
-    let pth = directory.path().join("invalid.pth");
-    let mut bytes = FORTRAN_PTH.to_vec();
-    corrupt_filename(&mut bytes);
-    std::fs::write(&pth, bytes)?;
-    require_invalid_name(&pth)?;
+
+    let pth = directory.path().join("truncated.pth");
+    std::fs::write(&pth, FORTRAN_PTH)?;
+    assert!(PthTensors::new(&pth, None)?.get("tensor_fortran")?.is_some());
+    truncate_directory(&pth)?;
     assert_zip_error(PthTensors::new(&pth, None));
     Ok(())
 }

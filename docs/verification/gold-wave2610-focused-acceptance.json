@@ -1,0 +1,62 @@
+{
+  "schema": "neoth.wave2610.focused-acceptance.v1",
+  "admittedUtc": "2026-10-26T17:46:05.8272698Z",
+  "status": "ROOT_ADMITTED_62_CASES_ON_EXACT_PRODUCER",
+  "producer": "982197a9b901daa2816d98c767177e9bca9a7f15",
+  "run": 40354173687,
+  "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/40354173687",
+  "mainAtAdmission": "b8d5ee2eb286a6d7f487d7bd349fd5634ab6bd5f",
+  "accepted": [
+    "Core test-target compilation",
+    "Exact Linux quality workspace Clippy",
+    "55 document and migration regression identities",
+    "7 immutable usage and real provider recovery regression identities"
+  ],
+  "proofs": [
+    {
+      "producer": "982197a9b901daa2816d98c767177e9bca9a7f15",
+      "run": "40354173687",
+      "attempt": 1,
+      "job": 121682047054,
+      "artifact": 12668946667,
+      "zipSha256": "A04B919DEF6B1BAAE22FB52AFA3D14D4C324EBF116313269E293CE0193E99069",
+      "archiveEntries": 116,
+      "sourceBindings": 24,
+      "exactPassed": 55,
+      "rootProof": "work/gold-20260906/wave2607-hosted-repair/document55-982197a9-admission/ROOT_ADMISSION.json",
+      "rootProofSha256": "08B9CA3F67B1E4C7BEB7838667BE3046941A11AB034A65F12186401CE5951712"
+    },
+    {
+      "producer": "982197a9b901daa2816d98c767177e9bca9a7f15",
+      "run": "40354173687",
+      "attempt": 1,
+      "job": 121682047054,
+      "artifact": 12667908442,
+      "zipSha256": "06D4702112DFA212E3B3EA11870647EAB35755770542A22B9A5AD41B79C1269C",
+      "archiveEntries": 20,
+      "sourceBindings": 10,
+      "exactPassed": 7,
+      "rootProof": "work/gold-20260906/wave2607-hosted-repair/cost7-982197a9-admission/ROOT_ADMISSION.json",
+      "rootProofSha256": "6B25A9EAA9E3FCCB017E8A78C5EC5DAA2190A15A20D20D969B182BC46824A42A"
+    }
+  ],
+  "currentCandidate": {
+    "producer": "b8d5ee2eb286a6d7f487d7bd349fd5634ab6bd5f",
+    "run": 40371299443,
+    "costCases": 18,
+    "candidateAccepted": false,
+    "productImported": false,
+    "conclusion": "failure",
+    "repairReport": "docs/verification/gold-wave2611-archive-fixture-repair.json"
+  },
+  "limitations": [
+    "The62case producer predates pricing basis v4 and capability consumer changes; no acceptance of the later18case set",
+    "ZIP/Candle candidate source, solver, audit and runtime admission remains pending",
+    "Full integration,Interop,native,device and release gates remain separate and open",
+    "No historical raw checklist row or Gold checkbox is removed or closed"
+  ],
+  "localRuntimeExecuted": false,
+  "fullMainAccepted": false,
+  "goldAccepted": false,
+  "goldCheckboxesClosed": 0
+}
