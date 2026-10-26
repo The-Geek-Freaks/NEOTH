@@ -918,7 +918,10 @@ impl ProviderCallAuditTicket {
             "usage_projection_schema".into(),
             "neoth.provider-usage.v4".into(),
         );
-        payload.insert("pricing_basis".into(), serde_json::to_value(&usage_event.pricing_basis)?);
+        payload.insert(
+            "pricing_basis".into(),
+            serde_json::to_value(&usage_event.pricing_basis)?,
+        );
         payload.insert(
             "usage_snapshot".into(),
             crate::daemon::usage_log::terminal_usage_snapshot_v2(&usage_event)?,

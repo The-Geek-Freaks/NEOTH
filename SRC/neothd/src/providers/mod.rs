@@ -36,7 +36,6 @@ pub mod context_guards;
 /// unbounded paid-call gate without live plan/allowance context).
 pub mod copilot;
 pub mod cost;
-pub mod pricing_basis;
 /// B22 — cost authorization bound to each exact provider leaf request.
 pub mod cost_authorization;
 pub mod effort_override;
@@ -54,6 +53,7 @@ pub mod model_roles;
 pub mod ollama_api;
 pub mod openai_api;
 pub mod ouro;
+pub mod pricing_basis;
 pub mod pty_session;
 pub mod quota;
 pub mod recursive_mas;

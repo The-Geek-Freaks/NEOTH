@@ -12,8 +12,8 @@
 //! heuristic must never become an authorization input.
 
 use super::pricing_basis::{
-    CACHE_CREATE_MULTIPLIER, CACHE_CREATE_PREMIUM, CACHE_READ_MULTIPLIER,
-    CACHE_READ_SAVINGS, EUR_PER_USD,
+    CACHE_CREATE_MULTIPLIER, CACHE_CREATE_PREMIUM, CACHE_READ_MULTIPLIER, CACHE_READ_SAVINGS,
+    EUR_PER_USD,
 };
 use crate::providers::Request;
 use crate::providers::meter::Meter;
@@ -243,7 +243,13 @@ pub fn actual_cost_usd_with_cache(
     cache_read_tokens: u32,
 ) -> f64 {
     let price = lookup_price(provider, model).unwrap_or_else(PriceRow::unknown_high_estimate);
-    cost_usd_for_price(price, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+    cost_usd_for_price(
+        price,
+        input_tokens,
+        output_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+    )
 }
 
 pub(crate) fn cost_usd_for_price(
@@ -258,8 +264,9 @@ pub(crate) fn cost_usd_for_price(
     const EUR_TO_USD_INV: f64 = 1.0 / EUR_PER_USD;
     let input_usd_per_mtok = price.input_eur_per_mtok as f64 * EUR_TO_USD_INV;
     let output_usd_per_mtok = price.output_eur_per_mtok as f64 * EUR_TO_USD_INV;
-    let billable_input_token_equivalents =
-        input_tokens as f64 + cache_creation_tokens as f64 * CACHE_CREATE_MULTIPLIER + cache_read_tokens as f64 * CACHE_READ_MULTIPLIER;
+    let billable_input_token_equivalents = input_tokens as f64
+        + cache_creation_tokens as f64 * CACHE_CREATE_MULTIPLIER
+        + cache_read_tokens as f64 * CACHE_READ_MULTIPLIER;
     let input_usd = (billable_input_token_equivalents / 1_000_000.0) * input_usd_per_mtok;
     let output_usd = (output_tokens as f64 / 1_000_000.0) * output_usd_per_mtok;
     input_usd + output_usd

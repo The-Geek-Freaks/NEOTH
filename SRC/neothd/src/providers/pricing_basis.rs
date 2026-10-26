@@ -79,10 +79,16 @@ impl PricingBasis {
             self.algorithm == ALGORITHM && self.provider == provider && self.model == model,
             "pricing basis identity or algorithm mismatch"
         );
-        for bits in [&self.input_eur_per_mtok_bits, &self.output_eur_per_mtok_bits] {
+        for bits in [
+            &self.input_eur_per_mtok_bits,
+            &self.output_eur_per_mtok_bits,
+        ] {
             anyhow::ensure!(canonical_hex(bits, 8), "noncanonical pricing rate bits");
             let rate = f32::from_bits(u32::from_str_radix(bits, 16)?);
-            anyhow::ensure!(rate.is_finite() && !rate.is_sign_negative(), "invalid pricing rate");
+            anyhow::ensure!(
+                rate.is_finite() && !rate.is_sign_negative(),
+                "invalid pricing rate"
+            );
         }
         // These constants define algorithm v1. A future calculation policy
         // needs a new algorithm version; historical v1 remains readable.
@@ -98,14 +104,19 @@ impl PricingBasis {
                 "pricing basis constants disagree with algorithm v1"
             );
         }
-        anyhow::ensure!(self.basis_id == self.digest(), "pricing basis digest mismatch");
+        anyhow::ensure!(
+            self.basis_id == self.digest(),
+            "pricing basis digest mismatch"
+        );
         Ok(())
     }
 }
 
 fn canonical_hex(value: &str, length: usize) -> bool {
     value.len() == length
-        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -114,20 +125,55 @@ mod tests {
 
     #[test]
     fn price_basis_roundtrip_preserves_exact_row_and_policy() {
-        let price = PriceRow { input_eur_per_mtok: 2.76, output_eur_per_mtok: 13.8 };
+        let price = PriceRow {
+            input_eur_per_mtok: 2.76,
+            output_eur_per_mtok: 13.8,
+        };
         let basis = PricingBasis::from_price("anthropic_api", "claude-sonnet-4-6", price);
-        let restored: PricingBasis = serde_json::from_str(&serde_json::to_string(&basis).unwrap()).unwrap();
+        let restored: PricingBasis =
+            serde_json::from_str(&serde_json::to_string(&basis).unwrap()).unwrap();
         assert_eq!(basis, restored);
-        assert_eq!(basis.input_eur_per_mtok_bits, format!("{:08x}", price.input_eur_per_mtok.to_bits()));
-        restored.validate("anthropic_api", "claude-sonnet-4-6").unwrap();
-        let changed = PricingBasis::from_price("anthropic_api", "claude-sonnet-4-6", PriceRow { input_eur_per_mtok: 3.0, ..price });
+        assert_eq!(
+            basis.input_eur_per_mtok_bits,
+            format!("{:08x}", price.input_eur_per_mtok.to_bits())
+        );
+        restored
+            .validate("anthropic_api", "claude-sonnet-4-6")
+            .unwrap();
+        let changed = PricingBasis::from_price(
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            PriceRow {
+                input_eur_per_mtok: 3.0,
+                ..price
+            },
+        );
         assert_ne!(basis.basis_id, changed.basis_id);
     }
 
     #[test]
     fn price_basis_rejects_tampered_rates_policy_and_identity() {
-        let basis = PricingBasis::from_price("provider", "model", PriceRow { input_eur_per_mtok: 1.0, output_eur_per_mtok: 2.0 });
-        for field in ["input_eur_per_mtok_bits", "output_eur_per_mtok_bits", "fx_eur_per_usd_bits", "cache_create_multiplier_bits", "cache_read_multiplier_bits", "cache_read_savings_bits", "cache_create_premium_bits", "provider", "model", "algorithm", "basis_id"] {
+        let basis = PricingBasis::from_price(
+            "provider",
+            "model",
+            PriceRow {
+                input_eur_per_mtok: 1.0,
+                output_eur_per_mtok: 2.0,
+            },
+        );
+        for field in [
+            "input_eur_per_mtok_bits",
+            "output_eur_per_mtok_bits",
+            "fx_eur_per_usd_bits",
+            "cache_create_multiplier_bits",
+            "cache_read_multiplier_bits",
+            "cache_read_savings_bits",
+            "cache_create_premium_bits",
+            "provider",
+            "model",
+            "algorithm",
+            "basis_id",
+        ] {
             let mut value = serde_json::to_value(&basis).unwrap();
             value[field] = "changed".into();
             let changed: PricingBasis = serde_json::from_value(value).unwrap();
@@ -139,8 +185,17 @@ mod tests {
 
     #[test]
     fn price_basis_rejects_invalid_rates_even_with_matching_digest() {
-        let basis = PricingBasis::from_price("provider", "model", PriceRow { input_eur_per_mtok: 1.0, output_eur_per_mtok: 2.0 });
-        for bits in ["7fc00000", "7f800000", "bf800000", "80000000", "3F800000", "1"] {
+        let basis = PricingBasis::from_price(
+            "provider",
+            "model",
+            PriceRow {
+                input_eur_per_mtok: 1.0,
+                output_eur_per_mtok: 2.0,
+            },
+        );
+        for bits in [
+            "7fc00000", "7f800000", "bf800000", "80000000", "3F800000", "1",
+        ] {
             let mut changed = basis.clone();
             changed.input_eur_per_mtok_bits = bits.to_owned();
             changed.basis_id = changed.digest();

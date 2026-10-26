@@ -35,8 +35,24 @@
     "Digest verifies canonical basis identity, not authenticity of coordinated rewritten WAL records"
   ],
   "localRuntimeExecuted": false,
-  "hostedFormatAccepted": false,
+  "hostedFormatAccepted": true,
   "hostedCompileAccepted": false,
   "hostedRuntimeAccepted": false,
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormatting": {
+    "run": 40355920307,
+    "producer": "43ed5e642d6939a9e17de4baa1b65f6da6a9ad09",
+    "artifact": 12665757163,
+    "zipSha256": "94796F1C9FAB6B01B64B5C1F88C83273D39EDD44B6351DC2F22918D2ACD13A61",
+    "patchSha256": "47ABF6EB877369F492467879E6908CD310E4908718BDBF3BBF4CC12F71FEB663",
+    "allowedTargets": [
+      "SRC/neothd/src/daemon/usage_log.rs",
+      "SRC/neothd/src/providers/cost.rs",
+      "SRC/neothd/src/providers/cost_authorization.rs",
+      "SRC/neothd/src/providers/mod.rs",
+      "SRC/neothd/src/providers/pricing_basis.rs"
+    ],
+    "localFormatterExecuted": false,
+    "newProducerChecks": "pending"
+  }
 }
