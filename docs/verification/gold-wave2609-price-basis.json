@@ -9,9 +9,12 @@
     "Use the same reviewed PriceRow for terminal amounts and provenance",
     "Persist basis in terminal WAL v4 and snapshot v2; require explicit null when no amount was computed",
     "Keep v3 exact encoding and v2 legacy recomputation without inventing historical provenance",
-    "Recover original amount bits and basis through the existing idempotent usage repair; no extra request or debit"
+    "Recover original amount bits and basis through the existing idempotent usage repair; no extra request or debit",
+    "Validate v3 and v4 terminal snapshots before authenticated capability observation and Doctor projection"
   ],
   "tests": [
+    "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback",
+    "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
     "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
     "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
     "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
@@ -22,7 +25,7 @@
     "providers::pricing_basis::tests::price_basis_rejects_tampered_rates_policy_and_identity",
     "providers::pricing_basis::tests::price_basis_roundtrip_preserves_exact_row_and_policy"
   ],
-  "newPortableRegistrations": 9,
+  "newPortableRegistrations": 11,
   "review": {
     "method": "Prompt-only source flow, schema and boundary review",
     "result": "No static blocker; explicit null and missing-key cases included; hosted checks pending",
@@ -35,7 +38,7 @@
     "Digest verifies canonical basis identity, not authenticity of coordinated rewritten WAL records"
   ],
   "localRuntimeExecuted": false,
-  "hostedFormatAccepted": true,
+  "hostedFormatAccepted": false,
   "hostedCompileAccepted": false,
   "hostedRuntimeAccepted": false,
   "goldCheckboxesClosed": 0,
@@ -54,5 +57,18 @@
     ],
     "localFormatterExecuted": false,
     "newProducerChecks": "pending"
+  },
+  "consumerCompatibility": {
+    "source": "SRC/neothd/src/daemon/capability_decay.rs",
+    "knownSchemas": [
+      "neoth.provider-usage.v2",
+      "neoth.provider-usage.v3",
+      "neoth.provider-usage.v4"
+    ],
+    "currentValidation": "Shared canonical usage snapshot decoder before existing quality gates",
+    "invalidKnownSchema": "error",
+    "unknownSchema": "legacy",
+    "combinedFocusedCount": 18,
+    "hostedValidation": "pending"
   }
 }

@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       cost_replay_regressions:
-        description: 'Also run 16 exact immutable usage, price provenance and real provider recovery regressions'
+        description: 'Also run 18 exact immutable usage, price provenance, capability and provider recovery regressions'
         type: boolean
         default: false
       macos_provider_regression:
@@ -289,14 +289,14 @@ jobs:
           extra_report_path = "docs/verification/gold-wave2609-price-basis.json"
           extra_report_bytes = (root / extra_report_path).read_bytes()
           expected = json.loads(report_bytes)["tests"] + json.loads(extra_report_bytes)["tests"]
-          if spec.get("requiredCount") != 16 or len(names) != 16 or len(set(names)) != 16 or names != sorted(expected):
-              raise SystemExit("cost replay selection must contain exactly 16 report-bound identities")
+          if spec.get("requiredCount") != 18 or len(names) != 18 or len(set(names)) != 18 or names != sorted(expected):
+              raise SystemExit("cost replay selection must contain exactly 18 report-bound identities")
           if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
               raise SystemExit("invalid cost replay identity")
           required_recovery = "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently"
           if required_recovery not in names:
               raise SystemExit("real provider recovery case is missing")
-          allowed_sources = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs"}
+          allowed_sources = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/daemon/capability_decay.rs"}
           records = []
           inputs = {"docs/verification/gold-wave95-96-test-matrix.json": hashlib.sha256(matrix_bytes).hexdigest(), report_path: hashlib.sha256(report_bytes).hexdigest(), extra_report_path: hashlib.sha256(extra_report_bytes).hexdigest()}
           for name in names:
@@ -312,7 +312,7 @@ jobs:
               inputs[relative] = actual
           for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/tokens/budget.rs"):
               inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
-          receipt = {"schema": "neoth.cost-replay-regressions.v2", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 16, "fixtures": records, "inputs": inputs}
+          receipt = {"schema": "neoth.cost-replay-regressions.v2", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 18, "fixtures": records, "inputs": inputs}
           (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
           (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
           PY
@@ -340,8 +340,8 @@ jobs:
               failed_or_missing=$((failed_or_missing + 1))
             fi
           done < "$proof_dir/fixture-names.txt"
-          printf 'selected=16\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
-          test "$visited" -eq 16
+          printf 'selected=18\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 18
           test "$failed_or_missing" -eq 0
 
       - name: Upload cost replay regression evidence

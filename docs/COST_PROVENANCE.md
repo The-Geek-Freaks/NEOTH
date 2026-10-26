@@ -11,3 +11,5 @@ Historical v3/snapshot-v1 records keep their exact field set and amounts; a new 
 Implementation owners: `providers/cost.rs` selects and calculates the static rate; `providers/pricing_basis.rs` versions its effective inputs; `providers/cost_authorization.rs` writes the terminal; `daemon/usage_log.rs` serializes and repairs the same event. The versioned constants for algorithm v1 must remain frozen if another calculation policy is introduced.
 
 A02 remains open for seven-category prompt attribution, tokenizer provenance, residual estimates, reservation-price history and dedicated operator presentation. This slice does not store prompt text and does not introduce a second ledger.
+
+Authenticated capability observation and Doctor quality reporting accept terminal v2, v3 and v4. The v3/v4 paths first use the same canonical snapshot decoder as usage recovery, then retain their quality-specific identity, workflow, event-type and time checks. Invalid declared v3/v4 snapshots fail instead of becoming legacy observations. Unknown versions remain legacy and do not contribute quality evidence.

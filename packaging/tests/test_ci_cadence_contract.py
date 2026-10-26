@@ -246,9 +246,9 @@ class CiCadenceContractTests(unittest.TestCase):
             )
             expected.extend(report["tests"])
         selection = matrix["wave2609CostReplayRegressions"]
-        self.assertEqual(selection["requiredCount"], 16)
-        self.assertEqual(len(expected), 16)
-        self.assertEqual(len(set(expected)), 16)
+        self.assertEqual(selection["requiredCount"], 18)
+        self.assertEqual(len(expected), 18)
+        self.assertEqual(len(set(expected)), 18)
         self.assertEqual(selection["requiredTests"], sorted(expected))
         self.assertIn(
             "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",

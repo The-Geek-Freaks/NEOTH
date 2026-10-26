@@ -215,12 +215,18 @@ enum TerminalPayload {
 fn terminal_sample_from_payload(event_type: u8, payload: &[u8]) -> Result<TerminalPayload> {
     let value: serde_json::Value =
         serde_json::from_slice(payload).context("decode provider terminal observation payload")?;
-    if value
+    match value
         .get("usage_projection_schema")
         .and_then(serde_json::Value::as_str)
-        != Some("neoth.provider-usage.v2")
     {
-        return Ok(TerminalPayload::Legacy);
+        Some("neoth.provider-usage.v2") => {}
+        Some("neoth.provider-usage.v3" | "neoth.provider-usage.v4") => {
+            // Reuse the canonical snapshot validator before projecting quality
+            // fields. A declared current format must not fall back to Legacy.
+            super::usage_log::usage_event_from_terminal_payload(payload)?
+                .context("versioned provider terminal omits its usage snapshot")?;
+        }
+        _ => return Ok(TerminalPayload::Legacy),
     }
     let invocation_id = required_string(&value, "invocation_id")?;
     anyhow::ensure!(
@@ -471,6 +477,89 @@ mod tests {
             object.insert("error_kind".into(), "transport".into());
         }
         serde_json::to_vec(&payload).expect("encode current provider terminal payload")
+    }
+
+    fn versioned_terminal_payload(invocation: u8, ts: i64, ok: bool, version: u8) -> Vec<u8> {
+        let mut payload: serde_json::Value = serde_json::from_slice(
+            &producer_terminal_payload(invocation, ts, ok),
+        ).unwrap();
+        // Alternate known measurements and valid unmeasured v4 terminals.
+        let measured = version == 3 || invocation % 2 == 1;
+        let mut event = super::super::usage_log::provider_terminal_event(
+            ts, "openai_api", "gpt-5", measured.then_some(1), measured.then_some(2),
+            100, ok, None, None, false, &format!("{invocation:064x}"),
+            if ok { "complete" } else { "transport" }, "chat_provider_round",
+            Some("chat"), Some("chat_provider_round"), false, None,
+        );
+        payload["input_tokens"] = serde_json::json!(event.input_tokens);
+        payload["output_tokens"] = serde_json::json!(event.output_tokens);
+        payload["cache_creation_tokens"] = serde_json::Value::Null;
+        payload["cache_read_tokens"] = serde_json::Value::Null;
+        payload["prompt_tax"] = serde_json::Value::Null;
+        payload["usage_projection_schema"] = format!("neoth.provider-usage.v{version}").into();
+        payload["usage_snapshot"] = match version {
+            3 => {
+                event.pricing_basis = None;
+                super::super::usage_log::terminal_usage_snapshot(&event).unwrap()
+            }
+            4 => {
+                payload["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
+                super::super::usage_log::terminal_usage_snapshot_v2(&event).unwrap()
+            }
+            _ => panic!("unsupported fixture version"),
+        };
+        serde_json::to_vec(&payload).unwrap()
+    }
+
+    #[tokio::test]
+    async fn versioned_terminal_snapshots_reach_authenticated_capability_observation() {
+        let home = tempfile::tempdir().unwrap();
+        let now = crate::time::now_unix_i64();
+        let (_, writer, join) = ready_authenticated_writer(home.path()).await;
+        for (ids, version, ts) in [(0..12, 3, now - RECENT_WINDOW_SECONDS - 10), (20..28, 4, now - 10)] {
+            for invocation in ids {
+                let ok = invocation < 26;
+                let payload = versioned_terminal_payload(invocation, ts, ok, version);
+                let event_type = if ok { EVENT_TYPE_PROVIDER_RESPONSE } else { EVENT_TYPE_PROVIDER_ERROR };
+                writer.append_authenticated(crate::wal::HeaderBuilder::new(event_type, &payload).build(), payload).await.unwrap();
+            }
+        }
+        drop(writer);
+        join.await.unwrap().unwrap();
+        let report = inspect_authenticated_terminal_history(home.path(), now).unwrap();
+        assert_eq!(report.authenticated_terminal_sample_count, 20);
+        assert_eq!(report.legacy_terminal_rows, 0);
+        assert_eq!(report.unattributed_terminal_rows, 0);
+        assert_eq!(report.observations.len(), 1);
+        assert_eq!(report.observations[0].baseline_samples, 12);
+        assert_eq!(report.observations[0].recent_samples, 8);
+        assert_eq!(report.observations[0].recent_failures, 2);
+        assert_eq!(report.observations[0].trend, CapabilityTrend::Degrading);
+        let outcome = crate::cli::doctor::run_all_checks(home.path()).into_iter()
+            .find(|outcome| outcome.name == "capability quality").unwrap();
+        assert!(outcome.detail.contains("observed degradation"));
+        assert!(!outcome.detail.contains("legacy terminal"));
+    }
+
+    #[test]
+    fn versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback() {
+        for version in [3, 4] {
+            let payload = versioned_terminal_payload(1, 1, true, version);
+            assert!(matches!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &payload).unwrap(), TerminalPayload::Sample(_)));
+            let original: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            let mut changed = original.clone();
+            changed["usage_snapshot"]["event_metadata"]["model"] = "other".into();
+            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            let mut changed = original.clone();
+            changed.as_object_mut().unwrap().remove("usage_snapshot");
+            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            let mut changed = original.clone();
+            changed["usage_snapshot"]["schema"] = "neoth.provider-usage-snapshot.v99".into();
+            assert!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&changed).unwrap()).is_err());
+            let mut future = original;
+            future["usage_projection_schema"] = "neoth.provider-usage.v99".into();
+            assert!(matches!(terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &serde_json::to_vec(&future).unwrap()).unwrap(), TerminalPayload::Legacy));
+        }
     }
 
     async fn append_provider_terminal(
