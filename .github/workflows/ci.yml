@@ -560,12 +560,15 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
-          # Prefer a compatible interrupted target, then retain the existing
-          # same-OS/lock live-audio and legacy combined-cache fallbacks. This
-          # also warms main when an older platform cache belongs to a branch
-          # that main cannot access. Cargo still checks every build input.
+          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          # Immutable caches need a source-qualified key to retain rebuilt
+          # targets after source-only changes. Prefer a same-source recovery
+          # checkpoint, then the newest completed compatible target. Cargo
+          # still checks every input and this run produces fresh test receipts.
           restore-keys: |
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-
+            ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
             ${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
@@ -643,7 +646,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests
+          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests
 
       - name: Build macOS native fixture CLI
         id: native-fixture-cli
@@ -688,7 +691,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Run nextest workspace tests
         # Keep collecting failures within the bounded runtime budget instead

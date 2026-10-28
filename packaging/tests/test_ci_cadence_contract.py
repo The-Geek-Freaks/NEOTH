@@ -1399,7 +1399,7 @@ class CiCadenceContractTests(unittest.TestCase):
             checkpoint,
         )
         self.assertIn(
-            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests",
+            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests",
             checkpoint,
         )
         for path in (
@@ -1444,7 +1444,21 @@ class CiCadenceContractTests(unittest.TestCase):
             self.assertIn(path, complete_save)
             self.assertIn(path, partial_save)
         self.assertIn(
-            "key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            "key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}\n",
+            cache_restore,
+        )
+        native_restore_keys = [
+            "${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-",
+            "${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-",
+            "${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            "${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-",
+            "${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            "${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}",
+            "${{ runner.os }}-1.91-cargo-",
+        ]
+        self.assertIn(
+            "restore-keys: |\n"
+            + "".join(f"            {key}\n" for key in native_restore_keys),
             cache_restore,
         )
         self.assertLess(
@@ -1474,7 +1488,7 @@ class CiCadenceContractTests(unittest.TestCase):
             partial_save,
         )
         self.assertIn(
-            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
             partial_save,
         )
         complete_save_step = platform_tests.index("Save completed Cargo registry + target")

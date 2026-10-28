@@ -1,0 +1,31 @@
+{
+  "schema": "neoth.wave2619.native-source-cache.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "baseProducer": "622c5a1d0ea28558cb98498d85f4cdb96489295d",
+  "reason": "Native completed cache key omitted source SHA; immutable same-lock caches could not retain rebuilt source-only revisions.",
+  "change": "Bind native completed and partial keys to current source. Prefer same-source partial, latest completed same-lock, legacy completed, then prior partial/live-audio/legacy fallbacks.",
+  "source": "https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching",
+  "unchanged": [
+    "Cargo freshness checks",
+    "Actual compile and runtime commands",
+    "Windows serial execution",
+    "Threads and timeouts",
+    "Cached JUnit deletion",
+    "Partial versus completed namespaces",
+    "Completion save prerequisites",
+    "One Root heavy stream"
+  ],
+  "observed": {
+    "run": 40689238801,
+    "producer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+    "windowsCompileSeconds": 4305,
+    "linuxCompletedCache": "linux-1.91-cargo-complete-9c0868cbd8e28f82cfd16e1d268987c784b80269380e5bca53e89abd2cbc5505-8ee53deef9e39c732baa2990f3f8b14020153a04",
+    "nativeRuntimeStatus": "still active when change prepared"
+  },
+  "performanceClaim": "Avoids an immutable stale-key path; no measured speedup claimed. Increased source-key entries remain subject to GitHub cache quota/eviction.",
+  "review": "Prompt-only /root/linux_shutdown_review; root exact text comparison of compiler/test/timeout/receipt lines.",
+  "validation": "Existing native CI source contract extended for exact primary and ordered fallback keys; hosted Preflight pending.",
+  "localRuntimeExecuted": false,
+  "currentFullRunChanged": false,
+  "goldClosed": false
+}

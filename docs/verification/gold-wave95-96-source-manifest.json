@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-28T13:55:23.9845612Z",
-  "validationStatus": "STATIC_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-10-28T14:35:57.2857667Z",
+  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -143,8 +143,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 54961,
-      "sha256": "15E20058E022076C2B44130AE13B4BCD6F3582C7719A30BA94DF7C664FECE778"
+      "bytes": 55286,
+      "sha256": "43D98A40B602CCC4BF358933DAFC0CF2EB00AF00968F3A8CB91A73CE6124FA9A"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -4637,6 +4637,11 @@
       "sha256": "356037E7683CF5038CB61EC76D29D2693A066497D21F8C3046097976F4F1AF99"
     },
     {
+      "path": "docs/verification/gold-wave2619-native-source-cache.json",
+      "bytes": 1779,
+      "sha256": "570D8BB2BF888048636EC26D58C7763F877BB3C203BE5EA206D4511545531B18"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5618,8 +5623,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 78764,
-      "sha256": "1016F9B46E07FCC63979D857D4CC313C43BC2C243DE5158AFDFF0915BA73E566"
+      "bytes": 79614,
+      "sha256": "553D2D13028EC4E32C28587EAD570481077B4DACDB51ACC7509DB9D92099E367"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5838,8 +5843,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2685147,
-      "sha256": "CB58DFDAC88ACED5D7542DA5383A3AE15CE12727CECFC87C09A15E0A7B52266E"
+      "bytes": 2686487,
+      "sha256": "9EBB5378AC769F520CA5C8A85EDFE16EED94CBE658D213E022F3C86E0B4F04EC"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
