@@ -291,7 +291,9 @@ mod tests {
         let before = PromptAttribution::from_retained_items(&items, 15).unwrap();
         assert_eq!(before.counts(), [2, 1, 2, 2, 2, 2, 2]);
         assert_eq!(before.envelope_residual(), 2);
-        replace_user_message(&mut items, "xy plus tool response".into()).unwrap();
+        replace_user_message(&mut items, "xy").unwrap();
+        assert_eq!(items[5].prompt_origin, Some(PromptOrigin::User));
+        replace_user_message(&mut items, "xy plus tool response").unwrap();
         assert_eq!(items[5].prompt_origin, None);
         let after = PromptAttribution::from_retained_items(&items, 40).unwrap();
         assert_eq!(after.counts()[5], 0);

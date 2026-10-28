@@ -311,6 +311,7 @@ pub fn replace_user_message(
     if matches.next().is_some() {
         return Err("token-budget bundle contains multiple Block E items");
     }
+    let content = content.into();
     if item.content != content {
         // Rewrites may mix the original message with generated instructions.
         item.prompt_origin = None;

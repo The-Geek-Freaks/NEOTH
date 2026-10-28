@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2614.prompt-components.v1",
-  "status": "IMPLEMENTED_STATIC_REVIEW_HOSTED_PENDING",
+  "status": "HOSTED_TYPECHECK_FAILED_NARROW_REPAIR_PENDING_REVALIDATION",
   "baseProducer": "e628bf7a72959b490e1455d5b3895cbced15df68",
   "roadmap": "ADOPT-20261012-A02",
   "implementation": [
@@ -69,5 +69,12 @@
     ],
     "verification": "Exact GitHub ZIP digest, internal hashes, producer and scoped git apply check verified",
     "localFormatterExecuted": false
+  },
+  "focusedAttempt": {
+    "conclusion": "failure",
+    "run": 40680867048,
+    "executedSelectedTests": 0,
+    "producer": "0c6f83b7982c16367cde179a2ef56206aa3f1c11",
+    "repairReport": "docs/verification/gold-wave2615-cost33-repair.json"
   }
 }

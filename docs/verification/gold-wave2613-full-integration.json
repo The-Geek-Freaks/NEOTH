@@ -85,9 +85,39 @@
   "hashedEntries": 24,
   "retry": {
     "sameProducer": true,
-    "status": "RUNNING",
+    "status": "FAILED",
     "attempt": 2,
-    "scope": "failed jobs only"
+    "scope": "failed jobs only",
+    "evidence": {
+      "schema": "neoth.wave2613.attempt2-triage.v1",
+      "run": 40378455737,
+      "attempt": 2,
+      "producer": "e628bf7a72959b490e1455d5b3895cbced15df68",
+      "job": 122759823964,
+      "conclusion": "failure",
+      "failedStep": "Prepare Linux GUI callback runtime prerequisites",
+      "startUtc": "2026-10-28T11:03:41Z",
+      "failureUtc": "2026-10-28T11:30:57Z",
+      "exitCode": 143,
+      "lastCompile": "neothd-gui",
+      "cause": "UNPROVEN_RUNNER_SHUTDOWN",
+      "fullLinuxNextest": "NOT_RUN",
+      "passed": [
+        "format",
+        "slim Clippy",
+        "workspace Clippy",
+        "workspace doctests"
+      ],
+      "tailLog": "attempt2-linux-tail.log",
+      "tailSha256": "835F906BBD963EADCFFB001AB9C1BB59D8746BC995CAE27AD1D9403329D29178",
+      "followup": "No blind third retry; focused33 followed by bounded resource observations",
+      "references": [
+        "https://docs.github.com/en/actions/reference/runners/github-hosted-runners",
+        "https://github.com/actions/runner-images/discussions/8640"
+      ],
+      "referenceLimit": "Upstream discussion suggests possible resource exhaustion; does not establish cause for this run",
+      "localRuntimeExecuted": false
+    }
   },
   "fullAccepted": false,
   "nativeAccepted": false,

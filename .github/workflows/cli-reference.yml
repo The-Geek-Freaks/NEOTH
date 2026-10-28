@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       cost_replay_regressions:
-        description: 'Also run 18 exact immutable usage, price provenance, capability and provider recovery regressions'
+        description: 'Also run 33 exact prompt component, immutable usage, price provenance, capability and provider recovery regressions'
         type: boolean
         default: false
       macos_provider_regression:

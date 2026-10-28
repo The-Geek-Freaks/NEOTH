@@ -1,0 +1,36 @@
+{
+  "schema": "neoth.wave2616.linux-observation.v1",
+  "baseProducer": "0c6f83b7982c16367cde179a2ef56206aa3f1c11",
+  "trigger": {
+    "linuxNextest": "NOT_RUN",
+    "cause": "UNPROVEN_RUNNER_SHUTDOWN",
+    "run": 40378455737,
+    "exit": 143,
+    "attempts": [
+      1,
+      2
+    ]
+  },
+  "implementation": [
+    "60 bounded minute snapshots during existing hosted GUI prerequisite step",
+    "Memory and root-cgroup readings, disk availability and top6 process names/RSS; no argv/environment capture",
+    "Foreground Cargo unchanged; preserve original exit; only owned background sampler/sleep cleanup",
+    "Best-effort console and separately uploaded diagnostic log",
+    "Extend existing exact CI source contract"
+  ],
+  "review": {
+    "concreteBlocker": false,
+    "agent": "/root/linux_shutdown_review",
+    "mode": "Prompt-only"
+  },
+  "limits": [
+    "Hierarchy-root cgroup values are not effective per-process limit evidence",
+    "Abrupt runner loss may prevent artifact upload",
+    "Signal cleanup and new contract still require hosted execution"
+  ],
+  "testsRemoved": 0,
+  "timeoutsChanged": false,
+  "localRuntimeExecuted": false,
+  "hostedAccepted": false,
+  "goldAccepted": false
+}

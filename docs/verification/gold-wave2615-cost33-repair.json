@@ -1,0 +1,28 @@
+{
+  "schema": "neoth.wave2615.cost33-repair.v1",
+  "baseProducer": "0c6f83b7982c16367cde179a2ef56206aa3f1c11",
+  "failedRun": 40680867048,
+  "failedJob": 122790929362,
+  "failedStep": "Type-check core test targets before native validation",
+  "executedSelectedTests": 0,
+  "diagnostics": [
+    "E0277 budget.rs:314 String compared with impl Into<String>",
+    "E0283 prompt_attribution.rs:294 ambiguous .into()"
+  ],
+  "repair": [
+    "Convert once after Block E cardinality validation, before borrowed equality comparison",
+    "Pass literal directly to generic Into<String> test call",
+    "Extend existing regression: identical bytes retain User origin, changed bytes clear it"
+  ],
+  "focusedRequiredCount": 33,
+  "newTests": 0,
+  "review": {
+    "agent": "/root/cost33_compile_repair",
+    "accepted": true,
+    "mode": "Prompt-only exact compiler diagnostics and function review"
+  },
+  "staticDiffCheck": "passed",
+  "hostedRuntimeAccepted": false,
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}

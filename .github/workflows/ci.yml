@@ -314,6 +314,61 @@ jobs:
           CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
+          # Observe the hosted VM without changing Cargo's foreground execution
+          # or exit status. Console samples survive even when runner shutdown
+          # prevents the later artifact upload; absence is not an OOM diagnosis.
+          diagnostic_log="$RUNNER_TEMP/linux-gui-build-observability.log"
+          : > "$diagnostic_log" || true
+          printf 'producer=%s run=%s attempt=%s phase=linux-gui-prerequisites\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | tee -a "$diagnostic_log" || true
+          (
+            set +e
+            observer_sleep_pid=""
+            cleanup_observer_sleep() {
+              if [[ -n "$observer_sleep_pid" ]]; then
+                if jobs -pr | grep -Fxq -- "$observer_sleep_pid"; then
+                  kill "$observer_sleep_pid" 2>/dev/null || true
+                fi
+                wait "$observer_sleep_pid" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_observer_sleep EXIT
+            trap 'exit 0' TERM INT
+            # At most 60 bounded snapshots over this 60-minute preparation step.
+            for ((sample=0; sample<60; sample++)); do
+              {
+                printf 'resource_sample=%s utc=%s\n' "$sample" "$(date -u +%FT%TZ)"
+                awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/' /proc/meminfo
+                printf 'self_cgroup='; cat /proc/self/cgroup
+                # These are hierarchy-root observations, not a claim that they
+                # represent this process's effective nested cgroup memory limit.
+                for counter in memory.current memory.max memory.events; do
+                  if [[ -r "/sys/fs/cgroup/$counter" ]]; then
+                    printf 'cgroup_root_%s=' "$counter"
+                    cat "/sys/fs/cgroup/$counter"
+                  fi
+                done
+                df -Pk "$PWD" "$RUNNER_TEMP"
+                printf 'pid ppid cpu_percent rss_kib elapsed command_name\n'
+                ps -eo pid=,ppid=,%cpu=,rss=,etime=,comm= --sort=-rss | head -n 6
+              } 2>&1 | tee -a "$diagnostic_log" || true
+              sleep 60 &
+              observer_sleep_pid=$!
+              wait "$observer_sleep_pid" || true
+              observer_sleep_pid=""
+            done
+          ) &
+          resource_observer_pid=$!
+          cleanup_resource_observer() {
+            observer_exit_status=$?
+            trap - EXIT
+            if jobs -pr | grep -Fxq -- "$resource_observer_pid"; then
+              kill "$resource_observer_pid" 2>/dev/null || true
+            fi
+            wait "$resource_observer_pid" 2>/dev/null || true
+            exit "$observer_exit_status"
+          }
+          trap cleanup_resource_observer EXIT
           # Linux GUI callback fixtures require the actual CLI plus an isolated
           # separately-built production GUI helper; never route containment through
           # the libtest executable or a staged fake helper.
@@ -333,12 +388,15 @@ jobs:
           timeout 1 /usr/bin/systemctl --user show-environment >/dev/null
           command -v apparmor_parser >/dev/null
 
+          printf 'build_stage=cli utc=%s\n' "$(date -u +%FT%TZ)" | tee -a "$diagnostic_log" || true
           cargo build -p neoth --bin neoth --locked
           printf '%s\n' "$PWD/target/debug" >> "$GITHUB_PATH"
+          printf 'build_stage=gui utc=%s\n' "$(date -u +%FT%TZ)" | tee -a "$diagnostic_log" || true
           cargo build -p neothd-gui --bin neothd-gui --locked
           contained_gui_helper="$(realpath "$PWD/target/debug/neothd-gui")"
           test -f "$contained_gui_helper" && test -x "$contained_gui_helper"
           [[ "$contained_gui_helper" != *[$'\t\n '\"\#\{\}\*\?\[\]]* ]] || exit 1
+          printf 'build_stage=nextest-compile utc=%s\n' "$(date -u +%FT%TZ)" | tee -a "$diagnostic_log" || true
           cargo nextest run --workspace --locked --profile ci --no-run
           profile_file="$RUNNER_TEMP/neoth-w272-neothd-gui.profile"
           cat > "$profile_file" <<EOF
@@ -359,6 +417,16 @@ jobs:
 
       # Save compiled inputs before runtime tests, even when an earlier lint
       # failed. Cache contents never replace this run's compile or test steps.
+      - name: Upload Linux GUI build observability
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-gui-build-observability
+          path: ${{ runner.temp }}/linux-gui-build-observability.log
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Save completed Linux Cargo registry + target
         if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome == 'success' && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}
         timeout-minutes: 5

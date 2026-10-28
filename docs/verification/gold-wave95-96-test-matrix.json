@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "PROMPT_COMPONENTS_HOSTED_FORMAT_APPLIED_RUNTIME_PENDING",
+  "status": "W2615_COST33_COMPILE_REPAIR_W2616_DIAGNOSTICS_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 452043,
-    "sha256": "B6C7A99912ED02B96303BCBE237D7C3BA50B167747E02B9C258E64841F0D9EA3"
+    "bytes": 452422,
+    "sha256": "2DDCAA8C97157C82E63BDCDAC576FD39763DA48A5549BD73A095FD9CC8A4F944"
   },
-  "sourceInputs": 2468,
+  "sourceInputs": 2470,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2472,13 +2472,13 @@
     {
       "test": "tokens::budget::tests::prompt_tax_uses_only_explicit_retained_sources",
       "sourcePath": "SRC/neothd/src/tokens/budget.rs",
-      "sourceSha256": "CFD9331EEE3CB8C5ACDCF67F6517CCC3978371E2A77E4270831C52EC21FAEEE8",
+      "sourceSha256": "FE949E70608F87DF08B11D1CCBF70D274C3EACB6E6910B3F9A4BFA01897558DD",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::budget::tests::prompt_tax_excludes_tagged_items_dropped_by_budget_enforcement",
       "sourcePath": "SRC/neothd/src/tokens/budget.rs",
-      "sourceSha256": "CFD9331EEE3CB8C5ACDCF67F6517CCC3978371E2A77E4270831C52EC21FAEEE8",
+      "sourceSha256": "FE949E70608F87DF08B11D1CCBF70D274C3EACB6E6910B3F9A4BFA01897558DD",
       "junitClass": "neoth"
     },
     {
@@ -18325,37 +18325,37 @@
     {
       "test": "tokens::prompt_attribution::tests::explicit_origin_wins_over_block_and_legacy_source",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::prompt_attribution::tests::retained_unicode_unlabeled_and_residual",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::prompt_attribution::tests::rejects_stale_estimates_overflow_and_unknown_estimator",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::prompt_attribution::tests::serde_roundtrip_rejects_bad_total_and_unknown_fields",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::prompt_attribution::tests::seven_origins_survive_truncation_and_user_rewrites_lose_provenance",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
       "test": "tokens::prompt_attribution::tests::rollup_overflow_preserves_previous_totals",
       "sourcePath": "SRC/neothd/src/tokens/prompt_attribution.rs",
-      "sourceSha256": "27337B3A128A8201DF97B83E646CEAC3D1E9B9E5D3168F8BACCE226E74865C64",
+      "sourceSha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
       "junitClass": "neoth"
     },
     {
@@ -87219,6 +87219,74 @@
       }
     ],
     "note": "Verified Preflight40674227995 formatter artifact12808754682 applied; final fast checks and33case runtime pending. FullCI40378455737 attempt2 remains sole heavy stream on e628.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2615Cost33Repair": {
+    "base": "0c6f83b7982c16367cde179a2ef56206aa3f1c11",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 54961,
+        "sha256": "DFA833E52DB1A56A0E1CCF0D1626ACC317168BB9EF5D823F35CBAC7CF716347E",
+        "blob": "a90251946f6779931190629767b9d28da6a0a00c"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 50833,
+        "sha256": "82B898ABEFEE588E08314799637D19DE1FC33CB76CD7A665F0BAD22C59E96D01",
+        "blob": "f9cb5957f5562a54041dad182fdead0fa83d813a"
+      },
+      {
+        "path": "docs/verification/gold-wave2613-full-integration.json",
+        "bytes": 4041,
+        "sha256": "E8BDCF6F3048B6E54117720EB767B8B151967EECFB95F8A45D41ED9B1288C66C",
+        "blob": "bbb874872c2b4d10ce463d2db65707ffbe18ddad"
+      },
+      {
+        "path": "docs/verification/gold-wave2614-prompt-components.json",
+        "bytes": 4225,
+        "sha256": "2781803F9939237DF136E168AC8CB004F2655A8E82183943985E63F2F9289908",
+        "blob": "62b81704fc34d56c3b06d25194cbb4a91c9b6b37"
+      },
+      {
+        "path": "docs/verification/gold-wave2615-cost33-repair.json",
+        "bytes": 1015,
+        "sha256": "CD67CD3198002295312B8A8ACDF0B33FE973A0484FD7EAF85A58D062B946E3F0",
+        "blob": "befc967d2984a52ad64bfd55b1c4dd6779c33bd7"
+      },
+      {
+        "path": "docs/verification/gold-wave2616-linux-observation.json",
+        "bytes": 1203,
+        "sha256": "DDFFFF1BB517B42DA8C70783C43AB0F55DB515B986F07A5A24762EB41B72D1BF",
+        "blob": "84b88d800b7ff43dbc7ba7fe79f5627a9c5f0226"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 78435,
+        "sha256": "3A977137ED3EA7A9F6D043B3C9CB3C22FB367C0C0CD02036DBC88302952A55DA",
+        "blob": "b3f52e291ffafccb05cba81caf1ccff7d25f4f5c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2679665,
+        "sha256": "BE77D7A5A75CD5D6657F2CD5EC275FBD7E7B0330433217D9A84FDD59CB138129",
+        "blob": "2cbac6c200769f5adf5f58eeee16eee5da15034a"
+      },
+      {
+        "path": "SRC/neothd/src/tokens/budget.rs",
+        "bytes": 52445,
+        "sha256": "FE949E70608F87DF08B11D1CCBF70D274C3EACB6E6910B3F9A4BFA01897558DD",
+        "blob": "3894007e0b488ee77c1ef7c3fd19910cf91a0fe6"
+      },
+      {
+        "path": "SRC/neothd/src/tokens/prompt_attribution.rs",
+        "bytes": 11237,
+        "sha256": "9FD1D990286F99BA4E7F4D1B342FBDF6FD7184DEBFD8AC01C77C64F52E327E02",
+        "blob": "b35276f12cda5f5c369786340ae7e77914e89ac4"
+      }
+    ],
+    "note": "Exact E0277/E0283 repair and unchanged-byte provenance assertion; 33 selected tests unchanged. Reviewed bounded Linux runner observations; no local runtime or Gold acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
