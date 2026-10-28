@@ -167,8 +167,13 @@ fn operation_budget_reservation_plan(
     };
     anyhow::ensure!(
         price_bound.output_ceiling == output_token_ceiling
-            && price_bound.input_upper_bound == crate::providers::cost::authorization_input_token_upper_bound(req, model)
-            && price_bound.has_nonempty_system == req.system.as_deref().is_some_and(|system| !system.is_empty()),
+            && price_bound.input_upper_bound
+                == crate::providers::cost::authorization_input_token_upper_bound(req, model)
+            && price_bound.has_nonempty_system
+                == req
+                    .system
+                    .as_deref()
+                    .is_some_and(|system| !system.is_empty()),
         "operation price envelope mismatch"
     );
     let bound_usd = price_bound.bound_usd(provider, model)?;
@@ -3151,7 +3156,8 @@ impl ProviderCallAuthorizer {
         };
         // This pre-gate observation proves a planned bound, never acquisition
         // or actual spend. All applicable budget plans use this same instance.
-        payload_value["authorization_price_bound"] = serde_json::to_value(&authorization_price_bound)?;
+        payload_value["authorization_price_bound"] =
+            serde_json::to_value(&authorization_price_bound)?;
         let payload = serde_json::to_vec(&payload_value).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
                 "cost-estimate WAL payload serialization failed for `{call_scope}`: {error}"
@@ -3810,8 +3816,7 @@ mod tests {
         .await;
         let home = tempfile::tempdir().unwrap();
         let segment = home.path().join("cluster-budget-ok.wal");
-        let (writer, join) =
-            crate::wal::writer::spawn(segment.clone()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = Arc::new(CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -3829,9 +3834,17 @@ mod tests {
             model: Some("gpt-4o".into()),
             ..Request::default()
         };
-        let leaf = provider.authorizer
-            .authorize_leaf("openai_api", &request, provider.call_scope, false, Some(4096))
-            .await.unwrap();
+        let leaf = provider
+            .authorizer
+            .authorize_leaf(
+                "openai_api",
+                &request,
+                provider.call_scope,
+                false,
+                Some(4096),
+            )
+            .await
+            .unwrap();
         let plan = &leaf.ticket.cluster_budget_plan.as_ref().unwrap().reserve;
         let planned = (
             plan.invocation_id.clone(),
@@ -3850,13 +3863,18 @@ mod tests {
         join.await.unwrap();
         let payloads = cost_payloads(&segment);
         assert_eq!(payloads.len(), 2);
-        let estimate = payloads.iter()
-            .find(|payload| payload["invocation_id"] == planned.0).unwrap();
+        let estimate = payloads
+            .iter()
+            .find(|payload| payload["invocation_id"] == planned.0)
+            .unwrap();
         assert_eq!(estimate["request_binding_sha256"], planned.1);
         let bound: super::super::pricing_basis::AuthorizationPriceBound =
             serde_json::from_value(estimate["authorization_price_bound"].clone()).unwrap();
-        assert_eq!(planned.2,
-            cluster_budget_usd_to_nanos_ceil(bound.bound_usd("openai_api", "gpt-4o").unwrap()).unwrap());
+        assert_eq!(
+            planned.2,
+            cluster_budget_usd_to_nanos_ceil(bound.bound_usd("openai_api", "gpt-4o").unwrap())
+                .unwrap()
+        );
         fixture.shutdown().await;
     }
 
@@ -3987,17 +4005,54 @@ mod tests {
         let budget = new_operation_budget(8_000, 1.0).unwrap();
         for (provider, model, other_request, ceiling) in [
             ("openai_api", "gpt-5", req.clone(), 128),
-            ("openai_api", "gpt-5", Request { prompt: "different".into(), ..req.clone() }, 64),
+            (
+                "openai_api",
+                "gpt-5",
+                Request {
+                    prompt: "different".into(),
+                    ..req.clone()
+                },
+                64,
+            ),
             ("anthropic_api", "claude-sonnet-4-6", req.clone(), 64),
         ] {
-            let other = crate::providers::cost::authorization_price_bound(provider, model, &other_request, ceiling).unwrap();
-            assert!(operation_budget_reservation_plan(&budget, "openai_api", "gpt-5", &req,
-                "test.operation_price_binding", Some(64), Some(&other)).is_err());
+            let other = crate::providers::cost::authorization_price_bound(
+                provider,
+                model,
+                &other_request,
+                ceiling,
+            )
+            .unwrap();
+            assert!(
+                operation_budget_reservation_plan(
+                    &budget,
+                    "openai_api",
+                    "gpt-5",
+                    &req,
+                    "test.operation_price_binding",
+                    Some(64),
+                    Some(&other)
+                )
+                .is_err()
+            );
         }
-        let correct = crate::providers::cost::authorization_price_bound("openai_api", "gpt-5", &req, 64).unwrap();
-        let plan = operation_budget_reservation_plan(&budget, "openai_api", "gpt-5", &req,
-            "test.operation_price_binding", Some(64), Some(&correct)).unwrap();
-        assert_eq!(plan.microusd, usd_bound_to_microusd(correct.bound_usd("openai_api", "gpt-5").unwrap()).unwrap());
+        let correct =
+            crate::providers::cost::authorization_price_bound("openai_api", "gpt-5", &req, 64)
+                .unwrap();
+        let plan = operation_budget_reservation_plan(
+            &budget,
+            "openai_api",
+            "gpt-5",
+            &req,
+            "test.operation_price_binding",
+            Some(64),
+            Some(&correct),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.microusd,
+            usd_bound_to_microusd(correct.bound_usd("openai_api", "gpt-5").unwrap()).unwrap()
+        );
     }
 
     #[test]
@@ -4022,7 +4077,13 @@ mod tests {
             &implicit_request,
             "test.operation_budget.transport_bound",
             Some(64),
-            crate::providers::cost::authorization_price_bound("local_ollama", "qwen-local", &implicit_request, 64).as_ref(),
+            crate::providers::cost::authorization_price_bound(
+                "local_ollama",
+                "qwen-local",
+                &implicit_request,
+                64,
+            )
+            .as_ref(),
         )
         .unwrap();
         let mut normalized_request = implicit_request;
@@ -4063,7 +4124,13 @@ mod tests {
             &Request::default(),
             "test.operation_budget",
             Some(64),
-            crate::providers::cost::authorization_price_bound("local_ollama", "qwen-local", &Request::default(), 64).as_ref(),
+            crate::providers::cost::authorization_price_bound(
+                "local_ollama",
+                "qwen-local",
+                &Request::default(),
+                64,
+            )
+            .as_ref(),
         )
         .unwrap();
         assert_eq!(known_local_zero.microusd, 0);
@@ -6987,7 +7054,10 @@ mod tests {
         assert_eq!(frames.len(), 2);
         let estimate = &frames[0].1;
         assert_eq!(estimate["cost_bound_kind"], "token_bounded_unknown_pricing");
-        assert_eq!(estimate.get("authorization_price_bound"), Some(&serde_json::Value::Null));
+        assert_eq!(
+            estimate.get("authorization_price_bound"),
+            Some(&serde_json::Value::Null)
+        );
         assert_eq!(estimate["output_token_ceiling"], 4096);
         assert!(estimate["total_eur_upper_bound"].is_null());
         assert!(estimate.get("total_eur").is_none());
@@ -7590,12 +7660,25 @@ mod tests {
         drop(writer);
         assert!(join.await.unwrap_err().is_cancelled());
         let frames = wal_frames_without_provider_gate_trust(&segment);
-        assert_eq!(frames.len(), 1, "only the planned estimate precedes grant failure");
-        assert_eq!(frames[0].0, crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN);
+        assert_eq!(
+            frames.len(),
+            1,
+            "only the planned estimate precedes grant failure"
+        );
+        assert_eq!(
+            frames[0].0,
+            crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
+        );
         let bound: super::super::pricing_basis::AuthorizationPriceBound =
             serde_json::from_value(frames[0].1["authorization_price_bound"].clone()).unwrap();
         assert!(bound.bound_usd("openai_api", "gpt-5").unwrap() > 0.0);
-        assert_eq!(frames[0].1["request_binding_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            frames[0].1["request_binding_sha256"]
+                .as_str()
+                .unwrap()
+                .len(),
+            64
+        );
     }
 
     #[tokio::test]
@@ -8329,7 +8412,10 @@ mod tests {
         assert_eq!(payload["provider"], provider);
         assert_eq!(payload["model"], model);
         assert_eq!(payload["cost_bound_kind"], "unbounded_provider_invocation");
-        assert_eq!(payload.get("authorization_price_bound"), Some(&serde_json::Value::Null));
+        assert_eq!(
+            payload.get("authorization_price_bound"),
+            Some(&serde_json::Value::Null)
+        );
         assert_eq!(
             payload["input_bound_kind"],
             "utf8_bytes_plus_request_message_overhead"
@@ -8682,12 +8768,19 @@ mod tests {
             let bound: super::super::pricing_basis::AuthorizationPriceBound =
                 serde_json::from_value(pair[0].1["authorization_price_bound"].clone()).unwrap();
             let usd = bound.bound_usd("openai_api", "gpt-5").unwrap();
-            assert_eq!(serde_json::json!(bound.output_ceiling), pair[0].1["output_token_ceiling"]);
-            assert_eq!(serde_json::json!(bound.input_upper_bound), pair[0].1["input_token_upper_bound"]);
+            assert_eq!(
+                serde_json::json!(bound.output_ceiling),
+                pair[0].1["output_token_ceiling"]
+            );
+            assert_eq!(
+                serde_json::json!(bound.input_upper_bound),
+                pair[0].1["input_token_upper_bound"]
+            );
             assert_eq!(
                 usd.to_bits(),
                 crate::providers::cost::authorization_bound_usd("openai_api", "gpt-5", &req, 4096)
-                    .unwrap().to_bits()
+                    .unwrap()
+                    .to_bits()
             );
             assert_eq!(microusd, usd_bound_to_microusd(usd).unwrap());
             assert_eq!(
@@ -8697,11 +8790,14 @@ mod tests {
             // Exercise the returned daily plan only after proving that the
             // original authorization did not reserve it. No provider runs.
             let reservation = daily_plan.reserve(crate::time::now_unix_i64()).unwrap();
-            let ledger: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(dir.path().join("budget/daily.json")).unwrap())
-                    .unwrap();
-            assert_eq!(ledger["pending"][&id]["reserved_usd_nanos"],
-                serde_json::json!((usd * 1_000_000_000.0).ceil() as u64));
+            let ledger: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(dir.path().join("budget/daily.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                ledger["pending"][&id]["reserved_usd_nanos"],
+                serde_json::json!((usd * 1_000_000_000.0).ceil() as u64)
+            );
             assert_eq!(ledger["pending"][&id]["provider"], "openai_api");
             assert_eq!(ledger["pending"][&id]["model"], "gpt-5");
             reservation.release_before_dispatch().unwrap();
@@ -8825,8 +8921,14 @@ mod tests {
             let bound: super::super::pricing_basis::AuthorizationPriceBound =
                 serde_json::from_value(payload["authorization_price_bound"].clone()).unwrap();
             bound.bound_usd("openai_api", "gpt-5").unwrap();
-            assert_eq!(serde_json::json!(bound.output_ceiling), payload["output_token_ceiling"]);
-            assert_eq!(serde_json::json!(bound.input_upper_bound), payload["input_token_upper_bound"]);
+            assert_eq!(
+                serde_json::json!(bound.output_ceiling),
+                payload["output_token_ceiling"]
+            );
+            assert_eq!(
+                serde_json::json!(bound.input_upper_bound),
+                payload["input_token_upper_bound"]
+            );
         }
         assert_eq!(
             payloads[0]["cost_bound_kind"],
@@ -8969,7 +9071,8 @@ mod tests {
                 test_input_token_cap(),
             )
             .with_operation_budget(budget.clone())
-            .with_council_daily_cap(dir.path(), Some(1.0)).unwrap(),
+            .with_council_daily_cap(dir.path(), Some(1.0))
+            .unwrap(),
             None,
             "test.local",
         );
@@ -8979,9 +9082,13 @@ mod tests {
         drop(local);
         drop(writer);
         join.await.unwrap();
-        assert!(cost_payloads(&segment).is_empty(), "local leaves retain the no-paid-estimate path");
+        assert!(
+            cost_payloads(&segment).is_empty(),
+            "local leaves retain the no-paid-estimate path"
+        );
         let ledger: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(dir.path().join("budget/daily.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(dir.path().join("budget/daily.json")).unwrap())
+                .unwrap();
         assert_eq!(ledger["settled_usd_nanos"], 0);
         assert!(ledger["pending"].as_object().unwrap().is_empty());
 

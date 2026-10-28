@@ -434,10 +434,14 @@ pub(crate) fn authorization_price_bound(
 ) -> Option<super::pricing_basis::AuthorizationPriceBound> {
     let price = lookup_price(provider, model)?;
     Some(super::pricing_basis::AuthorizationPriceBound::from_price(
-        provider, model, price,
+        provider,
+        model,
+        price,
         authorization_input_token_upper_bound(req, model),
         output_token_ceiling,
-        req.system.as_deref().is_some_and(|system| !system.is_empty()),
+        req.system
+            .as_deref()
+            .is_some_and(|system| !system.is_empty()),
     ))
 }
 
@@ -1645,16 +1649,32 @@ mod authorization_price_observation_tests {
         let mut inputs = Vec::new();
         for system in [None, Some(String::new()), Some("policy".to_owned())] {
             let nonempty = system.as_deref().is_some_and(|value| !value.is_empty());
-            let req = Request { prompt: "unicode: ä".to_owned(), system, ..Request::default() };
+            let req = Request {
+                prompt: "unicode: ä".to_owned(),
+                system,
+                ..Request::default()
+            };
             let bound = authorization_price_bound(provider, model, &req, 32).unwrap();
             assert_eq!(bound.has_nonempty_system, nonempty);
             assert_eq!(bound.output_ceiling, 32);
-            assert_eq!(bound.input_upper_bound, authorization_input_token_upper_bound(&req, model));
+            assert_eq!(
+                bound.input_upper_bound,
+                authorization_input_token_upper_bound(&req, model)
+            );
             let input = f64::from(bound.input_upper_bound) / 1_000_000.0
-                * f64::from(price.input_eur_per_mtok) * if nonempty { 1.25 } else { 1.0 };
+                * f64::from(price.input_eur_per_mtok)
+                * if nonempty { 1.25 } else { 1.0 };
             let output = 32_f64 / 1_000_000.0 * f64::from(price.output_eur_per_mtok);
-            assert_eq!(bound.bound_usd(provider, model).unwrap().to_bits(), ((input + output) / 0.92).to_bits());
-            assert_eq!(bound.bound_usd(provider, model).unwrap().to_bits(), authorization_bound_usd(provider, model, &req, 32).unwrap().to_bits());
+            assert_eq!(
+                bound.bound_usd(provider, model).unwrap().to_bits(),
+                ((input + output) / 0.92).to_bits()
+            );
+            assert_eq!(
+                bound.bound_usd(provider, model).unwrap().to_bits(),
+                authorization_bound_usd(provider, model, &req, 32)
+                    .unwrap()
+                    .to_bits()
+            );
             inputs.push(bound.input_upper_bound);
         }
         // An explicitly empty system still reserves its message envelope.
@@ -1668,6 +1688,11 @@ mod authorization_price_observation_tests {
         assert!(authorization_price_bound("unknown_cloud", "future-model", &request, 32).is_none());
         let zero = authorization_price_bound("local_ollama", "local-model", &request, 0).unwrap();
         assert_eq!(zero.output_ceiling, 1);
-        assert_eq!(zero.bound_usd("local_ollama", "local-model").unwrap().to_bits(), 0_f64.to_bits());
+        assert_eq!(
+            zero.bound_usd("local_ollama", "local-model")
+                .unwrap()
+                .to_bits(),
+            0_f64.to_bits()
+        );
     }
 }
