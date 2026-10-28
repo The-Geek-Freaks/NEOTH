@@ -1,0 +1,97 @@
+{
+  "schema": "neoth.wave2613.full-integration.v1",
+  "producer": "e628bf7a72959b490e1455d5b3895cbced15df68",
+  "run": 40378455737,
+  "attempt": 1,
+  "conclusion": "failure",
+  "successfulJobs": 18,
+  "platformJobs": [
+    {
+      "artifact": 12685168841,
+      "skipped": 34,
+      "passed": 19432,
+      "job": 121767866973,
+      "platform": "windows-2022"
+    },
+    {
+      "artifact": 12689977901,
+      "skipped": 35,
+      "passed": 19554,
+      "job": 121767867375,
+      "platform": "macos-14"
+    }
+  ],
+  "linux": {
+    "exit": 143,
+    "failedStep": "Prepare Linux GUI callback runtime prerequisites",
+    "job": 121767867314,
+    "nextest": "NOT_RUN",
+    "passed": [
+      "format",
+      "slim Clippy",
+      "workspace Clippy",
+      "workspace doctests"
+    ],
+    "diagnosis": "Runner shutdown; cause unproven; configured timeouts not reached"
+  },
+  "artifactCustody": [
+    {
+      "id": 12689977901,
+      "name": "nextest-junit-macos",
+      "sha256": "724B2CF544BA377A5C54EFF1E9FF338DBCBEFE571994BB2FC1D7265244048CFF"
+    },
+    {
+      "id": 12688311874,
+      "name": "macos-nextest-compile-observability",
+      "sha256": "3A671F101E9AAD77ECE0DDA4A13A86AF4D8A57CE38596B8E2A15C1B1BE70DEDC"
+    },
+    {
+      "id": 12685168841,
+      "name": "nextest-junit-windows",
+      "sha256": "552AE452F57AA4783671F71FAEB583FE28A27EE546335010E60533E6C86B334E"
+    },
+    {
+      "id": 12681758666,
+      "name": "w186-live-audio-macos-e628bf7a72959b490e1455d5b3895cbced15df68",
+      "sha256": "2089EBB4A3F2449D03AA9517C75A08A9481F9400619FB02A582387B2502CD2FB"
+    },
+    {
+      "id": 12678321202,
+      "name": "w186-live-audio-linux-e628bf7a72959b490e1455d5b3895cbced15df68",
+      "sha256": "C64A4FC908DA983D41D5920607758D350D89E154A6A690DDD0B50DF3DE239AAB"
+    },
+    {
+      "id": 12677704238,
+      "name": "w186-live-audio-windows-e628bf7a72959b490e1455d5b3895cbced15df68",
+      "sha256": "3BACD5DAA2427687FE22B4DA0F491F5F296E9E15E4BC2C526A38DEC3C4696F82"
+    },
+    {
+      "id": 12676902700,
+      "name": "generated-cli-reference",
+      "sha256": "8731FAC8B804D7021B3B544C86DF65235F39D4C457E29F33B92F91A47631EBA8"
+    },
+    {
+      "id": 12676727908,
+      "name": "gold-smoke-report",
+      "sha256": "FDA94F2877545C677214DF4B43D591D6622A8687D7926ECBC21F02DC07B3F2C9"
+    },
+    {
+      "id": 12676706917,
+      "name": "example-wasm-plugins",
+      "sha256": "32D1AA999897E842193D13546AB06C7E4AE601D4855CDE6D880F5B01D7919CDF"
+    }
+  ],
+  "archiveCount": 9,
+  "hashedEntries": 24,
+  "retry": {
+    "sameProducer": true,
+    "status": "RUNNING",
+    "attempt": 2,
+    "scope": "failed jobs only"
+  },
+  "fullAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false,
+  "localRuntimeExecuted": false,
+  "evidence": "work/gold-20260906/wave2613-full-integration"
+}

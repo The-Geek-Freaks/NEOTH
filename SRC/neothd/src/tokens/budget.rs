@@ -83,6 +83,10 @@ pub struct PromptTax {
     pub repo_context_tokens: u32,
     pub council_tokens: u32,
     pub unattributed_tokens: u32,
+    /// Versioned estimate of the entire rendered request, independent of the
+    /// five historical injected-material counters above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<super::prompt_attribution::PromptAttribution>,
 }
 
 impl PromptTax {
@@ -162,6 +166,8 @@ pub enum PromptRetention {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockItem {
     pub block: Block,
+    /// Explicit producer origin. Trust/degradation class is not provenance.
+    pub prompt_origin: Option<super::prompt_attribution::PromptOrigin>,
     /// Explicit content-free origin used only for the prompt-tax metric.
     /// `None` means this block is outside that metric; consumers must not
     /// infer a source from [`Self::block`] or inspect content.
@@ -194,6 +200,7 @@ impl BlockItem {
         let content = content.into();
         Self {
             block,
+            prompt_origin: None,
             prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
@@ -228,6 +235,12 @@ impl BlockItem {
     #[must_use]
     pub fn with_prompt_tax_source(mut self, source: PromptTaxSource) -> Self {
         self.prompt_tax_source = Some(source);
+        self
+    }
+
+    #[must_use]
+    pub fn with_prompt_origin(mut self, origin: super::prompt_attribution::PromptOrigin) -> Self {
+        self.prompt_origin = Some(origin);
         self
     }
 }
@@ -297,6 +310,10 @@ pub fn replace_user_message(
         .ok_or("token-budget bundle is missing Block E")?;
     if matches.next().is_some() {
         return Err("token-budget bundle contains multiple Block E items");
+    }
+    if item.content != content {
+        // Rewrites may mix the original message with generated instructions.
+        item.prompt_origin = None;
     }
     item.replace_content(content);
     Ok(())
@@ -693,6 +710,7 @@ mod tests {
     fn item(block: Block, importance: f32, ts_ns: i64, tokens: u32) -> BlockItem {
         BlockItem {
             block,
+            prompt_origin: None,
             prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,

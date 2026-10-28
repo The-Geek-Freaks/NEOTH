@@ -631,7 +631,10 @@ fn add_audit_context(
     if let Some(prompt_token_estimate) = context.prompt_token_estimate {
         payload.insert("prompt_token_estimate".into(), prompt_token_estimate.into());
     }
-    if let Some(prompt_tax) = context.prompt_tax {
+    if let Some(mut prompt_tax) = context.prompt_tax {
+        // Request intents keep the historical v2 shape. The ticket retains
+        // components; a versioned terminal inserts its complete projection.
+        prompt_tax.components = None;
         payload.insert("prompt_tax".into(), serde_json::json!(prompt_tax));
     }
     if context.cluster_delegated {
@@ -914,9 +917,13 @@ impl ProviderCallAuditTicket {
         // Freeze the same usage event projected below. The base payload samples
         // its own clock, so bind the outer terminal to this event's timestamp.
         payload.insert("ts_unix".into(), usage_event.ts_unix.into());
+        let with_components = usage_event.prompt_tax.is_some_and(|tax| tax.components.is_some());
+        if with_components {
+            payload.insert("prompt_tax".into(), serde_json::to_value(usage_event.prompt_tax)?);
+        }
         payload.insert(
             "usage_projection_schema".into(),
-            "neoth.provider-usage.v4".into(),
+            if with_components { "neoth.provider-usage.v5" } else { "neoth.provider-usage.v4" }.into(),
         );
         payload.insert(
             "pricing_basis".into(),
@@ -924,7 +931,11 @@ impl ProviderCallAuditTicket {
         );
         payload.insert(
             "usage_snapshot".into(),
-            crate::daemon::usage_log::terminal_usage_snapshot_v2(&usage_event)?,
+            if with_components {
+                crate::daemon::usage_log::terminal_usage_snapshot_v3(&usage_event)?
+            } else {
+                crate::daemon::usage_log::terminal_usage_snapshot_v2(&usage_event)?
+            },
         );
         let payload = serde_json::to_vec(&payload).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -2872,6 +2883,14 @@ impl ProviderCallAuthorizer {
         if !prompt_tax_matches_leaf {
             audit_context.prompt_tax = None;
         }
+        if let Some(tax) = &mut audit_context.prompt_tax {
+            // The existing byte binding covers content. Components additionally
+            // bind the envelope estimate, which can change with model/stop fields.
+            if tax.components.is_some_and(|components| components.request_upper_bound()
+                != crate::providers::token_cap::request_token_upper_bound(req)) {
+                tax.components = None;
+            }
+        }
         // The binding proves only this in-process transfer. Ticket contexts are
         // serialized through lifecycle/usage payloads and must retain metrics,
         // never this internal comparison value.
@@ -4332,6 +4351,30 @@ mod tests {
             .ticket
             .context
             .prompt_tax
+    }
+
+    #[tokio::test]
+    async fn prompt_components_bind_model_and_stop_envelope_before_ticket() {
+        use crate::tokens::budget::{Block, BlockItem, PromptTax};
+        use crate::tokens::prompt_attribution::{PromptAttribution, PromptOrigin};
+        let request = Request { prompt: "user".into(), model: Some("fixture".into()), ..Default::default() };
+        let item = BlockItem::new(Block::E, "user").with_prompt_origin(PromptOrigin::User);
+        let tax = PromptTax {
+            components: Some(PromptAttribution::from_retained_items(&[item], crate::providers::token_cap::request_token_upper_bound(&request)).unwrap()),
+            ..Default::default()
+        };
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_prompt_tax(tax, &request.prompt, None);
+        let exact = authorizer.authorize_leaf("local_ollama", &request, "test.components", false, Some(64)).await.unwrap();
+        assert_eq!(exact.ticket.context.prompt_tax, Some(tax));
+        assert!(exact.ticket.context.prompt_tax_request_binding_sha256.is_none());
+        for changed in [
+            Request { model: Some("longer-model-name".into()), ..request.clone() },
+            Request { stop_sequences: vec!["stop".into()], ..request.clone() },
+        ] {
+            let changed = authorizer.authorize_leaf("local_ollama", &changed, "test.components", false, Some(64)).await.unwrap();
+            assert!(changed.ticket.context.prompt_tax.unwrap().components.is_none());
+        }
     }
 
     #[tokio::test]
@@ -7902,6 +7945,15 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_wal_repairs_missing_usage_projection_idempotently() {
+        terminal_usage_repair_fixture(false).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_v5_wal_repairs_components_idempotently_without_provider_replay() {
+        terminal_usage_repair_fixture(true).await;
+    }
+
+    async fn terminal_usage_repair_fixture(with_components: bool) {
         let home = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -7913,19 +7965,29 @@ mod tests {
         let provider = SensitiveSuccessProvider {
             calls: AtomicUsize::new(0),
         };
-        let authorized = CostAuthorizingProvider::new(
-            &provider,
-            ProviderCallAuthorizer::fail_closed(
+        let request = Request { model: Some("ouro-test".into()), ..Default::default() };
+        let mut authorizer = ProviderCallAuthorizer::fail_closed(
                 AutonomyLevel::Full,
                 Some(writer.clone()),
                 test_input_token_cap(),
             )
-            .with_usage_home(home.path()),
+            .with_usage_home(home.path());
+        if with_components {
+            let components = crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
+                &[], crate::providers::token_cap::request_token_upper_bound(&request),
+            ).unwrap();
+            authorizer = authorizer.with_prompt_tax(crate::tokens::budget::PromptTax {
+                components: Some(components), ..Default::default()
+            }, &request.prompt, request.system.as_deref());
+        }
+        let authorized = CostAuthorizingProvider::new(
+            &provider,
+            authorizer,
             None,
             "usage.repair",
         );
 
-        authorized.complete(Request::default()).await.unwrap();
+        authorized.complete(request).await.unwrap();
         drop(authorized);
         drop(writer);
         join.await.unwrap();
@@ -7937,9 +7999,10 @@ mod tests {
             "neoth.provider-usage.v2"
         );
         assert!(frames[0].1.get("usage_snapshot").is_none());
+        assert!(frames[0].1["prompt_tax"].get("components").is_none());
         assert_eq!(
             frames[1].1["usage_projection_schema"],
-            "neoth.provider-usage.v4"
+            if with_components { "neoth.provider-usage.v5" } else { "neoth.provider-usage.v4" }
         );
 
         std::fs::remove_file(&usage_blocker).unwrap();
@@ -7958,7 +8021,11 @@ mod tests {
         assert_eq!(events[0].provider, "local_ouro");
         assert_eq!(
             frames[1].1["usage_snapshot"],
-            crate::daemon::usage_log::terminal_usage_snapshot_v2(&events[0]).unwrap()
+            if with_components {
+                crate::daemon::usage_log::terminal_usage_snapshot_v3(&events[0]).unwrap()
+            } else {
+                crate::daemon::usage_log::terminal_usage_snapshot_v2(&events[0]).unwrap()
+            }
         );
         assert_eq!(frames[1].1["ts_unix"], events[0].ts_unix);
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);

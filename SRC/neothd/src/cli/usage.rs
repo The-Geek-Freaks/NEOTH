@@ -194,6 +194,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         );
     }
     print!("{}", render_prompt_tax_section(roll.prompt_tax.as_ref()));
+    print!("{}", render_prompt_components_section(roll));
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
@@ -246,6 +247,21 @@ pub(crate) fn render_prompt_tax_section(totals: Option<&PromptTaxTotals>) -> Str
             totals.unattributed_tokens,
         ),
     }
+}
+
+pub(crate) fn render_prompt_components_section(roll: &UsageRollup) -> String {
+    if roll.prompt_components_overflowed {
+        return "  prompt components: unavailable (rollup overflow)\n".to_owned();
+    }
+    let Some(totals) = &roll.prompt_components else {
+        return "  prompt components: unavailable (no bound component estimates)\n".to_owned();
+    };
+    format!(
+        "  prompt components estimate [utf8_byte_upper_bound_v1]: {}/{} calls\n    system={} workflow={} skill={} retrieval={} tool_result={} user={} unattributed={}\n    envelope/separator residual={} request upper bound={} (local estimates; not provider usage or allocated cost)\n",
+        totals.observed_call_count, roll.total_call_count, totals.system, totals.workflow,
+        totals.skill, totals.retrieval, totals.tool_result, totals.user, totals.unattributed,
+        totals.envelope_residual, totals.request_upper_bound,
+    )
 }
 
 /// Render the bounded ADOPT31-D2 breakdown from the same serialized rollup

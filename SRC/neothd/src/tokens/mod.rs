@@ -60,3 +60,4 @@
 //!   upper bound rather than a tokenizer-precision claim.
 
 pub mod budget;
+pub mod prompt_attribution;

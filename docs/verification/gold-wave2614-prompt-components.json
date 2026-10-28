@@ -1,0 +1,55 @@
+{
+  "schema": "neoth.wave2614.prompt-components.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEW_HOSTED_PENDING",
+  "baseProducer": "e628bf7a72959b490e1455d5b3895cbced15df68",
+  "roadmap": "ADOPT-20261012-A02",
+  "implementation": [
+    "Explicit producer origins independent of authority and legacy tax",
+    "Post-budget seven-category UTF8 upper bounds with separately accounted envelope residual",
+    "Existing request-bound ticket and pricing owner; changed content/envelope strips attribution",
+    "WALv5/snapshotv3 canonical replay; old Intentv2 and terminal v2/v3/v4 shapes preserved",
+    "JSONL and CLI coverage-aware component totals separate from provider actuals and money"
+  ],
+  "tests": [
+    "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
+    "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
+    "daemon::usage_log::tests::legacy_terminal_and_snapshot_reject_component_key_even_null",
+    "daemon::usage_log::tests::mixed_component_usage_rollup_keeps_missing_and_zero_distinct",
+    "daemon::usage_log::tests::terminal_v5_component_replay_preserves_estimates_without_price_lookup",
+    "daemon::usage_log::tests::terminal_v5_rejects_mixed_versions_component_drift_and_missing_fields",
+    "pipeline::enriched_request::tests::enriched_producers_label_components_independently_of_authority",
+    "providers::cost_authorization::tests::prompt_components_bind_model_and_stop_envelope_before_ticket",
+    "providers::cost_authorization::tests::terminal_v5_wal_repairs_components_idempotently_without_provider_replay",
+    "tokens::prompt_attribution::tests::explicit_origin_wins_over_block_and_legacy_source",
+    "tokens::prompt_attribution::tests::rejects_stale_estimates_overflow_and_unknown_estimator",
+    "tokens::prompt_attribution::tests::retained_unicode_unlabeled_and_residual",
+    "tokens::prompt_attribution::tests::rollup_overflow_preserves_previous_totals",
+    "tokens::prompt_attribution::tests::serde_roundtrip_rejects_bad_total_and_unknown_fields",
+    "tokens::prompt_attribution::tests::seven_origins_survive_truncation_and_user_rewrites_lose_provenance"
+  ],
+  "newPortableCases": 13,
+  "focusedRequiredCount": 33,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "fullCiPending": {
+    "coversThisBatch": false,
+    "producer": "e628bf7a72959b490e1455d5b3895cbced15df68",
+    "run": 40378455737,
+    "attempt": 2
+  },
+  "review": {
+    "findings": [
+      "Preserve Intentv2 shape: component field removed from base payload and inserted only in v5 terminal",
+      "Saturated upperbound: leave components unavailable without changing admission"
+    ],
+    "mode": "Prompt-only implementation excerpts",
+    "agent": "/root/prompt_components_review"
+  },
+  "open": [
+    "Tool-loop rewrites without retained typed provenance remain unavailable; no tool-result categorization inferred",
+    "Reservation-price history",
+    "Model tokenizer measurements and dedicated GUI/mobile presentation",
+    "Hosted format/compile/runtime and final current-producer integration",
+    "A02 and Gold remain open"
+  ]
+}

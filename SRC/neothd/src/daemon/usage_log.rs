@@ -359,6 +359,12 @@ pub struct UsageRollup {
     /// measurement. This preserves the legacy unavailable state.
     #[serde(default)]
     pub prompt_tax: Option<PromptTaxTotals>,
+    /// Independent seven-category estimates; coverage is the observed count
+    /// compared with total_call_count, never a replacement for reported usage.
+    #[serde(default)]
+    pub prompt_components: Option<crate::tokens::prompt_attribution::PromptComponentTotals>,
+    #[serde(default)]
+    pub prompt_components_overflowed: bool,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
     /// ADOPT31-D2 workflow rollup wire version. `None` is an older daemon
@@ -687,13 +693,28 @@ fn terminal_prompt_tax(
 /// This is not a price-table snapshot or evidence of provider settlement.
 pub(crate) fn terminal_usage_snapshot(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
     anyhow::ensure!(
-        event.pricing_basis.is_none(),
+        event.pricing_basis.is_none() && event.prompt_tax.is_none_or(|tax| tax.components.is_none()),
         "legacy snapshot cannot contain pricing basis"
     );
-    encode_usage_snapshot(event, false)
+    encode_usage_snapshot(event, false, false)
 }
 
 pub(crate) fn terminal_usage_snapshot_v2(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(event.prompt_tax.is_none_or(|tax| tax.components.is_none()),
+        "legacy snapshot cannot contain prompt components");
+    validate_snapshot_pricing(event)?;
+    encode_usage_snapshot(event, true, false)
+}
+
+pub(crate) fn terminal_usage_snapshot_v3(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
+    validate_snapshot_pricing(event)?;
+    let components = event.prompt_tax.and_then(|tax| tax.components)
+        .ok_or_else(|| anyhow::anyhow!("component snapshot requires a measured estimate"))?;
+    components.validate().map_err(anyhow::Error::msg)?;
+    encode_usage_snapshot(event, true, true)
+}
+
+fn validate_snapshot_pricing(event: &UsageEvent) -> anyhow::Result<()> {
     anyhow::ensure!(
         event.pricing_basis.is_some()
             == (event.cost_usd.is_some() || event.cache_savings_usd.is_some()),
@@ -702,12 +723,13 @@ pub(crate) fn terminal_usage_snapshot_v2(event: &UsageEvent) -> anyhow::Result<s
     if let Some(basis) = &event.pricing_basis {
         basis.validate(&event.provider, &event.model)?;
     }
-    encode_usage_snapshot(event, true)
+    Ok(())
 }
 
 fn encode_usage_snapshot(
     event: &UsageEvent,
     with_pricing: bool,
+    with_components: bool,
 ) -> anyhow::Result<serde_json::Value> {
     if event
         .cost_usd
@@ -729,7 +751,7 @@ fn encode_usage_snapshot(
         );
     }
     Ok(serde_json::json!({
-        "schema": if with_pricing { "neoth.provider-usage-snapshot.v2" } else { "neoth.provider-usage-snapshot.v1" },
+        "schema": if with_components { "neoth.provider-usage-snapshot.v3" } else if with_pricing { "neoth.provider-usage-snapshot.v2" } else { "neoth.provider-usage-snapshot.v1" },
         "event_metadata": metadata,
         "cost_usd_bits": event.cost_usd.map(|value| format!("{:016x}", value.to_bits())),
         "cache_savings_usd_bits": event.cache_savings_usd.map(|value| format!("{:016x}", value.to_bits())),
@@ -768,6 +790,11 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
     if metadata.get("cost_usd").is_some() || metadata.get("cache_savings_usd").is_some() {
         anyhow::bail!("terminal usage snapshot contains competing amount representations");
     }
+    if snapshot.get("schema").and_then(serde_json::Value::as_str)
+        != Some("neoth.provider-usage-snapshot.v3") {
+        anyhow::ensure!(metadata.get("prompt_tax").and_then(|tax| tax.get("components")).is_none(),
+            "legacy snapshot has prompt components field");
+    }
     let mut event: UsageEvent = serde_json::from_value(metadata.clone())?;
     event.cost_usd = snapshot_amount(snapshot, "cost_usd_bits")?;
     event.cache_savings_usd = snapshot_amount(snapshot, "cache_savings_usd_bits")?;
@@ -782,6 +809,7 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
             terminal_usage_snapshot(&event)?
         }
         Some("neoth.provider-usage-snapshot.v2") => terminal_usage_snapshot_v2(&event)?,
+        Some("neoth.provider-usage-snapshot.v3") => terminal_usage_snapshot_v3(&event)?,
         _ => anyhow::bail!("unsupported terminal usage snapshot schema"),
     };
     if encoded != *snapshot {
@@ -830,22 +858,27 @@ fn usage_event_from_terminal_payload_with_legacy(
     legacy_projection: impl FnOnce(UsageEvent) -> UsageEvent,
 ) -> anyhow::Result<Option<UsageEvent>> {
     let value: serde_json::Value = serde_json::from_slice(payload)?;
-    let with_pricing = value
-        .get("usage_projection_schema")
-        .and_then(serde_json::Value::as_str)
-        == Some("neoth.provider-usage.v4");
+    let schema = value.get("usage_projection_schema").and_then(serde_json::Value::as_str);
+    let with_components = schema == Some("neoth.provider-usage.v5");
+    let with_pricing = matches!(schema, Some("neoth.provider-usage.v4" | "neoth.provider-usage.v5"));
+    if !with_components {
+        anyhow::ensure!(value.get("prompt_tax").and_then(|tax| tax.get("components")).is_none(),
+            "legacy terminal has prompt components field");
+    }
     anyhow::ensure!(
         with_pricing == value.get("pricing_basis").is_some(),
         "terminal pricing basis field does not match projection version"
     );
     let snapshot = match value.get("usage_projection_schema") {
         Some(serde_json::Value::String(schema))
-            if schema == "neoth.provider-usage.v3" || schema == "neoth.provider-usage.v4" =>
+            if matches!(schema.as_str(), "neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5") =>
         {
             let snapshot = value
                 .get("usage_snapshot")
                 .ok_or_else(|| anyhow::anyhow!("terminal usage snapshot is missing"))?;
-            let expected = if with_pricing {
+            let expected = if with_components {
+                "neoth.provider-usage-snapshot.v3"
+            } else if with_pricing {
                 "neoth.provider-usage-snapshot.v2"
             } else {
                 "neoth.provider-usage-snapshot.v1"
@@ -1078,6 +1111,12 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 roll.prompt_tax
                     .get_or_insert_with(Default::default)
                     .absorb(prompt_tax);
+                if let Some(components) = prompt_tax.components {
+                    if roll.prompt_components.get_or_insert_with(Default::default)
+                        .try_absorb(components).is_err() {
+                        roll.prompt_components_overflowed = true;
+                    }
+                }
             }
             let event_known_cost = valid_known_cost(ev.cost_usd);
             match event_known_cost {
@@ -2212,6 +2251,7 @@ mod tests {
             Some("n8n_provider_call"),
             false,
             Some(crate::tokens::budget::PromptTax {
+                components: None,
                 skill_tokens: 3,
                 memory_tokens: 5,
                 repo_context_tokens: 7,
@@ -2330,6 +2370,89 @@ mod tests {
             "call_scope": event.call_scope, "source": event.source,
             "call_type": event.call_type, "streaming": event.streaming, "prompt_tax": event.prompt_tax,
         })
+    }
+
+    #[test]
+    fn terminal_v5_component_replay_preserves_estimates_without_price_lookup() {
+        let mut event = priced_terminal_event("openai_api", "gpt-4o", Some(99), Some(3), None, None);
+        let mut payload = priced_terminal_payload(&event);
+        let item = crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::E, "user")
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::User);
+        let components = crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(&[item], 520).unwrap();
+        event.prompt_tax = Some(crate::tokens::budget::PromptTax { components: Some(components), ..Default::default() });
+        payload["usage_projection_schema"] = "neoth.provider-usage.v5".into();
+        payload["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
+        payload["usage_snapshot"] = terminal_usage_snapshot_v3(&event).unwrap();
+        let replayed = usage_event_from_terminal_payload_with_legacy(
+            &serde_json::to_vec(&payload).unwrap(), |_| panic!("v5 must not reprice"),
+        ).unwrap().unwrap();
+        assert_eq!(replayed, event);
+        assert_eq!(replayed.input_tokens, Some(99));
+        assert_eq!(replayed.prompt_tax.unwrap().components.unwrap().request_upper_bound(), 520);
+        let home = tempfile::tempdir().unwrap();
+        append(home.path(), &replayed).unwrap();
+        let roll = aggregate(home.path(), 0, i64::MAX);
+        assert_eq!(roll.total_input_tokens, 99);
+        assert_eq!(roll.prompt_components.unwrap().request_upper_bound, 520);
+    }
+
+    #[test]
+    fn terminal_v5_rejects_mixed_versions_component_drift_and_missing_fields() {
+        let mut event = priced_terminal_event("local_ollama", "fixture", None, None, None, None);
+        let mut payload = priced_terminal_payload(&event);
+        let components = crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(&[], 512).unwrap();
+        event.prompt_tax = Some(crate::tokens::budget::PromptTax { components: Some(components), ..Default::default() });
+        payload["usage_projection_schema"] = "neoth.provider-usage.v5".into();
+        payload["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
+        payload["usage_snapshot"] = terminal_usage_snapshot_v3(&event).unwrap();
+        assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&payload).unwrap()).unwrap().is_some());
+        let mut mixed = payload.clone();
+        mixed["usage_snapshot"]["schema"] = "neoth.provider-usage-snapshot.v2".into();
+        assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&mixed).unwrap()).is_err());
+        let mut drift = payload.clone();
+        drift["prompt_tax"]["components"]["request_upper_bound"] = 513.into();
+        drift["prompt_tax"]["components"]["envelope_residual"] = 513.into();
+        assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&drift).unwrap()).is_err());
+        payload["usage_snapshot"]["event_metadata"]["prompt_tax"]["components"].as_object_mut().unwrap().remove("user");
+        assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&payload).unwrap()).is_err());
+    }
+
+    #[test]
+    fn legacy_terminal_and_snapshot_reject_component_key_even_null() {
+        let mut event = priced_terminal_event("local_ollama", "fixture", None, None, None, None);
+        event.prompt_tax = Some(Default::default());
+        let payload = priced_terminal_payload(&event);
+        assert!(payload["prompt_tax"].get("components").is_none());
+        for version in ["neoth.provider-usage.v2", "neoth.provider-usage.v3", "neoth.provider-usage.v4"] {
+            let mut changed = payload.clone();
+            changed["usage_projection_schema"] = version.into();
+            changed["prompt_tax"]["components"] = serde_json::Value::Null;
+            assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+        let mut changed = payload;
+        changed["usage_snapshot"]["event_metadata"]["prompt_tax"]["components"] = serde_json::Value::Null;
+        assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&changed).unwrap()).is_err());
+    }
+
+    #[test]
+    fn mixed_component_usage_rollup_keeps_missing_and_zero_distinct() {
+        let home = tempfile::tempdir().unwrap();
+        let old = priced_terminal_event("local_ollama", "fixture", None, None, None, None);
+        append(home.path(), &old).unwrap();
+        let mut measured = old.clone();
+        measured.invocation_id = Some("b".repeat(64));
+        measured.prompt_tax = Some(crate::tokens::budget::PromptTax {
+            components: Some(crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(&[], 0).unwrap()),
+            ..Default::default()
+        });
+        append(home.path(), &measured).unwrap();
+        let roll = aggregate(home.path(), 0, i64::MAX);
+        assert_eq!(roll.total_call_count, 2);
+        assert_eq!(roll.total_unknown_input_token_count, 2);
+        assert_eq!(roll.prompt_components.unwrap().observed_call_count, 1);
+        let display = crate::cli::usage::render_prompt_components_section(&roll);
+        assert!(display.contains("1/2 calls"));
+        assert!(display.contains("request upper bound=0"));
     }
 
     #[test]

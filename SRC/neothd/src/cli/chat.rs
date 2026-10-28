@@ -1212,7 +1212,8 @@ impl McpCatalogueSlot {
             self.index..self.index,
             [
                 BlockItem::new(Block::A, catalogue.trusted_protocol())
-                    .with_atomic_group(AtomicGroup::McpCatalogue),
+                    .with_atomic_group(AtomicGroup::McpCatalogue)
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System),
                 BlockItem::new(Block::D, catalogue.data().as_str())
                     .with_atomic_group(AtomicGroup::McpCatalogue),
             ],
@@ -2283,6 +2284,13 @@ pub(super) async fn finalize_provider_request(
         }
         None => preflight_prompt.to_owned(),
     };
+    // A preset can combine operator bytes with generated instructions. Until
+    // those spans have separate provenance, do not label the whole mix user.
+    if final_prompt != preflight_prompt {
+        for item in items.iter_mut().filter(|item| item.block == Block::E) {
+            item.prompt_origin = None;
+        }
+    }
     crate::tokens::budget::replace_user_message(&mut items, final_prompt)
         .map_err(anyhow::Error::msg)?;
 
@@ -2291,7 +2299,8 @@ pub(super) async fn finalize_provider_request(
         .iter()
         .any(|item| item.block == Block::B && item.content.trim_end() == code_discipline)
     {
-        items.insert(0, BlockItem::new(Block::B, code_discipline));
+        items.insert(0, BlockItem::new(Block::B, code_discipline)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System));
     }
     if let Some(protocol) = crate::cli::clarify_chat::protocol_block() {
         ensure_trusted_clarification_protocol(&mut items, protocol)?;
@@ -2409,7 +2418,16 @@ pub(super) async fn finalize_provider_request(
         prompt_token_estimate <= cap,
         "final provider request has a conservative input-token upper bound of {prompt_token_estimate}, above the effective cap {cap}; protected prompt or required attachment context cannot be degraded safely"
     );
-    let prompt_tax = crate::tokens::budget::PromptTax::from_retained_items(&items);
+    let mut prompt_tax = crate::tokens::budget::PromptTax::from_retained_items(&items);
+    // A saturated request bound cannot support an exact residual. Keep its
+    // component measurement unavailable without changing dispatch admission.
+    prompt_tax.components = if prompt_token_estimate == u32::MAX {
+        None
+    } else {
+        Some(crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
+            &items, prompt_token_estimate,
+        ).map_err(anyhow::Error::msg)?)
+    };
 
     Ok(BudgetedProviderRequest {
         prompt,
@@ -2437,7 +2455,8 @@ fn ensure_trusted_clarification_protocol(
         .iter()
         .position(|item| item.block == Block::E)
         .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
-    items.insert(e_index, BlockItem::new(Block::B, protocol));
+    items.insert(e_index, BlockItem::new(Block::B, protocol)
+        .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System));
     Ok(())
 }
 
@@ -2600,7 +2619,8 @@ fn build_agent_system_from_layers(
                 crate::tokens::budget::Block::B,
                 dispatch.system.trim(),
             )
-            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Unattributed),
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Unattributed)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Workflow),
         );
         slot = slot.map(|slot| slot.shifted_for_insert(insert_pos, 1));
     }
@@ -2613,7 +2633,8 @@ fn build_agent_system_from_layers(
                 crate::tokens::budget::Block::D,
                 recall.as_str(),
             )
-            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval);
             item.ts_ns = 2;
             items.push(item);
         }
@@ -3552,7 +3573,8 @@ pub(super) async fn build_prompt_bundle(
     if let Some(recall) = recall_block.as_ref() {
         let mut item =
             crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, recall.as_str())
-                .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+                .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory)
+                .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval);
         item.ts_ns = 2;
         budget_items.push(item);
     }
@@ -13814,7 +13836,8 @@ fn append_session_guidance_block(
 ) {
     let mut item =
         crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance.as_str())
-            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval);
     item.ts_ns = 1;
     items.push(item);
 }
@@ -18821,10 +18844,12 @@ modes:
         let mut config = FreedomConfig::default();
         config.tokens.max_per_request = 20_000;
         let mut dropped_memory = BlockItem::new(Block::D, "d".repeat(100_000))
-            .with_prompt_tax_source(PromptTaxSource::Memory);
+            .with_prompt_tax_source(PromptTaxSource::Memory)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval);
         dropped_memory.ts_ns = 1;
         let mut retained_memory = BlockItem::new(Block::D, "retained memory")
-            .with_prompt_tax_source(PromptTaxSource::Memory);
+            .with_prompt_tax_source(PromptTaxSource::Memory)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval);
         retained_memory.ts_ns = 2;
         let items = vec![
             BlockItem::new(Block::A, "protected system"),
@@ -18851,6 +18876,7 @@ modes:
         .expect("single D item should be dropped and request should fit");
         assert!(result.prompt_token_estimate <= result.effective_cap);
         assert_eq!(result.prompt, "hello");
+        assert_eq!(result.prompt_tax.components.unwrap().counts()[3], count_tokens_upper_bound("retained memory"));
         assert!(!result.system.unwrap().contains(&"d".repeat(1_000)));
         assert_eq!(
             result.prompt_tax.memory_tokens,
@@ -18894,14 +18920,19 @@ modes:
         ) -> BudgetedProviderRequest {
             let items = vec![
                 BlockItem::new(Block::B, "skill retained")
-                    .with_prompt_tax_source(PromptTaxSource::Skill),
+                    .with_prompt_tax_source(PromptTaxSource::Skill)
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Skill),
                 BlockItem::new(Block::D, "memory retained")
-                    .with_prompt_tax_source(PromptTaxSource::Memory),
+                    .with_prompt_tax_source(PromptTaxSource::Memory)
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval),
                 BlockItem::new(Block::C, "repo retained")
-                    .with_prompt_tax_source(PromptTaxSource::RepoContext),
+                    .with_prompt_tax_source(PromptTaxSource::RepoContext)
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Retrieval),
                 BlockItem::new(Block::B, "council retained")
-                    .with_prompt_tax_source(PromptTaxSource::Council),
-                BlockItem::new(Block::E, "operator request"),
+                    .with_prompt_tax_source(PromptTaxSource::Council)
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::Workflow),
+                BlockItem::new(Block::E, "operator request")
+                    .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::User),
             ];
             let (prompt, system) = crate::tokens::budget::render_request(&items).unwrap();
             let mut config = FreedomConfig::default();
@@ -18961,6 +18992,14 @@ modes:
         drop(writer);
         writer_join.await.unwrap();
         let measured = crate::daemon::usage_log::aggregate(measured_home.path(), 0, i64::MAX);
+        let components = measured.prompt_components.unwrap();
+        assert_eq!(components.observed_call_count, 1);
+        assert_eq!(components.skill, u64::from(expected_skill));
+        assert_eq!(components.retrieval, u64::from(expected_memory + expected_repo_context));
+        assert_eq!(components.workflow, u64::from(expected_council));
+        assert_eq!(components.user, u64::from(count_tokens_upper_bound("operator request")));
+        assert_eq!(components.request_upper_bound, u64::from(bundle.prompt_token_estimate));
+        assert!(crate::cli::usage::render_prompt_components_section(&measured).contains("1/1 calls"));
         let totals = measured.prompt_tax.as_ref().unwrap();
         assert_eq!(totals.observed_call_count, 1);
         assert_eq!(totals.skill_tokens, u64::from(expected_skill));
@@ -19004,6 +19043,7 @@ modes:
         writer_join.await.unwrap();
         let changed = crate::daemon::usage_log::aggregate(changed_home.path(), 0, i64::MAX);
         assert!(changed.prompt_tax.is_none());
+        assert!(changed.prompt_components.is_none());
         assert_eq!(
             crate::cli::usage::render_prompt_tax_section(None),
             "  prompt tax: unavailable (no measured terminal responses)\n"

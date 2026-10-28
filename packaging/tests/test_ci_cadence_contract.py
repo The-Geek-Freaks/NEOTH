@@ -280,6 +280,15 @@ class CiCadenceContractTests(unittest.TestCase):
             "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",
             expected,
         )
+        components = json.loads(
+            (ROOT / "docs/verification/gold-wave2614-prompt-components.json").read_text(encoding="utf-8")
+        )
+        expected.extend(components["tests"])
+        selection = matrix["wave2614PromptComponentsRegressions"]
+        self.assertEqual(selection["requiredCount"], 33)
+        self.assertEqual(len(expected), 33)
+        self.assertEqual(len(set(expected)), 33)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):

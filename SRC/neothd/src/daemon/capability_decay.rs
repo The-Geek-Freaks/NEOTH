@@ -220,7 +220,7 @@ fn terminal_sample_from_payload(event_type: u8, payload: &[u8]) -> Result<Termin
         .and_then(serde_json::Value::as_str)
     {
         Some("neoth.provider-usage.v2") => {}
-        Some("neoth.provider-usage.v3" | "neoth.provider-usage.v4") => {
+        Some("neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5") => {
             // Reuse the canonical snapshot validator before projecting quality
             // fields. A declared current format must not fall back to Legacy.
             super::usage_log::usage_event_from_terminal_payload(payload)?
@@ -518,6 +518,15 @@ mod tests {
                 payload["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
                 super::super::usage_log::terminal_usage_snapshot_v2(&event).unwrap()
             }
+            5 => {
+                payload["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
+                event.prompt_tax = Some(crate::tokens::budget::PromptTax {
+                    components: Some(crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(&[], 512).unwrap()),
+                    ..Default::default()
+                });
+                payload["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
+                super::super::usage_log::terminal_usage_snapshot_v3(&event).unwrap()
+            }
             _ => panic!("unsupported fixture version"),
         };
         serde_json::to_vec(&payload).unwrap()
@@ -530,7 +539,8 @@ mod tests {
         let (_, writer, join) = ready_authenticated_writer(home.path()).await;
         for (ids, version, ts) in [
             (0..12, 3, now - RECENT_WINDOW_SECONDS - 10),
-            (20..28, 4, now - 10),
+            (20..24, 4, now - 10),
+            (24..28, 5, now - 10),
         ] {
             for invocation in ids {
                 let ok = invocation < 26;
@@ -570,7 +580,7 @@ mod tests {
 
     #[test]
     fn versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback() {
-        for version in [3, 4] {
+        for version in [3, 4, 5] {
             let payload = versioned_terminal_payload(1, 1, true, version);
             assert!(matches!(
                 terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &payload).unwrap(),

@@ -676,6 +676,7 @@ mod tests {
             input_tokens: 4,
             output_tokens: 2,
             prompt_tax: Some(crate::tokens::budget::PromptTax {
+                components: None,
                 skill_tokens: 3,
                 memory_tokens: 5,
                 repo_context_tokens: 7,
