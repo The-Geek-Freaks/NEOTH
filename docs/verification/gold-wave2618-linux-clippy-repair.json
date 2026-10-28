@@ -1,0 +1,33 @@
+{
+  "schema": "neoth.wave2618.linux-clippy-repair.v1",
+  "status": "STATIC_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-10-28T13:55:22.9909349Z",
+  "baseProducer": "254c8e16f846427d6993fdbfe7449cbb5c30a13b",
+  "failingProducer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+  "runId": 40689238801,
+  "jobId": 122819502904,
+  "failedSteps": [
+    "cargo clippy slim core",
+    "cargo clippy workspace"
+  ],
+  "diagnostic": "clippy::collapsible_if in SRC/neothd/src/daemon/usage_log.rs:1138",
+  "sourceChange": "Collapse nested optional-component and try_absorb error checks into the suggested let-chain; preserve short-circuit evaluation and mutation order.",
+  "reviewer": "Prompt-only independent review by /root/cost33_compile_repair; no reviewer tools or execution.",
+  "linuxNextest": {
+    "status": "HOSTED_STEP_SUCCESS",
+    "passed": 19584,
+    "skipped": 32,
+    "summary": "2026-10-28T13:49:26.8575874Z      Summary [ 624.317s] 19584 tests run: 19584 passed, 32 skipped",
+    "junitArtifactId": 12821167121,
+    "zipSha256": "0E4951C1D9E9086ED1CF07DBD1F5DF02F5CE0D294821E10E40CD3F25DA2B1EB4",
+    "xmlParserExecuted": false
+  },
+  "log": {
+    "path": "work/gold-20260906/wave2616-full-integration/linux-quality-job.log",
+    "bytes": 352292,
+    "sha256": "BB42C5A3B614C580AEB30A6E7BB18F87FFD88E645177328273D82185674465EC"
+  },
+  "plannedHostedGate": "Single cli-reference run after current full run ends: cost_replay_regressions=true, slim_clippy=true, workspace_clippy=true.",
+  "localRuntimeExecuted": false,
+  "goldClosed": false
+}

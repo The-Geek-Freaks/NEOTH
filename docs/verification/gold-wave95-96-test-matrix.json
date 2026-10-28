@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2617-hosted-format-runtime-pending",
+  "status": "STATIC_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 452598,
-    "sha256": "EFF61767AE806610FDEBB13F07CDC2B942D5578E661B7A5BE15B7463B4AF6090"
+    "bytes": 452779,
+    "sha256": "30B67B691DD8F0EE09B2DE95ED6F67D95350259DDE93588D900CD44043A6CA90"
   },
-  "sourceInputs": 2471,
+  "sourceInputs": 2472,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2484,13 +2484,13 @@
     {
       "test": "daemon::usage_log::tests::terminal_cost_includes_reported_prompt_cache_usage",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_projection_and_repair_payload_have_identical_workflow_rollups",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
@@ -8376,19 +8376,19 @@
     {
       "test": "daemon::usage_log::tests::workflow_key_requires_the_complete_exact_audited_triple",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::workflow_rollup_preserves_known_free_and_unpriced_costs",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::workflow_rows_cap_after_complete_aggregation_and_reserve_unclassified",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
@@ -18067,37 +18067,37 @@
     {
       "test": "daemon::usage_log::tests::terminal_v3_keeps_unknown_amounts_distinct_from_known_zero",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v3_preserves_original_amount_bits_instead_of_current_rates",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v3_refuses_outer_identity_usage_and_context_mismatches",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
@@ -18235,37 +18235,37 @@
     {
       "test": "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v4_rejects_outer_basis_and_model_mismatches",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v4_requires_complete_basis_and_refuses_mixed_versions",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
@@ -18361,25 +18361,25 @@
     {
       "test": "daemon::usage_log::tests::terminal_v5_component_replay_preserves_estimates_without_price_lookup",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::terminal_v5_rejects_mixed_versions_component_drift_and_missing_fields",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::legacy_terminal_and_snapshot_reject_component_key_even_null",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::usage_log::tests::mixed_component_usage_rollup_keeps_missing_and_zero_distinct",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
-      "sourceSha256": "EF7B8EDE4AAAFABD5E877487A17B090D918E305C4FFDA566A5AE2701E263C0B0",
+      "sourceSha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
       "junitClass": "neoth"
     },
     {
@@ -87594,6 +87594,32 @@
       }
     ],
     "note": "Only verified hosted rustfmt patch from40696813781/e7cea259. Exact59 still pending; exact33 remains accepted on8ee and full40689238801 remains active on8ee.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2618LinuxClippyRepair": {
+    "base": "254c8e16f846427d6993fdbfe7449cbb5c30a13b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2618-linux-clippy-repair.json",
+        "bytes": 1548,
+        "sha256": "356037E7683CF5038CB61EC76D29D2693A066497D21F8C3046097976F4F1AF99",
+        "blob": "56583be935de71cf3aef551da3e1387c0654c9c3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2685147,
+        "sha256": "CB58DFDAC88ACED5D7542DA5383A3AE15CE12727CECFC87C09A15E0A7B52266E",
+        "blob": "dc9052afc4ac618bdc46bea15ca594626592befd"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/usage_log.rs",
+        "bytes": 116384,
+        "sha256": "D46E1CBF0662AE076E26FEB1D38DBD8145F4B95079C0F1A534D9F55E8310CF7B",
+        "blob": "1580c752993773b7b3755aa67141d2c6c856a138"
+      }
+    ],
+    "note": "Both Linux Clippy steps found one nested-if lint; Linux nextest 19584 passed,32 skipped on8ee. Minimal let-chain repair; next59 and exact clippy gates pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

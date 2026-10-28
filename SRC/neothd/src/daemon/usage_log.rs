@@ -1135,15 +1135,14 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 roll.prompt_tax
                     .get_or_insert_with(Default::default)
                     .absorb(prompt_tax);
-                if let Some(components) = prompt_tax.components {
-                    if roll
+                if let Some(components) = prompt_tax.components
+                    && roll
                         .prompt_components
                         .get_or_insert_with(Default::default)
                         .try_absorb(components)
                         .is_err()
-                    {
-                        roll.prompt_components_overflowed = true;
-                    }
+                {
+                    roll.prompt_components_overflowed = true;
                 }
             }
             let event_known_cost = valid_known_cost(ev.cost_usd);
