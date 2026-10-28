@@ -258,9 +258,17 @@ pub(crate) fn render_prompt_components_section(roll: &UsageRollup) -> String {
     };
     format!(
         "  prompt components estimate [utf8_byte_upper_bound_v1]: {}/{} calls\n    system={} workflow={} skill={} retrieval={} tool_result={} user={} unattributed={}\n    envelope/separator residual={} request upper bound={} (local estimates; not provider usage or allocated cost)\n",
-        totals.observed_call_count, roll.total_call_count, totals.system, totals.workflow,
-        totals.skill, totals.retrieval, totals.tool_result, totals.user, totals.unattributed,
-        totals.envelope_residual, totals.request_upper_bound,
+        totals.observed_call_count,
+        roll.total_call_count,
+        totals.system,
+        totals.workflow,
+        totals.skill,
+        totals.retrieval,
+        totals.tool_result,
+        totals.user,
+        totals.unattributed,
+        totals.envelope_residual,
+        totals.request_upper_bound,
     )
 }
 

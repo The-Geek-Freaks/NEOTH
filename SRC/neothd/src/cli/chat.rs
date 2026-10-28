@@ -2299,8 +2299,11 @@ pub(super) async fn finalize_provider_request(
         .iter()
         .any(|item| item.block == Block::B && item.content.trim_end() == code_discipline)
     {
-        items.insert(0, BlockItem::new(Block::B, code_discipline)
-            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System));
+        items.insert(
+            0,
+            BlockItem::new(Block::B, code_discipline)
+                .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System),
+        );
     }
     if let Some(protocol) = crate::cli::clarify_chat::protocol_block() {
         ensure_trusted_clarification_protocol(&mut items, protocol)?;
@@ -2424,9 +2427,13 @@ pub(super) async fn finalize_provider_request(
     prompt_tax.components = if prompt_token_estimate == u32::MAX {
         None
     } else {
-        Some(crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
-            &items, prompt_token_estimate,
-        ).map_err(anyhow::Error::msg)?)
+        Some(
+            crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
+                &items,
+                prompt_token_estimate,
+            )
+            .map_err(anyhow::Error::msg)?,
+        )
     };
 
     Ok(BudgetedProviderRequest {
@@ -2455,8 +2462,11 @@ fn ensure_trusted_clarification_protocol(
         .iter()
         .position(|item| item.block == Block::E)
         .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
-    items.insert(e_index, BlockItem::new(Block::B, protocol)
-        .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System));
+    items.insert(
+        e_index,
+        BlockItem::new(Block::B, protocol)
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::System),
+    );
     Ok(())
 }
 
@@ -18876,7 +18886,10 @@ modes:
         .expect("single D item should be dropped and request should fit");
         assert!(result.prompt_token_estimate <= result.effective_cap);
         assert_eq!(result.prompt, "hello");
-        assert_eq!(result.prompt_tax.components.unwrap().counts()[3], count_tokens_upper_bound("retained memory"));
+        assert_eq!(
+            result.prompt_tax.components.unwrap().counts()[3],
+            count_tokens_upper_bound("retained memory")
+        );
         assert!(!result.system.unwrap().contains(&"d".repeat(1_000)));
         assert_eq!(
             result.prompt_tax.memory_tokens,
@@ -18995,11 +19008,22 @@ modes:
         let components = measured.prompt_components.unwrap();
         assert_eq!(components.observed_call_count, 1);
         assert_eq!(components.skill, u64::from(expected_skill));
-        assert_eq!(components.retrieval, u64::from(expected_memory + expected_repo_context));
+        assert_eq!(
+            components.retrieval,
+            u64::from(expected_memory + expected_repo_context)
+        );
         assert_eq!(components.workflow, u64::from(expected_council));
-        assert_eq!(components.user, u64::from(count_tokens_upper_bound("operator request")));
-        assert_eq!(components.request_upper_bound, u64::from(bundle.prompt_token_estimate));
-        assert!(crate::cli::usage::render_prompt_components_section(&measured).contains("1/1 calls"));
+        assert_eq!(
+            components.user,
+            u64::from(count_tokens_upper_bound("operator request"))
+        );
+        assert_eq!(
+            components.request_upper_bound,
+            u64::from(bundle.prompt_token_estimate)
+        );
+        assert!(
+            crate::cli::usage::render_prompt_components_section(&measured).contains("1/1 calls")
+        );
         let totals = measured.prompt_tax.as_ref().unwrap();
         assert_eq!(totals.observed_call_count, 1);
         assert_eq!(totals.skill_tokens, u64::from(expected_skill));

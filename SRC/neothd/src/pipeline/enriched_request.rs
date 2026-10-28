@@ -358,7 +358,13 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
             inputs.moral_core.map(str::trim).filter(|s| !s.is_empty()),
         ),
         // GOLD-ADAPT-JV-MODE-01 — identity anchor at position 1 when locked.
-        (Block::A, None, None, PromptOrigin::System, identity_anchor_layer),
+        (
+            Block::A,
+            None,
+            None,
+            PromptOrigin::System,
+            identity_anchor_layer,
+        ),
         // GOLD-FEAT-11 — cross-turn goal at position 2 (after identity, before context).
         (
             Block::A,
@@ -369,7 +375,13 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
         ),
         // GOLD-R4-11 — learned/explicit communication preferences are limited
         // to presentation and cannot elevate their own authority.
-        (Block::C, None, None, PromptOrigin::Retrieval, communication_profile_layer.as_deref()),
+        (
+            Block::C,
+            None,
+            None,
+            PromptOrigin::Retrieval,
+            communication_profile_layer.as_deref(),
+        ),
         (
             Block::A,
             None,
@@ -466,7 +478,14 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     );
     if let Some(operator_sovereignty) = operator_sovereignty_layer.as_deref() {
         budget_items.push(
-            budget_item(Block::A, None, None, PromptOrigin::System, operator_sovereignty).with_required_retention(),
+            budget_item(
+                Block::A,
+                None,
+                None,
+                PromptOrigin::System,
+                operator_sovereignty,
+            )
+            .with_required_retention(),
         );
     }
     if let Some(persona) = persona {
@@ -551,7 +570,13 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
             .collect::<Vec<_>>()
             .join("\n\n")
     });
-    budget_items.push(budget_item(Block::E, None, None, PromptOrigin::User, inputs.prompt));
+    budget_items.push(budget_item(
+        Block::E,
+        None,
+        None,
+        PromptOrigin::User,
+        inputs.prompt,
+    ));
 
     EnrichedRequest {
         prompt: inputs.prompt.to_string(),
@@ -581,10 +606,18 @@ mod tests {
             ("skill instructions", PromptOrigin::Skill),
             ("operator message", PromptOrigin::User),
         ] {
-            let item = result.budget_items.iter().find(|item| item.content == text).unwrap();
+            let item = result
+                .budget_items
+                .iter()
+                .find(|item| item.content == text)
+                .unwrap();
             assert_eq!(item.prompt_origin, Some(origin));
         }
-        let retrieved = result.budget_items.iter().find(|item| item.content.contains("retrieved source")).unwrap();
+        let retrieved = result
+            .budget_items
+            .iter()
+            .find(|item| item.content.contains("retrieved source"))
+            .unwrap();
         assert_eq!(retrieved.prompt_origin, Some(PromptOrigin::Retrieval));
     }
 

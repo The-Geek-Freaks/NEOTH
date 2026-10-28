@@ -51,5 +51,23 @@
     "Model tokenizer measurements and dedicated GUI/mobile presentation",
     "Hosted format/compile/runtime and final current-producer integration",
     "A02 and Gold remain open"
-  ]
+  ],
+  "hostedFormat": {
+    "run": 40674227995,
+    "producer": "e8351f3f8044d89b6e3c1f590b9df13a6b06a2c2",
+    "artifact": 12808754682,
+    "originalZipSha256": "E418508E3334DF61C0628029E63E7BB63BA281404320F66FFEC666C273EC6E29",
+    "patchSha256": "AD1C7C4A3A3C7DFD44586C281EBD006DDC33256F2C4B145FCE8CD0FF78CE98B2",
+    "appliedPaths": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/cli/usage.rs",
+      "SRC/neothd/src/daemon/capability_decay.rs",
+      "SRC/neothd/src/daemon/usage_log.rs",
+      "SRC/neothd/src/pipeline/enriched_request.rs",
+      "SRC/neothd/src/providers/cost_authorization.rs",
+      "SRC/neothd/src/tokens/prompt_attribution.rs"
+    ],
+    "verification": "Exact GitHub ZIP digest, internal hashes, producer and scoped git apply check verified",
+    "localFormatterExecuted": false
+  }
 }

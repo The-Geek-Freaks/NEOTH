@@ -107,10 +107,13 @@ impl PromptAttribution {
                 PromptOrigin::User => &mut result.user,
                 PromptOrigin::Unattributed => &mut result.unattributed,
             };
-            *count = count.checked_add(item.tokens).ok_or("prompt component overflow")?;
+            *count = count
+                .checked_add(item.tokens)
+                .ok_or("prompt component overflow")?;
         }
         let retained_total = result.counts().into_iter().try_fold(0u32, |sum, count| {
-            sum.checked_add(count).ok_or("prompt component total overflow")
+            sum.checked_add(count)
+                .ok_or("prompt component total overflow")
         })?;
         result.envelope_residual = request_upper_bound
             .checked_sub(retained_total)
@@ -121,19 +124,35 @@ impl PromptAttribution {
 
     /// System, workflow, skill, retrieval, tool result, user, unattributed.
     pub fn counts(&self) -> [u32; 7] {
-        [self.system, self.workflow, self.skill, self.retrieval,
-            self.tool_result, self.user, self.unattributed]
+        [
+            self.system,
+            self.workflow,
+            self.skill,
+            self.retrieval,
+            self.tool_result,
+            self.user,
+            self.unattributed,
+        ]
     }
 
-    pub fn request_upper_bound(&self) -> u32 { self.request_upper_bound }
-    pub fn envelope_residual(&self) -> u32 { self.envelope_residual }
-    pub fn estimator(&self) -> PromptEstimator { self.estimator }
+    pub fn request_upper_bound(&self) -> u32 {
+        self.request_upper_bound
+    }
+    pub fn envelope_residual(&self) -> u32 {
+        self.envelope_residual
+    }
+    pub fn estimator(&self) -> PromptEstimator {
+        self.estimator
+    }
 
     pub fn validate(&self) -> Result<(), &'static str> {
-        let total = self.counts().into_iter()
+        let total = self
+            .counts()
+            .into_iter()
             .chain(std::iter::once(self.envelope_residual))
             .try_fold(0u32, |sum, count| {
-                sum.checked_add(count).ok_or("prompt component total overflow")
+                sum.checked_add(count)
+                    .ok_or("prompt component total overflow")
             })?;
         if total != self.request_upper_bound {
             return Err("prompt components do not match request upper bound");
@@ -172,10 +191,18 @@ impl PromptComponentTotals {
             (&mut next.tool_result, u64::from(counts[4])),
             (&mut next.user, u64::from(counts[5])),
             (&mut next.unattributed, u64::from(counts[6])),
-            (&mut next.request_upper_bound, u64::from(value.request_upper_bound())),
-            (&mut next.envelope_residual, u64::from(value.envelope_residual())),
+            (
+                &mut next.request_upper_bound,
+                u64::from(value.request_upper_bound()),
+            ),
+            (
+                &mut next.envelope_residual,
+                u64::from(value.envelope_residual()),
+            ),
         ] {
-            *target = target.checked_add(increment).ok_or("prompt component rollup overflow")?;
+            *target = target
+                .checked_add(increment)
+                .ok_or("prompt component rollup overflow")?;
         }
         *self = next;
         Ok(())
@@ -232,7 +259,10 @@ mod tests {
         let item = BlockItem::new(Block::A, "hello").with_prompt_origin(PromptOrigin::System);
         let original = PromptAttribution::from_retained_items(&[item], 9).unwrap();
         let encoded = serde_json::to_string(&original).unwrap();
-        assert_eq!(serde_json::from_str::<PromptAttribution>(&encoded).unwrap(), original);
+        assert_eq!(
+            serde_json::from_str::<PromptAttribution>(&encoded).unwrap(),
+            original
+        );
         let mut value = serde_json::to_value(original).unwrap();
         value["request_upper_bound"] = 10.into();
         assert!(serde_json::from_value::<PromptAttribution>(value).is_err());
@@ -244,9 +274,18 @@ mod tests {
     #[test]
     fn seven_origins_survive_truncation_and_user_rewrites_lose_provenance() {
         use crate::tokens::budget::replace_user_message;
-        let mut items: Vec<_> = [PromptOrigin::System, PromptOrigin::Workflow, PromptOrigin::Skill,
-            PromptOrigin::Retrieval, PromptOrigin::ToolResult, PromptOrigin::User, PromptOrigin::Unattributed]
-            .into_iter().map(|origin| BlockItem::new(Block::D, "xy").with_prompt_origin(origin)).collect();
+        let mut items: Vec<_> = [
+            PromptOrigin::System,
+            PromptOrigin::Workflow,
+            PromptOrigin::Skill,
+            PromptOrigin::Retrieval,
+            PromptOrigin::ToolResult,
+            PromptOrigin::User,
+            PromptOrigin::Unattributed,
+        ]
+        .into_iter()
+        .map(|origin| BlockItem::new(Block::D, "xy").with_prompt_origin(origin))
+        .collect();
         items[5].block = Block::E;
         items[1].replace_content("x");
         let before = PromptAttribution::from_retained_items(&items, 15).unwrap();
@@ -261,7 +300,10 @@ mod tests {
 
     #[test]
     fn rollup_overflow_preserves_previous_totals() {
-        let mut totals = PromptComponentTotals { observed_call_count: u64::MAX, ..Default::default() };
+        let mut totals = PromptComponentTotals {
+            observed_call_count: u64::MAX,
+            ..Default::default()
+        };
         let before = totals;
         let value = PromptAttribution::from_retained_items(&[], 0).unwrap();
         assert!(totals.try_absorb(value).is_err());

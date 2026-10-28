@@ -521,7 +521,13 @@ mod tests {
             5 => {
                 payload["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
                 event.prompt_tax = Some(crate::tokens::budget::PromptTax {
-                    components: Some(crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(&[], 512).unwrap()),
+                    components: Some(
+                        crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
+                            &[],
+                            512,
+                        )
+                        .unwrap(),
+                    ),
                     ..Default::default()
                 });
                 payload["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
