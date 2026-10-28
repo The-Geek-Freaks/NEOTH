@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-28T11:51:32.2175046Z",
-  "validationStatus": "W2615_COST33_COMPILE_REPAIR_W2616_DIAGNOSTICS_HOSTED_PENDING",
+  "capturedUtc": "2026-10-28T12:04:08.4094362Z",
+  "validationStatus": "W2616_CONTRACT_COMMENT_SCOPE_REPAIRED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -144,7 +144,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "bytes": 54961,
-      "sha256": "DFA833E52DB1A56A0E1CCF0D1626ACC317168BB9EF5D823F35CBAC7CF716347E"
+      "sha256": "15E20058E022076C2B44130AE13B4BCD6F3582C7719A30BA94DF7C664FECE778"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -4623,8 +4623,8 @@
     },
     {
       "path": "docs/verification/gold-wave2616-linux-observation.json",
-      "bytes": 1203,
-      "sha256": "DDFFFF1BB517B42DA8C70783C43AB0F55DB515B986F07A5A24762EB41B72D1BF"
+      "bytes": 1638,
+      "sha256": "9919056F0499CC0D64498A2220617022478AF0C83BA821DB886CAF35598C163E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5608,8 +5608,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 78435,
-      "sha256": "3A977137ED3EA7A9F6D043B3C9CB3C22FB367C0C0CD02036DBC88302952A55DA"
+      "bytes": 78209,
+      "sha256": "39C1F7231752B39BBFB367BA58179E73A137C573BE3964861F37758678033ACD"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5828,8 +5828,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2679665,
-      "sha256": "BE77D7A5A75CD5D6657F2CD5EC275FBD7E7B0330433217D9A84FDD59CB138129"
+      "bytes": 2680121,
+      "sha256": "DE27F8BAF17949BED75DD66D827F22957E57A227B4528823D9B1AB961CFED0A4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

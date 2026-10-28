@@ -1059,9 +1059,6 @@ class CiCadenceContractTests(unittest.TestCase):
                     "  printf 'NEOTH_GUI_TEST_APPARMOR_PROFILE=%s\\n' \"$profile_file\"",
                     "} >> \"$GITHUB_ENV\"",
                     "sudo timeout 10 apparmor_parser -r \"$profile_file\"",
-                    "",
-                    "      # Save compiled inputs before runtime tests, even when an earlier lint",
-                    "      # failed. Cache contents never replace this run's compile or test steps.",
                 ]
             ),
         )

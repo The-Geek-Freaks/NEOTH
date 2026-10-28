@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2615_COST33_COMPILE_REPAIR_W2616_DIAGNOSTICS_HOSTED_PENDING",
+  "status": "W2616_CONTRACT_COMMENT_SCOPE_REPAIRED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 452422,
-    "sha256": "2DDCAA8C97157C82E63BDCDAC576FD39763DA48A5549BD73A095FD9CC8A4F944"
+    "bytes": 452414,
+    "sha256": "D873567F97F87E14D9B9A04752A391C7585ACBFD00B3D37A1E512F2477FB7806"
   },
   "sourceInputs": 2470,
   "requiredNativeTests": [
@@ -87287,6 +87287,38 @@
       }
     ],
     "note": "Exact E0277/E0283 repair and unchanged-byte provenance assertion; 33 selected tests unchanged. Reviewed bounded Linux runner observations; no local runtime or Gold acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2616ContractCorrection": {
+    "base": "9e37047518756579b21766b698ed36bfeca6f6aa",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 54961,
+        "sha256": "15E20058E022076C2B44130AE13B4BCD6F3582C7719A30BA94DF7C664FECE778",
+        "blob": "1fa12e31b91f11b839eae7cab306ab0a46276409"
+      },
+      {
+        "path": "docs/verification/gold-wave2616-linux-observation.json",
+        "bytes": 1638,
+        "sha256": "9919056F0499CC0D64498A2220617022478AF0C83BA821DB886CAF35598C163E",
+        "blob": "0d07a7e4ff1ec962ee89e8fe0312d7593da17169"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 78209,
+        "sha256": "39C1F7231752B39BBFB367BA58179E73A137C573BE3964861F37758678033ACD",
+        "blob": "30ad823fd8844b78a42be061983312d8f04a6700"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2680121,
+        "sha256": "DE27F8BAF17949BED75DD66D827F22957E57A227B4528823D9B1AB961CFED0A4",
+        "blob": "de9f1bf05bfe973a1046ba6d8da565a06ede40c3"
+      }
+    ],
+    "note": "Source extractor excludes adjacent job comments; remove erroneous three-line expectation. Runtime commands unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

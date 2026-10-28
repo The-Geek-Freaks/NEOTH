@@ -32,5 +32,14 @@
   "timeoutsChanged": false,
   "localRuntimeExecuted": false,
   "hostedAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "preflightCorrection": {
+    "repair": "Remove three non-command expectation lines and return cache comment to its own step",
+    "runtimeScriptChanged": false,
+    "run": 40683215222,
+    "producer": "9e37047518756579b21766b698ed36bfeca6f6aa",
+    "diagnosis": "Exact step_run_command expectation incorrectly included adjacent job-level comments; extractor excludes them",
+    "failedContracts": 1,
+    "executedContracts": 26
+  }
 }

@@ -415,8 +415,6 @@ jobs:
           } >> "$GITHUB_ENV"
           sudo timeout 10 apparmor_parser -r "$profile_file"
 
-      # Save compiled inputs before runtime tests, even when an earlier lint
-      # failed. Cache contents never replace this run's compile or test steps.
       - name: Upload Linux GUI build observability
         if: always()
         continue-on-error: true
@@ -427,6 +425,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # Save compiled inputs before runtime tests, even when an earlier lint
+      # failed. Cache contents never replace this run's compile or test steps.
       - name: Save completed Linux Cargo registry + target
         if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome == 'success' && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}
         timeout-minutes: 5
