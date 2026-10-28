@@ -22,7 +22,20 @@
     "mode": "Prompt-only exact compiler diagnostics and function review"
   },
   "staticDiffCheck": "passed",
-  "hostedRuntimeAccepted": false,
+  "hostedRuntimeAccepted": true,
   "localRuntimeExecuted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "focusedAcceptance": {
+    "run": 40685135602,
+    "producer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+    "conclusion": "success",
+    "rootAdmitted": true,
+    "acceptedCases": 33,
+    "artifact": 12816485194,
+    "originalZipSha256": "9CAED9C31D66F48D3806D6E18232FBB1B70979B0F809A53ABDF33288CC19CFAE",
+    "originalEntries": 72,
+    "sourceBindings": 21,
+    "proof": "work/gold-20260906/wave2615-cost33-admission/ROOT_ADMISSION.json",
+    "proofSha256": "3571FF8FB3494B8312F20C32BEE65038AC1967C012D3AD510230D12286F9BB74"
+  }
 }

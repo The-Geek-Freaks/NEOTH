@@ -41,5 +41,17 @@
     "diagnosis": "Exact step_run_command expectation incorrectly included adjacent job-level comments; extractor excludes them",
     "failedContracts": 1,
     "executedContracts": 26
+  },
+  "currentFastChecks": {
+    "producer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+    "preflight": 40684841406,
+    "codeQuality": 40684842081,
+    "conclusion": "success"
+  },
+  "currentFullCi": {
+    "run": 40689238801,
+    "producer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+    "finalAcceptance": false,
+    "diagnosticRuntimeAcceptance": "PENDING_FULL_JOB_EVIDENCE"
   }
 }

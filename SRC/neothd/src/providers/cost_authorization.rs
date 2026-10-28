@@ -153,19 +153,25 @@ fn operation_budget_reservation_plan(
     req: &Request,
     call_scope: &'static str,
     output_token_ceiling: Option<u32>,
+    price_bound: Option<&super::pricing_basis::AuthorizationPriceBound>,
 ) -> Result<OperationBudgetReservationPlan> {
     let Some(output_token_ceiling) = output_token_ceiling else {
         anyhow::bail!(
             "{call_scope} ({provider}/{model}): operation budget blocks an unbounded provider invocation"
         );
     };
-    let Some(bound_usd) =
-        crate::providers::cost::authorization_bound_usd(provider, model, req, output_token_ceiling)
-    else {
+    let Some(price_bound) = price_bound else {
         anyhow::bail!(
             "{call_scope} ({provider}/{model}): operation budget blocks unknown provider pricing"
         );
     };
+    anyhow::ensure!(
+        price_bound.output_ceiling == output_token_ceiling
+            && price_bound.input_upper_bound == crate::providers::cost::authorization_input_token_upper_bound(req, model)
+            && price_bound.has_nonempty_system == req.system.as_deref().is_some_and(|system| !system.is_empty()),
+        "operation price envelope mismatch"
+    );
+    let bound_usd = price_bound.bound_usd(provider, model)?;
     let Some(microusd) = usd_bound_to_microusd(bound_usd) else {
         anyhow::bail!(
             "{call_scope} ({provider}/{model}): operation budget blocks an unrepresentable price bound"
@@ -2911,6 +2917,15 @@ impl ProviderCallAuthorizer {
         let system_hash =
             xxhash_rust::xxh3::xxh3_64(req.system.as_deref().unwrap_or("").as_bytes());
         let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
+        let authorization_price_bound = output_token_ceiling.and_then(|ceiling| {
+            crate::providers::cost::authorization_price_bound(provider, model, req, ceiling)
+        });
+        let planned_bound_usd = authorization_price_bound.as_ref()
+            .map(|bound| bound.bound_usd(provider, model)).transpose().map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "{call_scope} ({provider}/{model}): invalid frozen authorization price; dispatch blocked: {error}"
+                )))
+            })?;
         let operation_budget_plan = match &self.operation_budget {
             None => None,
             Some(budget) => Some(operation_budget_reservation_plan(
@@ -2920,6 +2935,7 @@ impl ProviderCallAuthorizer {
                 req,
                 call_scope,
                 output_token_ceiling,
+                authorization_price_bound.as_ref(),
             )?),
         };
         let daily_budget_plan = match &self.council_daily_budget {
@@ -2928,17 +2944,12 @@ impl ProviderCallAuthorizer {
                 Some(policy.plan(invocation_id.clone(), provider, model.to_owned(), 0.0)?)
             }
             Some(policy) => {
-                let Some(output_token_ceiling) = output_token_ceiling else {
+                let Some(_) = output_token_ceiling else {
                     return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{call_scope} ({provider}/{model}): active council daily USD cap blocks an unbounded provider invocation"
                     ))));
                 };
-                let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
-                    provider,
-                    model,
-                    req,
-                    output_token_ceiling,
-                ) else {
+                let Some(bound_usd) = planned_bound_usd else {
                     return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{call_scope} ({provider}/{model}): active council daily USD cap blocks unknown provider pricing"
                     ))));
@@ -2957,17 +2968,12 @@ impl ProviderCallAuthorizer {
             (Some(_), true) => None,
             (None, _) => None,
             (Some(service), false) => {
-                let Some(output_token_ceiling) = output_token_ceiling else {
+                let Some(_) = output_token_ceiling else {
                     return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{call_scope} ({provider}/{model}): cluster budget blocks an unbounded provider invocation"
                     ))));
                 };
-                let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
-                    provider,
-                    model,
-                    req,
-                    output_token_ceiling,
-                ) else {
+                let Some(bound_usd) = planned_bound_usd else {
                     return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{call_scope} ({provider}/{model}): cluster budget blocks unknown provider pricing"
                     ))));
@@ -3032,7 +3038,7 @@ impl ProviderCallAuthorizer {
                 },
             });
         }
-        let (payload_value, action) = match (
+        let (mut payload_value, action) = match (
             output_token_ceiling,
             crate::providers::cost::lookup_price(provider, model),
         ) {
@@ -3143,6 +3149,9 @@ impl ProviderCallAuthorizer {
                 )
             }
         };
+        // This pre-gate observation proves a planned bound, never acquisition
+        // or actual spend. All applicable budget plans use this same instance.
+        payload_value["authorization_price_bound"] = serde_json::to_value(&authorization_price_bound)?;
         let payload = serde_json::to_vec(&payload_value).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
                 "cost-estimate WAL payload serialization failed for `{call_scope}`: {error}"
@@ -3800,8 +3809,9 @@ mod tests {
         )
         .await;
         let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("cluster-budget-ok.wal");
         let (writer, join) =
-            crate::wal::writer::spawn(home.path().join("cluster-budget-ok.wal")).unwrap();
+            crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = Arc::new(CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -3815,12 +3825,38 @@ mod tests {
             "cluster-budget-quorum-task",
         );
 
+        let request = Request {
+            model: Some("gpt-4o".into()),
+            ..Request::default()
+        };
+        let leaf = provider.authorizer
+            .authorize_leaf("openai_api", &request, provider.call_scope, false, Some(4096))
+            .await.unwrap();
+        let plan = &leaf.ticket.cluster_budget_plan.as_ref().unwrap().reserve;
+        let planned = (
+            plan.invocation_id.clone(),
+            plan.request_binding_sha256.clone(),
+            plan.bound_usd_nanos,
+        );
+        assert!(leaf.ticket.cluster_budget_dispatch.is_none());
+        assert!(leaf.ticket.cluster_budget_permit.is_none());
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        drop(leaf);
         provider.complete(Request::default()).await.unwrap();
         assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
 
         drop(provider);
         drop(writer);
         join.await.unwrap();
+        let payloads = cost_payloads(&segment);
+        assert_eq!(payloads.len(), 2);
+        let estimate = payloads.iter()
+            .find(|payload| payload["invocation_id"] == planned.0).unwrap();
+        assert_eq!(estimate["request_binding_sha256"], planned.1);
+        let bound: super::super::pricing_basis::AuthorizationPriceBound =
+            serde_json::from_value(estimate["authorization_price_bound"].clone()).unwrap();
+        assert_eq!(planned.2,
+            cluster_budget_usd_to_nanos_ceil(bound.bound_usd("openai_api", "gpt-4o").unwrap()).unwrap());
         fixture.shutdown().await;
     }
 
@@ -3946,6 +3982,25 @@ mod tests {
     }
 
     #[test]
+    fn operation_plan_rejects_mismatched_frozen_price_envelope() {
+        let req = Request::default();
+        let budget = new_operation_budget(8_000, 1.0).unwrap();
+        for (provider, model, other_request, ceiling) in [
+            ("openai_api", "gpt-5", req.clone(), 128),
+            ("openai_api", "gpt-5", Request { prompt: "different".into(), ..req.clone() }, 64),
+            ("anthropic_api", "claude-sonnet-4-6", req.clone(), 64),
+        ] {
+            let other = crate::providers::cost::authorization_price_bound(provider, model, &other_request, ceiling).unwrap();
+            assert!(operation_budget_reservation_plan(&budget, "openai_api", "gpt-5", &req,
+                "test.operation_price_binding", Some(64), Some(&other)).is_err());
+        }
+        let correct = crate::providers::cost::authorization_price_bound("openai_api", "gpt-5", &req, 64).unwrap();
+        let plan = operation_budget_reservation_plan(&budget, "openai_api", "gpt-5", &req,
+            "test.operation_price_binding", Some(64), Some(&correct)).unwrap();
+        assert_eq!(plan.microusd, usd_bound_to_microusd(correct.bound_usd("openai_api", "gpt-5").unwrap()).unwrap());
+    }
+
+    #[test]
     fn operation_budget_uses_transport_bound_not_billing_reserve() {
         let implicit_request = Request::default();
         let transport_bound =
@@ -3967,6 +4022,7 @@ mod tests {
             &implicit_request,
             "test.operation_budget.transport_bound",
             Some(64),
+            crate::providers::cost::authorization_price_bound("local_ollama", "qwen-local", &implicit_request, 64).as_ref(),
         )
         .unwrap();
         let mut normalized_request = implicit_request;
@@ -3989,6 +4045,7 @@ mod tests {
             &Request::default(),
             "test.operation_budget",
             Some(64),
+            None,
         ) {
             Ok(_) => panic!("unknown provider price must block before dispatch"),
             Err(error) => error,
@@ -4006,6 +4063,7 @@ mod tests {
             &Request::default(),
             "test.operation_budget",
             Some(64),
+            crate::providers::cost::authorization_price_bound("local_ollama", "qwen-local", &Request::default(), 64).as_ref(),
         )
         .unwrap();
         assert_eq!(known_local_zero.microusd, 0);
@@ -4016,6 +4074,7 @@ mod tests {
             "gpt-5",
             &Request::default(),
             "test.operation_budget",
+            None,
             None,
         ) {
             Ok(_) => panic!("missing output ceiling must block before dispatch"),
@@ -6928,6 +6987,7 @@ mod tests {
         assert_eq!(frames.len(), 2);
         let estimate = &frames[0].1;
         assert_eq!(estimate["cost_bound_kind"], "token_bounded_unknown_pricing");
+        assert_eq!(estimate.get("authorization_price_bound"), Some(&serde_json::Value::Null));
         assert_eq!(estimate["output_token_ceiling"], 4096);
         assert!(estimate["total_eur_upper_bound"].is_null());
         assert!(estimate.get("total_eur").is_none());
@@ -7490,7 +7550,7 @@ mod tests {
     async fn permission_grant_wal_failure_after_cost_frame_blocks_dispatch() {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("permission-grant-failure-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -7529,6 +7589,13 @@ mod tests {
         drop(provider);
         drop(writer);
         assert!(join.await.unwrap_err().is_cancelled());
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_eq!(frames.len(), 1, "only the planned estimate precedes grant failure");
+        assert_eq!(frames[0].0, crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN);
+        let bound: super::super::pricing_basis::AuthorizationPriceBound =
+            serde_json::from_value(frames[0].1["authorization_price_bound"].clone()).unwrap();
+        assert!(bound.bound_usd("openai_api", "gpt-5").unwrap() > 0.0);
+        assert_eq!(frames[0].1["request_binding_sha256"].as_str().unwrap().len(), 64);
     }
 
     #[tokio::test]
@@ -8262,6 +8329,7 @@ mod tests {
         assert_eq!(payload["provider"], provider);
         assert_eq!(payload["model"], model);
         assert_eq!(payload["cost_bound_kind"], "unbounded_provider_invocation");
+        assert_eq!(payload.get("authorization_price_bound"), Some(&serde_json::Value::Null));
         assert_eq!(
             payload["input_bound_kind"],
             "utf8_bytes_plus_request_message_overhead"
@@ -8547,22 +8615,43 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("bound-authorizations-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let budget = new_operation_budget(100_000, 10.0).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
             AutonomyLevel::Full,
             Some(writer.clone()),
             test_input_token_cap(),
-        );
+        )
+        .with_operation_budget(budget.clone())
+        .with_council_daily_cap(dir.path(), Some(10.0))
+        .unwrap();
         let req = Request {
             model: Some("gpt-5".into()),
             prompt: "same request twice".into(),
             ..Request::default()
         };
 
+        let mut plans = Vec::new();
         for _ in 0..2 {
-            authorizer
+            let leaf = authorizer
                 .authorize_leaf("openai_api", &req, "test.bound_frames", false, Some(4096))
                 .await
                 .unwrap();
+            let operation = leaf.ticket.operation_budget_plan.as_ref().unwrap();
+            plans.push((
+                leaf.ticket.invocation_id.clone(),
+                leaf.ticket.request_binding_sha256.clone(),
+                operation.tokens,
+                operation.microusd,
+                operation.budget.clone(),
+                leaf.ticket.daily_budget_plan.as_ref().unwrap().clone(),
+            ));
+        }
+        // An estimate and permission alone do not acquire either budget.
+        assert!(!dir.path().join("budget/daily.json").exists());
+        {
+            let state = budget.state.lock().unwrap();
+            assert_eq!(state.remaining_tokens, 100_000);
+            assert_eq!(state.remaining_microusd, 10_000_000);
         }
         drop(authorizer);
         drop(writer);
@@ -8571,22 +8660,57 @@ mod tests {
         let frames = wal_frames_without_provider_gate_trust(&segment);
         assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Full);
         assert_eq!(frames.len(), 4);
-        for pair in frames.chunks_exact(2) {
+        let mut reserved_tokens = 0;
+        let mut reserved_microusd = 0;
+        for (pair, (id, binding, tokens, microusd, operation_budget, daily_plan)) in
+            frames.chunks_exact(2).zip(plans)
+        {
             assert_eq!(
                 pair[0].0,
                 crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
             );
             assert_eq!(pair[1].0, crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED);
             assert_eq!(pair[0].1["authorization_id"], pair[1].1["authorization_id"]);
+            assert_eq!(pair[0].1["authorization_id"], id);
             assert_eq!(
                 pair[0].1["request_binding_sha256"],
                 pair[1].1["request_binding_sha256"]
             );
-            assert_eq!(pair[0].1["authorization_id"].as_str().unwrap().len(), 64);
+            assert_eq!(pair[0].1["request_binding_sha256"], binding);
+            assert_eq!(id.len(), 64);
+            assert_eq!(binding.len(), 64);
+            let bound: super::super::pricing_basis::AuthorizationPriceBound =
+                serde_json::from_value(pair[0].1["authorization_price_bound"].clone()).unwrap();
+            let usd = bound.bound_usd("openai_api", "gpt-5").unwrap();
+            assert_eq!(serde_json::json!(bound.output_ceiling), pair[0].1["output_token_ceiling"]);
+            assert_eq!(serde_json::json!(bound.input_upper_bound), pair[0].1["input_token_upper_bound"]);
             assert_eq!(
-                pair[0].1["request_binding_sha256"].as_str().unwrap().len(),
-                64
+                usd.to_bits(),
+                crate::providers::cost::authorization_bound_usd("openai_api", "gpt-5", &req, 4096)
+                    .unwrap().to_bits()
             );
+            assert_eq!(microusd, usd_bound_to_microusd(usd).unwrap());
+            assert_eq!(
+                tokens,
+                u64::from(crate::providers::token_cap::request_token_upper_bound(&req)) + 4096
+            );
+            // Exercise the returned daily plan only after proving that the
+            // original authorization did not reserve it. No provider runs.
+            let reservation = daily_plan.reserve(crate::time::now_unix_i64()).unwrap();
+            let ledger: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(dir.path().join("budget/daily.json")).unwrap())
+                    .unwrap();
+            assert_eq!(ledger["pending"][&id]["reserved_usd_nanos"],
+                serde_json::json!((usd * 1_000_000_000.0).ceil() as u64));
+            assert_eq!(ledger["pending"][&id]["provider"], "openai_api");
+            assert_eq!(ledger["pending"][&id]["model"], "gpt-5");
+            reservation.release_before_dispatch().unwrap();
+            operation_budget.reserve(tokens, microusd).unwrap();
+            reserved_tokens += tokens;
+            reserved_microusd += microusd;
+            let state = budget.state.lock().unwrap();
+            assert_eq!(state.remaining_tokens, 100_000 - reserved_tokens);
+            assert_eq!(state.remaining_microusd, 10_000_000 - reserved_microusd);
         }
         assert_eq!(
             frames[0].1["request_binding_sha256"], frames[2].1["request_binding_sha256"],
@@ -8697,6 +8821,13 @@ mod tests {
         join.await.unwrap();
         let payloads = cost_payloads(&segment);
         assert_eq!(payloads.len(), 3);
+        for payload in &payloads {
+            let bound: super::super::pricing_basis::AuthorizationPriceBound =
+                serde_json::from_value(payload["authorization_price_bound"].clone()).unwrap();
+            bound.bound_usd("openai_api", "gpt-5").unwrap();
+            assert_eq!(serde_json::json!(bound.output_ceiling), payload["output_token_ceiling"]);
+            assert_eq!(serde_json::json!(bound.input_upper_bound), payload["input_token_upper_bound"]);
+        }
         assert_eq!(
             payloads[0]["cost_bound_kind"],
             "wire_token_bounded_reviewed_price_estimate"
@@ -8821,18 +8952,38 @@ mod tests {
 
     #[tokio::test]
     async fn only_canonical_local_providers_bypass_paid_call_gate() {
-        let local = CountingProvider {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("local-zero-price.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let budget = new_operation_budget(100_000, 1.0).unwrap();
+        let local_inner = CountingProvider {
             name: "local_ollama",
             calls: AtomicUsize::new(0),
             default_model: Some("qwen-local".into()),
         };
         let local = CostAuthorizingProvider::new(
-            &local,
-            ProviderCallAuthorizer::test_only(AutonomyLevel::Strict),
+            &local_inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_operation_budget(budget.clone())
+            .with_council_daily_cap(dir.path(), Some(1.0)).unwrap(),
             None,
             "test.local",
         );
-        assert!(local.complete(Request::default()).await.is_ok());
+        local.complete(Request::default()).await.unwrap();
+        assert_eq!(local_inner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(budget.state.lock().unwrap().remaining_microusd, 1_000_000);
+        drop(local);
+        drop(writer);
+        join.await.unwrap();
+        assert!(cost_payloads(&segment).is_empty(), "local leaves retain the no-paid-estimate path");
+        let ledger: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("budget/daily.json")).unwrap()).unwrap();
+        assert_eq!(ledger["settled_usd_nanos"], 0);
+        assert!(ledger["pending"].as_object().unwrap().is_empty());
 
         let unknown = CountingProvider {
             name: "unknown_zero_price",

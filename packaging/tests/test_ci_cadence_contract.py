@@ -289,6 +289,16 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(len(expected), 33)
         self.assertEqual(len(set(expected)), 33)
         self.assertEqual(selection["requiredTests"], sorted(expected))
+        authorization = json.loads(
+            (ROOT / "docs/verification/gold-wave2617-authorization-price-bound.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(authorization["tests"]), 26)
+        expected.extend(authorization["tests"])
+        selection = matrix["wave2617AuthorizationPriceRegressions"]
+        self.assertEqual(selection["requiredCount"], 59)
+        self.assertEqual(len(expected), 59)
+        self.assertEqual(len(set(expected)), 59)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):

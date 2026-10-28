@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-28T12:04:08.4094362Z",
-  "validationStatus": "W2616_CONTRACT_COMMENT_SCOPE_REPAIRED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-28T13:27:38.9376157Z",
+  "validationStatus": "wave2617-authorization-price-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -153,8 +153,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 50833,
-      "sha256": "82B898ABEFEE588E08314799637D19DE1FC33CB76CD7A665F0BAD22C59E96D01"
+      "bytes": 51366,
+      "sha256": "655E5A81097944CC49BC969CF3CBDDA316EAB703C7F542D815FF57005639AA19"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4613,18 +4613,23 @@
     },
     {
       "path": "docs/verification/gold-wave2614-prompt-components.json",
-      "bytes": 4225,
-      "sha256": "2781803F9939237DF136E168AC8CB004F2655A8E82183943985E63F2F9289908"
+      "bytes": 4905,
+      "sha256": "B676851514A275F0CA535915C9333514B4E919A33262EED91922544DE7D5D685"
     },
     {
       "path": "docs/verification/gold-wave2615-cost33-repair.json",
-      "bytes": 1015,
-      "sha256": "CD67CD3198002295312B8A8ACDF0B33FE973A0484FD7EAF85A58D062B946E3F0"
+      "bytes": 1550,
+      "sha256": "ABCA3FA9816AB58581076011ABE45CF311B725605052F09122C4747AF0143821"
     },
     {
       "path": "docs/verification/gold-wave2616-linux-observation.json",
-      "bytes": 1638,
-      "sha256": "9919056F0499CC0D64498A2220617022478AF0C83BA821DB886CAF35598C163E"
+      "bytes": 2021,
+      "sha256": "E0EA4DBEC105D2F145BA3FB6822376B5DDBD41A1365BBE7611C31416D281E591"
+    },
+    {
+      "path": "docs/verification/gold-wave2617-authorization-price-bound.json",
+      "bytes": 4510,
+      "sha256": "ADCBC3DFF0693FB572C598E88E5D7945B4623BDE49C4CFCAEF9AF4784B43BC18"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5608,8 +5613,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 78209,
-      "sha256": "39C1F7231752B39BBFB367BA58179E73A137C573BE3964861F37758678033ACD"
+      "bytes": 78764,
+      "sha256": "1016F9B46E07FCC63979D857D4CC313C43BC2C243DE5158AFDFF0915BA73E566"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5828,8 +5833,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2680121,
-      "sha256": "DE27F8BAF17949BED75DD66D827F22957E57A227B4528823D9B1AB961CFED0A4"
+      "bytes": 2683457,
+      "sha256": "0C9EBDD6DA13A617FBA598A4BB410F991832F7BDAEC5757FFC289B522DF6353C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9058,13 +9063,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 376828,
-      "sha256": "8E0A2C04F34241490C792EAE13AE8D27FE7980116F6F796BD33A15377FF8559F"
+      "bytes": 386043,
+      "sha256": "DF4C8BABFF5D26BEA5BC7FB0EE0106867D4DDAADC8302D9245FFA0FAB7BC7A51"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
-      "bytes": 62765,
-      "sha256": "F88F6F2F7474568FC84CBBC2886164FD73FFAD499C81A28B46A1CDBBF2559BD6"
+      "bytes": 65577,
+      "sha256": "2DAFA5838370AFB532DAE6956BC048457065CE6403EF56AACFDCA2C835F9C67B"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -9118,8 +9123,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/pricing_basis.rs",
-      "bytes": 7992,
-      "sha256": "3F296AC1AAEC958E4C58DB8054C6E303D5F7AB3DC52457D5C61944489DD437D5"
+      "bytes": 14352,
+      "sha256": "A7151D9741CFC562644EA54FA78598550EF4A3F0529ED812A1E2A40F3C3EBAA7"
     },
     {
       "path": "SRC/neothd/src/providers/recursive_mas_adapter.rs",

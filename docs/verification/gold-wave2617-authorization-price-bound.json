@@ -1,0 +1,59 @@
+{
+  "schema": "neoth.wave2617.authorization-price-bound.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "baseProducer": "8ee53deef9e39c732baa2990f3f8b14020153a04",
+  "roadmap": "ADOPT-20261012-A02",
+  "owner": "EVENT_TYPE_COST_ESTIMATE_SHOWN",
+  "tests": [
+    "providers::cost::authorization_price_observation_tests::bound_observation_keeps_unknown_price_distinct_from_local_zero",
+    "providers::cost::authorization_price_observation_tests::bound_observation_preserves_missing_empty_and_nonempty_systems",
+    "providers::cost_authorization::tests::authorization_id_and_binding_match_cost_and_permission_frames",
+    "providers::cost_authorization::tests::cluster_budget_no_quorum_blocks_before_raw_provider_dispatch",
+    "providers::cost_authorization::tests::cluster_budget_quorum_leaf_dispatches_exactly_once",
+    "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
+    "providers::cost_authorization::tests::cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch",
+    "providers::cost_authorization::tests::cost_wal_failure_blocks_dispatch",
+    "providers::cost_authorization::tests::default_claude_full_is_not_structurally_disabled_or_given_a_fake_cap",
+    "providers::cost_authorization::tests::finite_token_cap_with_unknown_price_never_claims_a_eur_upper_bound",
+    "providers::cost_authorization::tests::missing_cost_wal_also_blocks_unknown_bound_dispatch_at_full",
+    "providers::cost_authorization::tests::missing_cost_wal_blocks_cloud_dispatch",
+    "providers::cost_authorization::tests::only_canonical_local_providers_bypass_paid_call_gate",
+    "providers::cost_authorization::tests::operation_budget_daily_rejection_precedes_and_preserves_operation_quota",
+    "providers::cost_authorization::tests::operation_budget_rejection_rolls_back_daily_pre_dispatch_reservation",
+    "providers::cost_authorization::tests::operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch",
+    "providers::cost_authorization::tests::operation_budget_uses_transport_bound_not_billing_reserve",
+    "providers::cost_authorization::tests::operation_plan_rejects_mismatched_frozen_price_envelope",
+    "providers::cost_authorization::tests::permission_grant_wal_failure_after_cost_frame_blocks_dispatch",
+    "providers::cost_authorization::tests::unknown_bound_full_fail_closed_proceeds_and_is_audited",
+    "providers::cost_authorization::tests::unknown_bound_standard_channel_approval_proceeds_and_is_audited",
+    "providers::cost_authorization::tests::unknown_bound_standard_fail_closed_audits_then_blocks_before_dispatch",
+    "providers::cost_authorization::tests::wal_and_paid_gate_use_each_leaf_output_ceiling",
+    "providers::pricing_basis::authorization_bound_tests::frozen_bound_keeps_synthetic_and_zero_prices_without_table_lookup",
+    "providers::pricing_basis::authorization_bound_tests::frozen_bound_preserves_exact_legacy_arithmetic_and_roundtrip",
+    "providers::pricing_basis::authorization_bound_tests::frozen_bound_rejects_tampered_inputs_identity_and_policy"
+  ],
+  "newTests": 6,
+  "newRequiredRegistrations": 18,
+  "focusedRequiredCount": 59,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "fullAdmissionHistoryComplete": false,
+  "implementation": [
+    "Frozen versioned price basis and exact legacy USD arithmetic captured once for planned authorization",
+    "Same observation feeds operation/daily/cluster plans and request-bound pre-gate estimate WAL",
+    "Unknown price and missing output cap remain unavailable; local zero retains no-paid-estimate path",
+    "Existing lifecycle, UsageEvent, snapshot, settlement, recovery, and provider dispatch ownership unchanged"
+  ],
+  "verification": [
+    "Six new cases plus eight directly extended cases and twelve retained behavioral gates",
+    "Existing default features include cluster; same hosted compilation covers all selected cases",
+    "Source-only reader review finds generic JSON and event ordering consumers; no strict estimate schema found",
+    "Prompt-only independent Rust review: no concrete defect in supplied implementation and integration excerpts"
+  ],
+  "open": [
+    "Hosted rustfmt, compile and exact59 execution",
+    "Current producer full integration, native/release/Gold acceptance",
+    "Durable historical acquisition and actual cluster-reservation provenance beyond this planned observation",
+    "A02 tokenizer measurements and GUI/mobile presentation"
+  ]
+}

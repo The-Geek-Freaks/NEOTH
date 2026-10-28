@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       cost_replay_regressions:
-        description: 'Also run 33 exact prompt component, immutable usage, price provenance, capability and provider recovery regressions'
+        description: 'Also run 59 exact authorization-price, prompt component, immutable usage, budget and provider recovery regressions'
         type: boolean
         default: false
       macos_provider_regression:
@@ -282,7 +282,7 @@ jobs:
           matrix_path = root / "docs/verification/gold-wave95-96-test-matrix.json"
           matrix_bytes = matrix_path.read_bytes()
           matrix = json.loads(matrix_bytes)
-          spec = matrix.get("wave2614PromptComponentsRegressions", {})
+          spec = matrix.get("wave2617AuthorizationPriceRegressions", {})
           names = spec.get("requiredTests", [])
           report_path = "docs/verification/gold-wave2603-terminal-usage-replay.json"
           report_bytes = (root / report_path).read_bytes()
@@ -290,18 +290,21 @@ jobs:
           extra_report_bytes = (root / extra_report_path).read_bytes()
           component_report_path = "docs/verification/gold-wave2614-prompt-components.json"
           component_report_bytes = (root / component_report_path).read_bytes()
-          expected = json.loads(report_bytes)["tests"] + json.loads(extra_report_bytes)["tests"] + json.loads(component_report_bytes)["tests"]
-          if spec.get("requiredCount") != 33 or len(names) != 33 or len(set(names)) != 33 or names != sorted(expected):
-              raise SystemExit("cost replay selection must contain exactly 33 report-bound identities")
+          authorization_report_path = "docs/verification/gold-wave2617-authorization-price-bound.json"
+          authorization_report_bytes = (root / authorization_report_path).read_bytes()
+          expected = json.loads(report_bytes)["tests"] + json.loads(extra_report_bytes)["tests"] + json.loads(component_report_bytes)["tests"] + json.loads(authorization_report_bytes)["tests"]
+          if spec.get("requiredCount") != 59 or len(names) != 59 or len(set(names)) != 59 or names != sorted(expected):
+              raise SystemExit("cost replay selection must contain exactly 59 report-bound identities")
           if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
               raise SystemExit("invalid cost replay identity")
           required_recovery = "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently"
           if required_recovery not in names:
               raise SystemExit("real provider recovery case is missing")
-          allowed_sources = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/daemon/capability_decay.rs", "SRC/neothd/src/tokens/prompt_attribution.rs", "SRC/neothd/src/pipeline/enriched_request.rs", "SRC/neothd/src/cli/chat.rs"}
+          allowed_sources = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/daemon/capability_decay.rs", "SRC/neothd/src/tokens/prompt_attribution.rs", "SRC/neothd/src/pipeline/enriched_request.rs", "SRC/neothd/src/cli/chat.rs"}
           records = []
           inputs = {"docs/verification/gold-wave95-96-test-matrix.json": hashlib.sha256(matrix_bytes).hexdigest(), report_path: hashlib.sha256(report_bytes).hexdigest(), extra_report_path: hashlib.sha256(extra_report_bytes).hexdigest()}
           inputs[component_report_path] = hashlib.sha256(component_report_bytes).hexdigest()
+          inputs[authorization_report_path] = hashlib.sha256(authorization_report_bytes).hexdigest()
           for name in names:
               matches = [record for record in matrix.get("requiredNativeTests", []) if record.get("test") == name and record.get("junitClass") == "neoth"]
               if len(matches) != 1 or matches[0].get("sourcePath") not in allowed_sources:
@@ -313,9 +316,9 @@ jobs:
                   raise SystemExit(f"source binding mismatch: {relative}")
               records.append({"test": name, "sourcePath": relative, "sourceSha256": actual, "junitClass": "neoth"})
               inputs[relative] = actual
-          for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/tokens/budget.rs", "SRC/neothd/src/tokens/mod.rs", "SRC/neothd/src/cli/usage.rs", "SRC/neothd/src/providers/token_cap.rs"):
+          for relative in (".github/workflows/cli-reference.yml", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/tokens/budget.rs", "SRC/neothd/src/tokens/mod.rs", "SRC/neothd/src/cli/usage.rs", "SRC/neothd/src/providers/token_cap.rs", "SRC/neothd/src/council/daily_budget.rs", "SRC/neothd/src/cluster/budget_raft/service.rs", "SRC/neothd/src/wal/writer.rs", "SRC/neothd/src/wal/events.rs"):
               inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
-          receipt = {"schema": "neoth.cost-replay-regressions.v3", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 33, "fixtures": records, "inputs": inputs}
+          receipt = {"schema": "neoth.cost-replay-regressions.v4", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 59, "fixtures": records, "inputs": inputs}
           (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
           (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
           PY
@@ -343,8 +346,8 @@ jobs:
               failed_or_missing=$((failed_or_missing + 1))
             fi
           done < "$proof_dir/fixture-names.txt"
-          printf 'selected=33\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
-          test "$visited" -eq 33
+          printf 'selected=59\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 59
           test "$failed_or_missing" -eq 0
 
       - name: Upload cost replay regression evidence

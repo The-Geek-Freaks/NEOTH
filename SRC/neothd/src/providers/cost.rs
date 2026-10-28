@@ -405,7 +405,8 @@ pub fn predict_authorization_bound(
 /// Reviewed USD upper bound for the exact request envelope authorized at a
 /// provider leaf. Unlike the UI estimate, this returns `None` for an unknown
 /// price row and never substitutes the display-only conservative fallback.
-/// The Council daily-cap ledger uses this value for atomic admission.
+/// Independent legacy arithmetic retained only for regression comparison.
+#[cfg(test)]
 pub(crate) fn authorization_bound_usd(
     provider: &str,
     model: &str,
@@ -421,6 +422,23 @@ pub(crate) fn authorization_bound_usd(
     let output_eur =
         f64::from(output_token_ceiling.max(1)) / 1_000_000.0 * f64::from(price.output_eur_per_mtok);
     Some((input_eur + output_eur) / EUR_PER_USD)
+}
+
+/// Capture the exact planned USD calculation without consulting the price
+/// table again when it is serialized or validated. This is not a reservation.
+pub(crate) fn authorization_price_bound(
+    provider: &str,
+    model: &str,
+    req: &Request,
+    output_token_ceiling: u32,
+) -> Option<super::pricing_basis::AuthorizationPriceBound> {
+    let price = lookup_price(provider, model)?;
+    Some(super::pricing_basis::AuthorizationPriceBound::from_price(
+        provider, model, price,
+        authorization_input_token_upper_bound(req, model),
+        output_token_ceiling,
+        req.system.as_deref().is_some_and(|system| !system.is_empty()),
+    ))
 }
 
 /// Reviewed USD upper bound for any request that can pass a known hard input
@@ -1612,5 +1630,44 @@ mod tests {
                 "{provider}/{model} must use the unknown-price gate"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod authorization_price_observation_tests {
+    use super::*;
+
+    #[test]
+    fn bound_observation_preserves_missing_empty_and_nonempty_systems() {
+        let provider = "anthropic_api";
+        let model = "claude-sonnet-4-6";
+        let price = lookup_price(provider, model).unwrap();
+        let mut inputs = Vec::new();
+        for system in [None, Some(String::new()), Some("policy".to_owned())] {
+            let nonempty = system.as_deref().is_some_and(|value| !value.is_empty());
+            let req = Request { prompt: "unicode: ä".to_owned(), system, ..Request::default() };
+            let bound = authorization_price_bound(provider, model, &req, 32).unwrap();
+            assert_eq!(bound.has_nonempty_system, nonempty);
+            assert_eq!(bound.output_ceiling, 32);
+            assert_eq!(bound.input_upper_bound, authorization_input_token_upper_bound(&req, model));
+            let input = f64::from(bound.input_upper_bound) / 1_000_000.0
+                * f64::from(price.input_eur_per_mtok) * if nonempty { 1.25 } else { 1.0 };
+            let output = 32_f64 / 1_000_000.0 * f64::from(price.output_eur_per_mtok);
+            assert_eq!(bound.bound_usd(provider, model).unwrap().to_bits(), ((input + output) / 0.92).to_bits());
+            assert_eq!(bound.bound_usd(provider, model).unwrap().to_bits(), authorization_bound_usd(provider, model, &req, 32).unwrap().to_bits());
+            inputs.push(bound.input_upper_bound);
+        }
+        // An explicitly empty system still reserves its message envelope.
+        assert_eq!(inputs[1] - inputs[0], 256);
+        assert_eq!(inputs[2] - inputs[1], 6);
+    }
+
+    #[test]
+    fn bound_observation_keeps_unknown_price_distinct_from_local_zero() {
+        let request = Request::default();
+        assert!(authorization_price_bound("unknown_cloud", "future-model", &request, 32).is_none());
+        let zero = authorization_price_bound("local_ollama", "local-model", &request, 0).unwrap();
+        assert_eq!(zero.output_ceiling, 1);
+        assert_eq!(zero.bound_usd("local_ollama", "local-model").unwrap().to_bits(), 0_f64.to_bits());
     }
 }
