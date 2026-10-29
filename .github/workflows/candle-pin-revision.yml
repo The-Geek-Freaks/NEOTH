@@ -14,6 +14,20 @@ on:
         default: false
         type: boolean
 
+      qualify_candidate:
+        description: Exercise the Root-reviewed exact solver candidate on Linux
+        required: false
+        default: false
+        type: boolean
+      admitted_lock_sha256:
+        description: Root-admitted candidate lock digest required for behavior qualification
+        required: false
+        type: string
+      admitted_delta_sha256:
+        description: Root-admitted complete solver delta digest required for behavior qualification
+        required: false
+        type: string
+
 permissions:
   contents: read
 
@@ -196,11 +210,16 @@ jobs:
     needs: source_contracts
     if: github.ref == 'refs/heads/main' && inputs.resolve_candidate
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 150
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
       CARGO_BUILD_JOBS: '1'
       CARGO_INCREMENTAL: '0'
+      RUSTUP_TOOLCHAIN: '1.91.0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      ADMITTED_LOCK_SHA256: ${{ inputs.admitted_lock_sha256 }}
+      ADMITTED_DELTA_SHA256: ${{ inputs.admitted_delta_sha256 }}
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -378,6 +397,64 @@ jobs:
           (proof / "SHA256SUMS").write_text("".join(
               sha(p.read_bytes()) + "  " + p.name + "\n" for p in files
           ))
+          PY
+
+      - name: Require Root-reviewed candidate before behavior qualification
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py prepare
+      - name: Restore hosted candidate Cargo inputs
+        if: inputs.qualify_candidate
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-pin-qualification-rust191-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Install pinned audit tool
+        if: inputs.qualify_candidate
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Require fresh unchanged-policy audit
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py audit
+      - name: Generate and check candidate notices
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py notices
+      - name: Exercise exact ZIP Candle and SSH consumers
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py exercise
+      - name: Verify complete cases and unchanged candidate
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py finish
+      - name: Hash bounded solver and behavior evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-pin-solver"
+          if proof.is_dir():
+              files = sorted(p for p in proof.iterdir() if p.is_file() and p.name != "SHA256SUMS")
+              if any(p.is_symlink() for p in files) or sum(p.stat().st_size for p in files) > 128 * 1024 * 1024:
+                  raise SystemExit("proof inventory exceeds bounds")
+              (proof / "SHA256SUMS").write_text("".join(
+                  hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n"
+                  for p in files
+              ))
           PY
       - name: Retain original solver candidate and full delta
         if: always()

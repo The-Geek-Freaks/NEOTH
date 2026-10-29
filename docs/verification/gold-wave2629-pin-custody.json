@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2629.pin-custody.v1",
-  "status": "SEVEN_SOURCE_CONTRACTS_ROOT_ADMITTED_SOLVER_WIRED_PENDING",
+  "status": "SOURCE_AND_SOLVER_ROOT_ADMITTED_BEHAVIOR_WIRED_PENDING",
   "base": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
   "targetVersions": {
     "zip": "9.0.5",
@@ -30,12 +30,12 @@
     "run": "40857789758"
   },
   "pinsImported": false,
-  "solverExecuted": false,
+  "solverExecuted": true,
   "localRuntimeExecuted": false,
   "goldClosed": false,
   "remaining": [
-    "Resolve from committed lock with stable metadata and complete graph delta",
-    "ZIP/Candle/SSH compatibility and fresh audit",
+    "Exact Linux ZIP/Candle/SSH consumers, notices and fresh unchanged-policy audit",
+    "Applicable Windows/platform qualification for disclosed dependency edges",
     "Root-reviewed import preserving physical Cargo.lock WIP"
   ],
   "patchTransport": "Use the existing exact-patch convention: LF bytes and significant blank context markers preserved; all other whitespace checks retained",
@@ -61,5 +61,32 @@
     "dependencyBehaviorAccepted": false,
     "freshAuditAccepted": false,
     "pinsImported": false
+  },
+  "solverAcceptance": {
+    "producer": "17fc76b49a4aba22bd31c6b40f9b55d965d77221",
+    "run": "40860582088",
+    "proof": "work/gold-20260906/wave2630-pin-solver/ROOT_ADMISSION.json",
+    "proofSha256": "34C8C9308E2A771D97A0032E9048839D266693A04C32654E774C310818839A37",
+    "candidateLockSha256": "4393b0caa400ee345b158bba96b853e4caf65aa48d0a5263c17299648f1eb8b2",
+    "solverDeltaSha256": "c53fb7e0ebefd09d5c0825130a560832f97cdd7608e70b5c9fa074fe178a25f7",
+    "sourceCases": 7,
+    "replacedPackages": 2,
+    "otherEdgeChanges": 26,
+    "newTransitivePackages": 0,
+    "completeTextualLockDeltaVerified": true,
+    "admissionScope": "Candidate for behavior qualification; no import"
+  },
+  "behaviorQualification": {
+    "state": "IMPLEMENTED_HOSTED_PENDING",
+    "source": "packaging/qualify_pin_revision.py",
+    "gate": "Exact Root-admitted lock and full delta before any compile",
+    "tests": "Actual Candle3; document consumers; controlled browser ZIP3; exact updater ZIP1; SSH transport and seven exact credential authority cases",
+    "testEvidence": "Identical discovery/execution command selection, complete nonempty case set, zero failed/ignored",
+    "audit": "Pinned0.22.2, fresh DB commit/time and full findings retained; unchanged policy and successful audit required",
+    "notices": "Actual generate/check with admitted lock",
+    "sourceBinding": "All tracked SRC paths plus control scripts/workflow/active revision; exact scope and hashes before/after",
+    "processBounds": "Hosted-only process group, per-stream10MiB cap, explicit deadlines and reap on failure",
+    "review": "Independent prompt review found no definite lifecycle/receipt bug; execution pending",
+    "platform": "Linux only; Windows/macOS/Gold false"
   }
 }
