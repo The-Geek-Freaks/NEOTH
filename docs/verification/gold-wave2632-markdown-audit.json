@@ -1,0 +1,34 @@
+{
+  "schema": "neoth.wave2632.markdown-audit.v1",
+  "status": "EXPANDED_SOLVER_IMPLEMENTED_HOSTED_PENDING",
+  "failedRun": "40862849247",
+  "producer": "7a60f1914fa56d7b368b5995dad2936a44aa437e",
+  "database": "40f5be6fb12ed93fc591bf4ab23b7d793b3f2239",
+  "advisory": "RUSTSEC-2026-0414",
+  "vulnerablePackage": "pulldown-cmark0.13.3",
+  "zipRusshVulnerabilities": 0,
+  "totalBlockingVulnerabilities": 1,
+  "failureProof": "work/gold-20260906/wave2632-markdown-audit/FAILURE_ASSESSMENT.json",
+  "repair": {
+    "version": "0.13.5",
+    "checksum": "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb",
+    "rustVersion": "1.71.1",
+    "yanked": false,
+    "consumer": "i-slint-common1.16.1; declared ^0.13.0",
+    "scope": "Lock-only update; older0.12 copy retained; no Slint source changes",
+    "upstream": "https://github.com/pulldown-cmark/pulldown-cmark/pull/1102",
+    "checks": "Exact version, registry and checksum; older line unchanged; Slint selects reviewed package",
+    "review": "Independent prompt review found no definite problem with this bounded lock-only repair"
+  },
+  "remaining": [
+    "Resolve and independently admit expanded candidate and complete graph delta; old hashes cannot authorize the new graph",
+    "Fresh unchanged-policy audit, notices and exact ZIP/Candle/SSH consumers",
+    "Slint consumer and applicable Windows/macOS qualification",
+    "Root-reviewed import preserving physical Cargo.lock WIP"
+  ],
+  "policyChanged": false,
+  "dependencyBehaviorExecuted": false,
+  "pinsImported": false,
+  "localRuntimeExecuted": false,
+  "goldAccepted": false
+}

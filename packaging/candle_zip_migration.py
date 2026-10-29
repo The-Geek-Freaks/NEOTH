@@ -138,6 +138,18 @@ def verify_resolution(proof: Path) -> None:
                 and russh[0].get("checksum")
                 == "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58",
                 "Russh revision resolution/checksum mismatch")
+        markdown = [p for p in current if p["name"] == "pulldown-cmark"
+                    and p["version"].startswith("0.13.")]
+        require(len(markdown) == 1 and markdown[0]["version"] == "0.13.5"
+                and markdown[0].get("source") == REGISTRY
+                and markdown[0].get("checksum")
+                == "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb",
+                "Markdown security resolution/checksum mismatch")
+        require([p for p in baseline if p["name"] == "pulldown-cmark"
+                 and not p["version"].startswith("0.13.")]
+                == [p for p in current if p["name"] == "pulldown-cmark"
+                    and not p["version"].startswith("0.13.")],
+                "unreviewed older Markdown line change")
         require([p for p in baseline if p["name"] == "pageant"]
                 == [p for p in current if p["name"] == "pageant"],
                 "unreviewed Pageant change")
@@ -155,6 +167,16 @@ def verify_resolution(proof: Path) -> None:
     second = json.loads((proof / "metadata-2.json").read_bytes())
     require(first == second, "locked metadata is unstable")
     packages = first["packages"]
+    if revision_active:
+        markdown = [p for p in packages if p["name"] == "pulldown-cmark"
+                    and p["version"].startswith("0.13.")]
+        require(len(markdown) == 1 and markdown[0]["version"] == "0.13.5",
+                "metadata retains vulnerable Markdown line")
+        slint = [p for p in packages if p["name"] == "i-slint-common"]
+        require(len(slint) == 1, "Markdown consumer identity changed")
+        node = next(n for n in first["resolve"]["nodes"] if n["id"] == slint[0]["id"])
+        require(markdown[0]["id"] in node["dependencies"],
+                "Slint does not consume reviewed Markdown")
     selected = [p for p in packages if p["name"] == "candle-core"]
     require(len(selected) == 1 and selected[0]["source"] is None
             and Path(selected[0]["manifest_path"]).resolve() == (VENDOR / "Cargo.toml").resolve(),

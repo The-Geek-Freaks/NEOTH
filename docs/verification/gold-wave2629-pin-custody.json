@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2629.pin-custody.v1",
-  "status": "SOURCE_AND_SOLVER_ROOT_ADMITTED_BEHAVIOR_WIRED_PENDING",
+  "status": "BEHAVIOR_BLOCKED_BY_FRESH_MARKDOWN_ADVISORY_EXPANDED_SOLVER_PENDING",
   "base": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
   "targetVersions": {
     "zip": "9.0.5",
@@ -77,7 +77,7 @@
     "admissionScope": "Candidate for behavior qualification; no import"
   },
   "behaviorQualification": {
-    "state": "IMPLEMENTED_HOSTED_PENDING",
+    "state": "AUDIT_BLOCKED_BEFORE_BEHAVIOR_EXECUTION_SEE_WAVE2632",
     "source": "packaging/qualify_pin_revision.py",
     "gate": "Exact Root-admitted lock and full delta before any compile",
     "tests": "Actual Candle3; document consumers; controlled browser ZIP3; exact updater ZIP1; SSH transport and seven exact credential authority cases",

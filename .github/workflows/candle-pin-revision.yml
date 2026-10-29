@@ -325,6 +325,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cargo +1.91.0 update --manifest-path SRC/Cargo.toml -p pulldown-cmark@0.13.3 --precise 0.13.5 2>&1 | (ulimit -f 10240; tee "$PROOF/markdown-resolve.log")
           cargo +1.91.0 update --manifest-path SRC/Cargo.toml -p zip --precise 9.0.5 2>&1 | (ulimit -f 10240; tee "$PROOF/zip-resolve.log")
           cargo +1.91.0 update --manifest-path SRC/Cargo.toml -p russh --precise 0.64.1 2>&1 | (ulimit -f 10240; tee "$PROOF/russh-resolve.log")
           sha256sum SRC/Cargo.lock > "$PROOF/stable-lock.SHA256SUMS"
@@ -385,7 +386,7 @@ jobs:
               "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "ROOT_REVIEW_REQUIRED",
               "qualifiedSourceReceiptSha256": sha((proof / "qualified-inputs.json").read_bytes()),
               "lockSha256": lock_hash, "metadataSha256": metadata_hashes,
-              "pins": {"zip": "9.0.5", "russh": "0.64.1"},
+              "pins": {"zip": "9.0.5", "russh": "0.64.1", "pulldown-cmark": "0.13.5"},
               "passedSourceCases": 7, "solverExecuted": True, "dependencyCompileOrTestsExecuted": False,
               "dependencyBehaviorAccepted": False, "freshAuditAccepted": False,
               "pinsImported": False, "goldAccepted": False,

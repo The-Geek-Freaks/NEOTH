@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_AND_SOLVER_ADMITTED_BEHAVIOR_PENDING",
+  "status": "FRESH_AUDIT_BLOCKER_REPAIRED_IN_CANDIDATE_NEW_SOLVER_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 455872,
-    "sha256": "4D84400535BB03C3D49BEE87AF3D92D8CD27A2A8446F2DB98282E5FDDC28F8E0"
+    "bytes": 456075,
+    "sha256": "C3251E773D4AAAD18B836554F73041486D4345D76EC23429BE8DE7D60AD9C65E"
   },
-  "sourceInputs": 2489,
+  "sourceInputs": 2490,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -88122,6 +88122,44 @@
       }
     ],
     "note": "Exact solver lock/full delta Root admitted; actual consumer qualification wired; no pin import or local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2632MarkdownAuditRepair": {
+    "base": "7a60f1914fa56d7b368b5995dad2936a44aa437e",
+    "sources": [
+      {
+        "path": ".github/workflows/candle-pin-revision.yml",
+        "bytes": 23513,
+        "sha256": "590AADD0334B0E1EBCE899F15B32053BE22176F98FF326EC5A52121F51B9DF91",
+        "blob": "935112d2612c11fc3e6ddc14d81b0bde82b9eda5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2704311,
+        "sha256": "34E4569192441FB9FE1DE89EE4490BF767EA736348D8D4E35854CA3C5B4281D0",
+        "blob": "16e280a1cd3e08f171acd1f58be2dab49be59230"
+      },
+      {
+        "path": "docs/verification/gold-wave2629-pin-custody.json",
+        "bytes": 5164,
+        "sha256": "B9EF8089726535A4D5A9726EC01C0A7EB4E3C112BFBEB13DCAEA59DF8C3ECCAA",
+        "blob": "20e8718dd36c873e828a61a20e81cbdca73d2c80"
+      },
+      {
+        "path": "docs/verification/gold-wave2632-markdown-audit.json",
+        "bytes": 1605,
+        "sha256": "0DA2C845FED2D412B1DDB42D11EB2930BF5CA6A5206D8197F0AFF201978686A8",
+        "blob": "e3cd31f0787d034ba44daa51d42adb1c0d1af3b2"
+      },
+      {
+        "path": "packaging/candle_zip_migration.py",
+        "bytes": 12911,
+        "sha256": "08B82F4EBD3549EF28F81AFAAA0004B201D74CB5E28ACC615AA07EAB20C75005",
+        "blob": "915d876256c699682a60eda0b1a477109b9408d7"
+      }
+    ],
+    "note": "RUSTSEC-2026-0414 discovered before behavior; narrow pulldown0.13.5 solver candidate, preserve0.12; no policy change, pin import or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
