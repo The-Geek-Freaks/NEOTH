@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2635_PROVISIONAL_DEPENDENCY_IMPORT_NATIVE_ACCEPTANCE_PENDING",
+  "status": "W2635_DEPENDENCY_CONTRACT_ALIGNMENT_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 456829,
-    "sha256": "B9B99EC09A0ADF8AF46B7A1466ABB215D3BFCBC772023EEB5CF31B952D842C65"
+    "bytes": 456818,
+    "sha256": "6220A67802E71DDD791A77F254ADBF3BDFEE4CCEEF5F3C4B7E1453A2BAE3FD35"
   },
   "sourceInputs": 2494,
   "requiredNativeTests": [
@@ -88477,6 +88477,32 @@
       }
     ],
     "note": "Reviewed candidate publication overlaps fast checks only; full native CI waits for sole active focused67 run. Protected physical lock remains byte-identical.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2635ReleaseContractAlignment": {
+    "base": "db82c84e29beb5960d074599322470b41a153e0f",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2711228,
+        "sha256": "3FCB8CEC8F9291F0A8B36D52189AC186D9E76413CCD7FF345A944215569620B6",
+        "blob": "0b292f775a7c88b9bc0e7d0108c935436aa9ac69"
+      },
+      {
+        "path": "docs/verification/gold-wave2635-native-dependencies.json",
+        "bytes": 4943,
+        "sha256": "14FEF993A8F44ED5537C0759EFF85D77D052EF8470C8DEAE9D9A9894A4933FB0",
+        "blob": "7886f8f2197383579b49b2fd65a0314d8683f9c0"
+      },
+      {
+        "path": "packaging/tests/test_release_capability_contract.py",
+        "bytes": 21733,
+        "sha256": "F0FB6FC713434528499279201B5B540FC96E07CC08EC04DBEAE3D86E6DB88CC5",
+        "blob": "00f74c79b3b50292b889d5d2be147fec723a7899"
+      }
+    ],
+    "note": "Repair stale release contract expectation to exact admitted pin and three native SSH lanes; optional and ring boundaries unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

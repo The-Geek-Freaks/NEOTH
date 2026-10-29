@@ -130,5 +130,13 @@
     "Run current-producer full locked CI with native SSH lanes",
     "Admit original per-platform artifacts and repair any concrete failure",
     "Current-producer release and final Gold acceptance"
-  ]
+  ],
+  "fastGateRepair": {
+    "run": "40873698076",
+    "producer": "db82c84e29beb5960d074599322470b41a153e0f",
+    "failure": "Existing release capability contract pinned old russh0.63.2 and pre-discovery command",
+    "repair": "Require exact admitted russh0.64.1, all three platforms and same locked lib command",
+    "policyWeakened": false,
+    "hostedRecheck": "pending"
+  }
 }

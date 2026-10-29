@@ -122,15 +122,16 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             with self.subTest(bundle=bundle):
                 self.assertNotIn("ssh-tunnel", features[bundle])
 
-        self.assertEqual(russh["version"], "=0.63.2")
+        self.assertEqual(russh["version"], "=0.64.1")
         self.assertIs(russh["optional"], True)
         self.assertIs(russh["default-features"], False)
         self.assertSetEqual(set(russh["features"]), {"ring"})
 
-        self.assertIn(
-            "- { os: ubuntu-24.04, feature: ssh-tunnel }",
-            self.ci_workflow,
-        )
+        for os in ("ubuntu-24.04", "windows-2022", "macos-14"):
+            with self.subTest(os=os):
+                self.assertIn(
+                    f"- {{ os: {os}, feature: ssh-tunnel }}", self.ci_workflow
+                )
         self.assertIn(
             "cargo check -p neoth --locked --features ${{ matrix.feature }}",
             self.ci_workflow,
@@ -140,8 +141,8 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             self.ci_workflow,
         )
         self.assertIn(
-            "cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ "
-            "-- --test-threads=1",
+            "cargo test -p neoth --lib --locked --features ssh-tunnel transport::ssh_ "
+            "-- --test-threads=1 --color never",
             self.ci_workflow,
         )
 
