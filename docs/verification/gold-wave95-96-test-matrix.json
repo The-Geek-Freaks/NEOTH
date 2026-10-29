@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "fixture-anchor-accounting-hosted-pending",
+  "status": "fixture-anchor-root-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454604,
-    "sha256": "1EC9693D53AB9762E7394FA541FA3BB871C4D979D7CC6CF40ED82E529C2A5376"
+    "bytes": 454598,
+    "sha256": "A5E02F48654EA7D13FD0E443671DBCBFE78FBBBAE3B48DE8D3F8FD874E834ACB"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87982,6 +87982,20 @@
       }
     ],
     "note": "27 snapshot cases pass; actual Cargo alias proof passes; account exactly for required entity-free anchors before next real CLI qualification.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2628FixtureRoot": {
+    "base": "a38233991e3e5de8109b8c599858e16764a41d91",
+    "sources": [
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 11794,
+        "sha256": "FD5E46F8EC682297DDB9C0BCE5926D7ABE823F8B7E3CBAABAD36DE81F307328E",
+        "blob": "d7db38682f9d518a16cb1f33591908cfc249c915"
+      }
+    ],
+    "note": "Resolve relative Cargo sources against fixture checkout; preserve absolute AST source handling. Static follow-up before qualification.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -186,7 +186,7 @@ def main() -> int:
         if set(package_ids) != set(cargo_nodes):
             raise RuntimeError("Cargo reconciliation lost package provenance")
         represented = {
-            Path(node["source_file"]).resolve().relative_to(repo).as_posix()
+            (repo / node["source_file"]).resolve().relative_to(repo).as_posix()
             for node in before["nodes"]
             if node.get("source_file")
         }

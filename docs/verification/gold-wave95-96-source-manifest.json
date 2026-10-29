@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T10:25:34.5430007Z",
-  "validationStatus": "fixture-anchor-accounting-hosted-pending",
+  "capturedUtc": "2026-10-29T10:26:04.4103428Z",
+  "validationStatus": "fixture-anchor-root-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5933,8 +5933,8 @@
     },
     {
       "path": "scripts/test_graphify_cli_contract.py",
-      "bytes": 11791,
-      "sha256": "D912970A56C14E16AE88436C77724EEE53C4EBFA45E954127818216D289AA7B6"
+      "bytes": 11794,
+      "sha256": "FD5E46F8EC682297DDB9C0BCE5926D7ABE823F8B7E3CBAABAD36DE81F307328E"
     },
     {
       "path": "SRC/_gate_gui_check.bat",
