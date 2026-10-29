@@ -433,6 +433,17 @@ jobs:
         if: inputs.qualify_candidate
         shell: bash
         run: python packaging/qualify_pin_revision.py exercise
+      - name: Install hosted GUI build prerequisites
+        if: inputs.qualify_candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-0
+      - name: Build actual Slint GUI consumer with admitted lock
+        if: inputs.qualify_candidate
+        shell: bash
+        run: python packaging/qualify_pin_revision.py slint
       - name: Verify complete cases and unchanged candidate
         if: inputs.qualify_candidate
         shell: bash

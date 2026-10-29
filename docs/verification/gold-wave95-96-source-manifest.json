@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T11:17:29.0130720Z",
-  "validationStatus": "FRESH_AUDIT_BLOCKER_REPAIRED_IN_CANDIDATE_NEW_SOLVER_PENDING",
+  "capturedUtc": "2026-10-29T11:27:42.0732907Z",
+  "validationStatus": "W2633_EXPANDED_SOLVER_ADMITTED_BEHAVIOR_SLINT_BUILD_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/candle-pin-revision.yml",
-      "bytes": 23513,
-      "sha256": "590AADD0334B0E1EBCE899F15B32053BE22176F98FF326EC5A52121F51B9DF91"
+      "bytes": 24018,
+      "sha256": "0AB803C937FFB16E7C10AA436BCBD5DA44F20CCFB8E8C08D42C8150AAEF7AB10"
     },
     {
       "path": ".github/workflows/candle-zip-migration.yml",
@@ -4668,8 +4668,8 @@
     },
     {
       "path": "docs/verification/gold-wave2632-markdown-audit.json",
-      "bytes": 1605,
-      "sha256": "0DA2C845FED2D412B1DDB42D11EB2930BF5CA6A5206D8197F0AFF201978686A8"
+      "bytes": 2638,
+      "sha256": "A407B2FD95196F58141A7B8DCA23DFF7BA0664A5E08D71FF879E8B4B237E80A6"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5633,8 +5633,8 @@
     },
     {
       "path": "packaging/qualify_pin_revision.py",
-      "bytes": 14243,
-      "sha256": "7B08429E0A63531BA8B9308508D43EB8E31EAF9FCB25CDBE081201DC0735E6D6"
+      "bytes": 18001,
+      "sha256": "6FFB2E8606B636B94CC13F8A25C45DF13FBCF619F2FFD4032C0D2C4FBCBA7BA2"
     },
     {
       "path": "packaging/roadmap_release_gate.py",
@@ -5908,8 +5908,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2704311,
-      "sha256": "34E4569192441FB9FE1DE89EE4490BF767EA736348D8D4E35854CA3C5B4281D0"
+      "bytes": 2706298,
+      "sha256": "B9C29ED1D9B570439AF907375F8EDC43413573B79BFCD66832B8E0AA08E56B40"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

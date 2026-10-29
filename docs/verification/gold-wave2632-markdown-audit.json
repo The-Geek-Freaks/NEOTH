@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2632.markdown-audit.v1",
-  "status": "EXPANDED_SOLVER_IMPLEMENTED_HOSTED_PENDING",
+  "status": "EXPANDED_SOLVER_ROOT_ADMITTED_BEHAVIOR_AND_SLINT_BUILD_PENDING",
   "failedRun": "40862849247",
   "producer": "7a60f1914fa56d7b368b5995dad2936a44aa437e",
   "database": "40f5be6fb12ed93fc591bf4ab23b7d793b3f2239",
@@ -20,10 +20,31 @@
     "checks": "Exact version, registry and checksum; older line unchanged; Slint selects reviewed package",
     "review": "Independent prompt review found no definite problem with this bounded lock-only repair"
   },
+  "expandedSolver": {
+    "producer": "57bdf0631c87aba51f2e10370eb1e8b28197c7e5",
+    "run": "40864864672",
+    "proof": "work/gold-20260906/wave2632-markdown-audit/ROOT_ADMISSION.json",
+    "proofSha256": "B04AC4813FC2B7FD6E2F91B8B004CA44F439DE9458317C6F10A53DE469120CE8",
+    "candidateLockSha256": "d10d904aee9da564baa18b3d3f0f4e644fe2715fce4f1edcdbf3d633a7a97469",
+    "deltaSha256": "92623be538df477f145fc7d8f4a9d5a0346229ef5472e36596234e36f108488d",
+    "sourceCases": 7,
+    "sourceBindings": 113,
+    "replacedPackages": 3,
+    "otherPackageEdgeChanges": 27,
+    "fullTextualLockDeltaVerified": true,
+    "olderMarkdownUnchanged": true
+  },
+  "slintGate": {
+    "package": "neothd-gui",
+    "scope": "Real default-feature GUI build on the exact admitted lock; verify active Markdown feature path",
+    "artifactBinding": "Cargo compiler-artifact source identity and emitted executable; streamed binary digest",
+    "proof": "work/gold-20260906/wave2633-slint-consumer",
+    "review": "Independent prompt review; build proof does not establish Markdown behavior or GUI runtime",
+    "runtimeAccepted": false
+  },
   "remaining": [
-    "Resolve and independently admit expanded candidate and complete graph delta; old hashes cannot authorize the new graph",
     "Fresh unchanged-policy audit, notices and exact ZIP/Candle/SSH consumers",
-    "Slint consumer and applicable Windows/macOS qualification",
+    "Slint consumer build, GUI runtime and applicable Windows/macOS qualification",
     "Root-reviewed import preserving physical Cargo.lock WIP"
   ],
   "policyChanged": false,

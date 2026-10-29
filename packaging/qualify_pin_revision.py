@@ -179,6 +179,55 @@ def notices(proof: Path) -> None:
                             cwd=ROOT, timeout=900) == 0, f"notices {mode} failed")
 
 
+def slint(proof: Path) -> None:
+    """Compile the real GUI with its shipped features and the admitted lock."""
+    verify_admitted(proof)
+    require(run_bounded(
+        proof, "slint-markdown-features",
+        ["cargo", "+1.91.0", "tree", "-p", "neothd-gui", "--locked", "-e", "features",
+         "-i", "pulldown-cmark@0.13.5"], cwd=ROOT / "SRC", timeout=180,
+    ) == 0, "Slint feature evidence failed")
+    features = (proof / "slint-markdown-features.log").read_text()
+    require(all(marker in features for marker in (
+        "pulldown-cmark v0.13.5", "i-slint-common v1.16.1",
+        'i-slint-common feature "markdown"', "neothd-gui v1.0.0",
+    )), "actual GUI Markdown feature path missing")
+    require(run_bounded(
+        proof, "slint-gui-build",
+        ["cargo", "+1.91.0", "build", "-p", "neothd-gui", "--bin", "neothd-gui", "--locked",
+         "--message-format=json-render-diagnostics"],
+        cwd=ROOT / "SRC", timeout=3600,
+    ) == 0, "actual GUI consumer build failed")
+    verify_admitted(proof)
+    artifacts = []
+    for line in (proof / "slint-gui-build.log").read_text().splitlines():
+        event = json.loads(line)
+        if (event.get("reason") == "compiler-artifact"
+                and event["target"]["name"] == "neothd-gui"
+                and event["target"]["kind"] == ["bin"] and event.get("executable")):
+            artifacts.append(event)
+    require(len(artifacts) == 1, "actual GUI compiler artifact missing or ambiguous")
+    artifact = artifacts[0]
+    require(Path(artifact["target"]["src_path"]).resolve()
+            == (ROOT / "SRC/neothd-gui/src/main.rs").resolve(), "GUI artifact source differs")
+    binary = Path(artifact["executable"])
+    require(binary.is_file() and not binary.is_symlink(), "GUI build output missing")
+    # Stream the actual binary digest; build products can exceed the log bound.
+    with binary.open("rb") as stream:
+        binary_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+    save(proof / "slint-build-receipt.json", {
+        **context(), "schema": "neoth.pin-slint-build.v1",
+        "candidateLockSha256": sha(ROOT / "SRC/Cargo.lock"),
+        "featureLogSha256": sha(proof / "slint-markdown-features.log"),
+        "buildLogSha256": sha(proof / "slint-gui-build.log"),
+        "buildStderrSha256": sha(proof / "slint-gui-build.stderr.log"),
+        "binarySha256": binary_hash, "binaryBytes": binary.stat().st_size,
+        "compilerArtifact": artifact,
+        "package": "neothd-gui", "target": "x86_64-unknown-linux-gnu",
+        "defaultFeatures": True, "runtimeExecuted": False, "markdownBehaviorAccepted": False,
+    })
+
+
 def prepare(proof: Path) -> None:
     solver = verify_admitted(proof)
     inputs = {p: sha(ROOT / p) for p in tracked_inputs()}
@@ -258,6 +307,20 @@ def finish(proof: Path) -> None:
     assessment = load(proof / "audit-assessment.json")
     require(assessment["exitCode"] == 0 and not assessment["vulnerabilities"]["list"],
             "passing fresh audit missing")
+    slint_build = load(proof / "slint-build-receipt.json")
+    require(all(slint_build[k] == v for k, v in context().items())
+            and slint_build["candidateLockSha256"] == sha(ROOT / "SRC/Cargo.lock"),
+            "Slint build context changed")
+    for key, name in (("featureLogSha256", "slint-markdown-features.log"),
+                      ("buildLogSha256", "slint-gui-build.log"),
+                      ("buildStderrSha256", "slint-gui-build.stderr.log")):
+        require(slint_build[key] == sha(proof / name), "Slint build evidence changed")
+    binary = Path(slint_build["compilerArtifact"]["executable"])
+    require(binary.is_file() and not binary.is_symlink()
+            and binary.stat().st_size == slint_build["binaryBytes"], "Slint binary changed")
+    with binary.open("rb") as stream:
+        require(hashlib.file_digest(stream, "sha256").hexdigest() == slint_build["binarySha256"],
+                "Slint binary digest changed")
     expected = {"SRC/Cargo.lock", "SRC/neothd/Cargo.toml",
                 "SRC/vendor/candle-core/Cargo.toml", "SRC/vendor/candle-core/Cargo.toml.orig"}
     changed = set(subprocess.check_output(
@@ -280,6 +343,8 @@ def finish(proof: Path) -> None:
         "passedCases": sum(group["count"] for group in cases.values()),
         "auditDatabase": assessment["database"], "auditPassed": True,
         "noticesSha256": sha(proof / "THIRD_PARTY_LICENSES"),
+        "slintBuildReceiptSha256": sha(proof / "slint-build-receipt.json"),
+        "slintConsumerCompiled": True, "guiRuntimeAccepted": False,
         "windowsAccepted": False, "macosAccepted": False,
         "pinsImported": False, "goldAccepted": False,
     })
@@ -287,11 +352,11 @@ def finish(proof: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("prepare", "audit", "notices", "exercise", "finish"))
+    parser.add_argument("mode", choices=("prepare", "audit", "notices", "exercise", "slint", "finish"))
     args = parser.parse_args()
     proof = Path(os.environ["PROOF"])
     {"prepare": prepare, "audit": audit, "notices": notices,
-     "exercise": exercise, "finish": finish}[args.mode](proof)
+     "exercise": exercise, "slint": slint, "finish": finish}[args.mode](proof)
 
 
 if __name__ == "__main__":
