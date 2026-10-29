@@ -3908,6 +3908,8 @@ mod tests {
         crate::config::TokensConfig::default_max_per_request()
     }
 
+    const ACQUISITION_PAID_CAP_USD: f32 = 1.0;
+
     async fn acquisition_leaf(
         writer: WalWriterHandle,
         budget: Option<OperationBudget>,
@@ -3920,7 +3922,9 @@ mod tests {
             authorizer = authorizer.with_operation_budget(budget);
         }
         if let Some(home) = daily_home {
-            authorizer = authorizer.with_council_daily_cap(home, Some(0.02)).unwrap();
+            authorizer = authorizer
+                .with_council_daily_cap(home, Some(ACQUISITION_PAID_CAP_USD))
+                .unwrap();
         }
         let (provider, model) = if daily_home.is_some() {
             ("openai_api", "gpt-4o")
@@ -3941,6 +3945,30 @@ mod tests {
             )
             .await
             .unwrap();
+        if let Some(plan) = leaf.ticket.operation_budget_plan.as_ref() {
+            let state = plan.budget.state.lock().unwrap();
+            assert!(
+                plan.tokens <= state.remaining_tokens,
+                "acquisition fixture token budget must cover its frozen reservation"
+            );
+            assert!(
+                plan.microusd <= state.remaining_microusd,
+                "acquisition fixture operation cap must cover its frozen reservation"
+            );
+        }
+        if daily_home.is_some() {
+            let plan = leaf
+                .ticket
+                .operation_budget_plan
+                .as_ref()
+                .expect("paid acquisition fixture requires an operation plan");
+            // Each paid test uses a fresh daily store. Both plans share the
+            // frozen price bound; upward-rounded micro-USD cover its nanos.
+            assert!(
+                plan.microusd <= usd_cap_to_microusd(ACQUISITION_PAID_CAP_USD).unwrap(),
+                "acquisition fixture daily cap must cover its frozen reservation"
+            );
+        }
         leaf.ticket.audit_sink = ProviderCallAuditSink::Wal(writer);
         leaf
     }
@@ -4002,7 +4030,7 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let leaf = acquisition_leaf(
             writer.clone(),
-            Some(new_operation_budget(4_000, 0.02).unwrap()),
+            Some(new_operation_budget(4_000, ACQUISITION_PAID_CAP_USD).unwrap()),
             Some(dir.path()),
         )
         .await;
@@ -4044,19 +4072,28 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
         let writer = writer.with_test_ack_gate(gate.clone());
-        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let budget = new_operation_budget(4_000, ACQUISITION_PAID_CAP_USD).unwrap();
         let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), Some(dir.path())).await;
         let daily = leaf.ticket.daily_budget_plan.as_ref().unwrap().clone();
-        let tokens = leaf.ticket.operation_budget_plan.as_ref().unwrap().tokens;
+        let operation = leaf.ticket.operation_budget_plan.as_ref().unwrap();
+        let tokens = operation.tokens;
+        let microusd = operation.microusd;
         let mut dispatch = Box::pin(leaf.begin_dispatch());
         tokio::select! {
-            _ = &mut dispatch => panic!("dispatch permit escaped before observation acknowledgement"),
+            result = &mut dispatch => match result {
+                Ok(_) => panic!("dispatch permit escaped before observation acknowledgement"),
+                Err(error) => panic!("acquisition setup failed before observation acknowledgement: {error}"),
+            },
             result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => result.unwrap(),
         }
         drop(dispatch);
         assert_eq!(
             budget.state.lock().unwrap().remaining_tokens,
             4_000 - tokens
+        );
+        assert_eq!(
+            budget.state.lock().unwrap().remaining_microusd,
+            usd_cap_to_microusd(ACQUISITION_PAID_CAP_USD).unwrap() - microusd
         );
         // Reusing this exact reservation ID proves its pending charge was
         // released; a still-live original reservation rejects the duplicate.
@@ -4087,13 +4124,18 @@ mod tests {
         let gate =
             crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
         let writer = writer.with_test_ack_gate(gate.clone());
-        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let budget = new_operation_budget(4_000, ACQUISITION_PAID_CAP_USD).unwrap();
         let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), Some(dir.path())).await;
         let daily = leaf.ticket.daily_budget_plan.as_ref().unwrap().clone();
-        let tokens = leaf.ticket.operation_budget_plan.as_ref().unwrap().tokens;
+        let operation = leaf.ticket.operation_budget_plan.as_ref().unwrap();
+        let tokens = operation.tokens;
+        let microusd = operation.microusd;
         let mut dispatch = Box::pin(leaf.begin_dispatch());
         tokio::select! {
-            _ = &mut dispatch => panic!("dispatch permit escaped before intent acknowledgement"),
+            result = &mut dispatch => match result {
+                Ok(_) => panic!("dispatch permit escaped before intent acknowledgement"),
+                Err(error) => panic!("acquisition setup failed before intent acknowledgement: {error}"),
+            },
             result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => result.unwrap(),
         }
         join.abort();
@@ -4111,6 +4153,10 @@ mod tests {
         assert_eq!(
             budget.state.lock().unwrap().remaining_tokens,
             4_000 - tokens
+        );
+        assert_eq!(
+            budget.state.lock().unwrap().remaining_microusd,
+            usd_cap_to_microusd(ACQUISITION_PAID_CAP_USD).unwrap() - microusd
         );
         daily
             .reserve(crate::time::now_unix_i64())

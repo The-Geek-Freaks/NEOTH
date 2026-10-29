@@ -1,0 +1,43 @@
+{
+  "schema": "neoth.wave2636.acquisition-fixture-repair.v1",
+  "status": "FIXTURE_REPAIRED_HOSTED_REQUALIFICATION_PENDING",
+  "baseProducer": "7f5f0624dea5b69981c61162c0b26f953235b97b",
+  "roadmap": "ADOPT-20261012-A02",
+  "priorRun": "40871959983",
+  "priorProducer": "4ced198ba03bca4645da99aab78e739abad42633",
+  "priorResult": {
+    "failed": 3,
+    "selected": 67,
+    "coreTestCompilation": "success",
+    "workspaceClippy": "success",
+    "slimClippy": "success",
+    "passed": 64
+  },
+  "diagnosis": "Paid fixture cap 0.02 USD was below frozen reservation 0.023885 USD; gate branches also mislabeled early reservation errors as unexpected permits.",
+  "changedSource": "SRC/neothd/src/providers/cost_authorization.rs",
+  "changes": [
+    "Raise only three paid fixture operation caps and shared paid daily cap to 1.0 USD",
+    "Check frozen plan against initial operation limits and fresh daily cap before dispatch; no second pricing lookup",
+    "Distinguish early reservation errors from escaped permits at both WAL gates",
+    "Assert preserved operation token and monetary debits after cancellation and write failure; local zero-cost case stays at 0.02 USD"
+  ],
+  "productionBehaviorChanged": false,
+  "testIdentitiesChanged": false,
+  "focusedRequiredCount": 67,
+  "portableRegistered": 3088,
+  "staticReview": "Prompt-only independent lifecycle review: no concrete correctness defect in supplied test-only diff; hosted checks pending.",
+  "planPrefix": {
+    "rawOpenRows": 259,
+    "bytes": 2711461,
+    "sha256": "FCD114E3EA17655244CE496D57D40156FA82E01297D7CCCECE1D90F28B08636B"
+  },
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false,
+  "next": [
+    "Require exact-producer fast gates",
+    "Run and admit all67 plus both Clippy lanes using one heavy CI stream",
+    "Then qualify full native CI including SSH40+7 on each platform"
+  ]
+}

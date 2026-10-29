@@ -19593,3 +19593,11 @@ Report: docs/verification/gold-wave2635-native-dependencies.json. Root custody: 
 W2635 follow-up: Preflight 40873698076 rejected the old release-capability expectation (=0.63.2). The contract now requires the exact admitted =0.64.1 pin, all three SSH platforms and the locked library test command with discovery/result evidence. Optional/default-off and ring assertions remain unchanged; hosted recheck is required.
 
 W2635 native acceleration: feature lanes may restore existing same-feature or Rust1.91 platform compilation caches. Every locked compile, exact discovery and runtime check still executes; no cached test receipt supplies acceptance.
+
+## W2636 - A02 acquisition fixture repair after exact67 failure
+
+Hosted run 40871959983 on 4ced198ba03bca4645da99aab78e739abad42633 completed with 64 of 67 focused cases passing. Both Clippy lanes and core test compilation passed. Three paid acquisition fixtures had a 0.02 USD cap below their frozen 0.023885 USD reservation. Two gate tests also mislabeled the resulting early error as an escaped dispatch permit.
+
+The test-only repair gives those three paid scenarios a 1.0 USD operation/daily cap, checks their frozen reservation against initial limits before dispatch, and distinguishes early errors from unexpected permits. Both cancellation and WAL write-failure cases check the retained operation monetary debit as well as tokens. Each uses a fresh daily store; the local zero-cost case retains its original 0.02 USD cap. Production authorization and rollback rules are unchanged.
+
+The original failed-run ZIP and failure assessment remain evidence. This is a static-reviewed fixture repair, not a passing runtime claim. Require fresh exact-producer fast gates and all67/Clippy acceptance before the single full native CI dispatch. No roadmap row, native/release gate or Gold acceptance is closed by this repair. Report: docs/verification/gold-wave2636-acquisition-fixture-repair.json.
