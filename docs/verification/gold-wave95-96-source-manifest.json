@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T09:55:29.0024693Z",
-  "validationStatus": "W2625_SNAPSHOT21_PASSED_REAL_CLI_CONTRACT_REQUALIFICATION_PENDING",
+  "capturedUtc": "2026-10-29T10:04:57.2073160Z",
+  "validationStatus": "W2626_DISPATCH_PROVENANCE_REPAIRED_HOSTED24_AND_REAL_CLI_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4653,8 +4653,8 @@
     },
     {
       "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
-      "bytes": 4372,
-      "sha256": "DD4DF05D3584F084A7172CDAEE4A1565C18D9F5AED90C19057798230F2DEF4AD"
+      "bytes": 5166,
+      "sha256": "54CB310F8D515E16FB57C14CE8A46062BC9868762102BB71C70F78DEF8855133"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5868,8 +5868,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2693412,
-      "sha256": "131D0B784CE69C3C11F2D8D5385A3799FB0B94F4CD81A609F0DAB9FE5D653E58"
+      "bytes": 2694839,
+      "sha256": "57DFA7B10ABA649BD994464F1EB00E444076802122DEB81D53D6CD7CADBA06DA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5898,8 +5898,8 @@
     },
     {
       "path": "scripts/augment_graphify_tracked_code.py",
-      "bytes": 5710,
-      "sha256": "F9E76B715C5BC1EFBB567BF001F364A96B09BEF94C7BBFEBF131275E2A6363E4"
+      "bytes": 6952,
+      "sha256": "F7176E4A66B9FA7DA501366A6E60514F839EE3C52910EC377AA32CCF79C2B1D3"
     },
     {
       "path": "scripts/build_graphify_navigation.py",
@@ -5908,8 +5908,8 @@
     },
     {
       "path": "scripts/build_release_self_knowledge.py",
-      "bytes": 78741,
-      "sha256": "C360C19562A82A367ED44CBB94208541B7FB285E9FBE0AB4AADBBC3264D21D35"
+      "bytes": 79811,
+      "sha256": "A44823875F914401F62D7B9DA1466CDEB261F610CFBA9D5B042333E11F7B450C"
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
@@ -5923,8 +5923,8 @@
     },
     {
       "path": "scripts/test_build_release_self_knowledge.py",
-      "bytes": 27086,
-      "sha256": "318E50657D668A39768FBCF10A2460A54B6A0B9844079C39133E5B046C48968C"
+      "bytes": 29905,
+      "sha256": "6D1C880ECF88F9D58832180CA918C257D8D7CCE168C4CD43C8358F42CC0EF0DD"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
@@ -5933,8 +5933,8 @@
     },
     {
       "path": "scripts/test_graphify_cli_contract.py",
-      "bytes": 8186,
-      "sha256": "B8E7788FEFA621D4FF90E8A3AD7722121B8B2E31F2E0D9C3D0142F1C99046FCA"
+      "bytes": 8429,
+      "sha256": "A8D02F00E9CEFA7586ADF4C38C780659BEBEA89482549EEF57B553CEF57817FE"
     },
     {
       "path": "SRC/_gate_gui_check.bat",

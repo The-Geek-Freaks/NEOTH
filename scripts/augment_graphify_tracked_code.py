@@ -118,6 +118,28 @@ def augment(repo: Path, graph_path: Path) -> int:
     raw["output_tokens"] = int(raw.get("output_tokens", 0)) + int(
         extracted.get("output_tokens", 0)
     )
+    if "extracted_sources" in raw or "extracted_sources" in extracted:
+        combined_sources = []
+        seen_sources = set()
+        for source_list in (raw.get("extracted_sources", []), extracted.get("extracted_sources", [])):
+            if not isinstance(source_list, list):
+                raise RuntimeError("Graphify extracted_sources must be a list")
+            local_sources = set()
+            for source in source_list:
+                resolved = resolved_source_file(source, repo)
+                if resolved is None or resolved not in tracked or resolved in local_sources:
+                    raise RuntimeError("Graphify extracted_sources contains an invalid or duplicate input")
+                local_sources.add(resolved)
+                if resolved not in seen_sources:
+                    seen_sources.add(resolved)
+                    combined_sources.append(str(resolved))
+        recovered_sources = {
+            resolved_source_file(source, repo)
+            for source in extracted.get("extracted_sources", [])
+        }
+        if recovered_sources != set(missing):
+            raise RuntimeError("Graphify recovery provenance differs from dispatched inputs")
+        raw["extracted_sources"] = combined_sources
     write_json_atomic(graph_path, raw)
 
     manifest_path = repo / "graphify-out" / "manifest.json"

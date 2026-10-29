@@ -465,6 +465,26 @@ def mark_raw_extraction_directed(
     if len(node_ids) != len(set(node_ids)):
         raise ContractError("canonical Graphify file-anchor IDs collide")
 
+    # Graphify 0.9.70 retains dispatched AST paths for incremental ownership.
+    # Preserve this provenance, but only for selected code in this checkout.
+    if "extracted_sources" in raw:
+        sources = raw["extracted_sources"]
+        if not isinstance(sources, list):
+            raise ContractError("Graphify extracted_sources must be a list")
+        canonical_sources = []
+        seen_sources = set()
+        for source in sources:
+            if not isinstance(source, str) or not source:
+                raise ContractError("Graphify extracted_sources contains an invalid path")
+            relative = canonical_source_file(source, repo)
+            if selected_inputs.get(relative) != "code":
+                raise ContractError("Graphify extracted_sources contains unselected code")
+            if relative in seen_sources:
+                raise ContractError("Graphify extracted_sources contains duplicate paths")
+            seen_sources.add(relative)
+            canonical_sources.append(relative)
+        raw["extracted_sources"] = canonical_sources
+
     raw["directed"] = True
     encoded = json.dumps(raw, sort_keys=True, ensure_ascii=False)
     repo_text = str(repo.resolve())

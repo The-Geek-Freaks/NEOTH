@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "SNAPSHOT21_PASSED_REAL_CLI_DETECTOR_CONTRACT_REPAIRED_REQUALIFICATION_PENDING",
+  "status": "REAL_AST_RECOVERY_PASSED_PROVENANCE_PATH_REPAIR_PENDING",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -47,7 +47,7 @@
     "proofSha256": "BACAEAA3424C6706C9138C934959AD45523DD1EAC6A5FDF0BBBFE96545308AC6"
   },
   "sourceReview": "Static candidate review plus original PyPI artifacts and hosted locked solver; real CLI/snapshot/isolation/navigation qualification still required",
-  "newPythonCases": 2,
+  "newPythonCases": 5,
   "registeredPortableRustCases": 3080,
   "localRuntimeExecuted": false,
   "runtimeCompatibilityAccepted": false,
@@ -97,6 +97,23 @@
     "rootCause": "Graphify0.9.70 now includes ordinary credentials.rs; test still required its historical omission",
     "repair": "Retain and assert natural credentials.rs inclusion, add synthetic src/.env.fixture.rs source matching an actual remaining detector omission, require real local AST recovery and final coverage for both",
     "independentPromptReview": "No definite defect; actual extractor recovery and all exports require hosted confirmation",
+    "localRuntimeExecuted": false
+  },
+  "thirdQualificationAttempt": {
+    "run": 40853871217,
+    "producer": "3d9ed4b100c43f30a92414563c81e6801401787a",
+    "conclusion": "failure",
+    "releaseIsolationPassed": true,
+    "snapshotPassed": 21,
+    "realOmissionRecovered": 1,
+    "realRecoveryNodes": 2,
+    "realRecoveryEdges": 1,
+    "navigationExecuted": false,
+    "rootCause": "Pinned CLI retains absolute extracted_sources metadata; global checkout-path guard correctly rejected it",
+    "repair": "Validate and canonicalize dispatched-source provenance, merge recovered inputs by resolved identity, retain final global path guard and atomic failure behavior",
+    "newRegressionCases": 3,
+    "expectedSnapshotCases": 24,
+    "independentPromptReview": "No definite defect; hosted qualification required",
     "localRuntimeExecuted": false
   }
 }

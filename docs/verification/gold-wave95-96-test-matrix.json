@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2625_SNAPSHOT21_PASSED_REAL_CLI_CONTRACT_REQUALIFICATION_PENDING",
+  "status": "W2626_DISPATCH_PROVENANCE_REPAIRED_HOSTED24_AND_REAL_CLI_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454628,
-    "sha256": "3DE22F764115F3D56AEFF5462CC8308FEA59D391885466D753FB0C1658943683"
+    "bytes": 454627,
+    "sha256": "747D9F41BE96EC8E0DD72F72F857861AC415DD7C47A5E510F61EEC4613AADA93"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87874,6 +87874,50 @@
       }
     ],
     "note": "Real pinned detector includes credentials.rs; synthetic dotenv-pattern Rust source now retains actual omission/recovery coverage. No mocked detector or local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2626GraphifySourceProvenance": {
+    "base": "3d9ed4b100c43f30a92414563c81e6801401787a",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2694839,
+        "sha256": "57DFA7B10ABA649BD994464F1EB00E444076802122DEB81D53D6CD7CADBA06DA",
+        "blob": "a894a70464bc93137c62a61c92798dc80fd41222"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 5166,
+        "sha256": "54CB310F8D515E16FB57C14CE8A46062BC9868762102BB71C70F78DEF8855133",
+        "blob": "f182d899bda7d7cbdc530e80950758f5639b4eca"
+      },
+      {
+        "path": "scripts/augment_graphify_tracked_code.py",
+        "bytes": 6952,
+        "sha256": "F7176E4A66B9FA7DA501366A6E60514F839EE3C52910EC377AA32CCF79C2B1D3",
+        "blob": "ab865e3a0669356ba714e756cfcd23b2d6ba176e"
+      },
+      {
+        "path": "scripts/build_release_self_knowledge.py",
+        "bytes": 79811,
+        "sha256": "A44823875F914401F62D7B9DA1466CDEB261F610CFBA9D5B042333E11F7B450C",
+        "blob": "452b1b0f40b3044ac90e15ed64b1f825cb0ad41d"
+      },
+      {
+        "path": "scripts/test_build_release_self_knowledge.py",
+        "bytes": 29905,
+        "sha256": "6D1C880ECF88F9D58832180CA918C257D8D7CCE168C4CD43C8358F42CC0EF0DD",
+        "blob": "3b63d1e7dad4bdcd11b9bc6c05f64ad45bb3a6b6"
+      },
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 8429,
+        "sha256": "A8D02F00E9CEFA7586ADF4C38C780659BEBEA89482549EEF57B553CEF57817FE",
+        "blob": "a937ab3632615fb71853554114645bcffe5fcc57"
+      }
+    ],
+    "note": "Canonical relative extracted_sources with actual AST recovery input merge;3 regressions retain fail-closed global path validation. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

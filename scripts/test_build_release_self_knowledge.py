@@ -11,7 +11,11 @@ import sys
 import tempfile
 import unittest
 
-from build_release_self_knowledge import graphify_id
+from build_release_self_knowledge import (
+    ContractError,
+    graphify_id,
+    mark_raw_extraction_directed,
+)
 
 
 SCRIPT = Path(__file__).with_name("build_release_self_knowledge.py")
@@ -64,6 +68,61 @@ class GraphifyPathIdTests(unittest.TestCase):
                 value = graphify_id(raw)
                 self.assertEqual(value, graphify_id(raw.casefold()))
                 self.assertEqual(value, graphify_id(value))
+
+
+class GraphifyExtractionProvenanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        (self.repo / "src").mkdir(parents=True)
+        for name in ("a.rs", "b.rs", "unselected.rs"):
+            (self.repo / "src" / name).write_text("pub fn example() {}\n", encoding="utf-8")
+        (Path(self.temp.name) / "outside.rs").write_text("pub fn outside() {}\n", encoding="utf-8")
+        self.graph = self.repo / "graph.json"
+        self.selected = {"src/a.rs": "code", "src/b.rs": "code"}
+
+    def write_graph(self, sources: object, **extra: object) -> bytes:
+        raw = {
+            "nodes": [
+                {"id": "a", "source_file": "src/a.rs"},
+                {"id": "b", "source_file": "src/b.rs"},
+            ],
+            "edges": [{"source": "a", "target": "b", "source_file": "src/a.rs"}],
+            "extracted_sources": sources,
+            **extra,
+        }
+        body = (json.dumps(raw) + "\n").encode()
+        self.graph.write_bytes(body)
+        return body
+
+    def test_dispatched_sources_are_relative_without_changing_direction(self) -> None:
+        self.write_graph([str(self.repo / "src" / "a.rs"), "src/b.rs"])
+        mark_raw_extraction_directed(self.graph, self.repo, self.selected)
+        result = json.loads(self.graph.read_text(encoding="utf-8"))
+        self.assertEqual(result["extracted_sources"], ["src/a.rs", "src/b.rs"])
+        self.assertTrue(result["directed"])
+        self.assertEqual(result["edges"], [{"source": "a", "target": "b", "source_file": "src/a.rs"}])
+        self.assertNotIn(str(self.repo), self.graph.read_text(encoding="utf-8"))
+
+    def test_invalid_dispatched_sources_reject_without_rewriting(self) -> None:
+        for sources in (
+            None, "src/a.rs", [17], [""],
+            [str(Path(self.temp.name) / "outside.rs")],
+            ["../outside.rs"], ["src/unselected.rs"], ["src/missing.rs"],
+            ["src/a.rs", str(self.repo / "src" / "a.rs")],
+        ):
+            with self.subTest(sources=sources):
+                original = self.write_graph(sources)
+                with self.assertRaises(ContractError):
+                    mark_raw_extraction_directed(self.graph, self.repo, self.selected)
+                self.assertEqual(self.graph.read_bytes(), original)
+
+    def test_unknown_checkout_metadata_still_rejects_without_rewriting(self) -> None:
+        original = self.write_graph(["src/a.rs"], surprise=str(self.repo))
+        with self.assertRaises(ContractError):
+            mark_raw_extraction_directed(self.graph, self.repo, self.selected)
+        self.assertEqual(self.graph.read_bytes(), original)
 
 
 class ReleaseSelfKnowledgeContractTests(unittest.TestCase):

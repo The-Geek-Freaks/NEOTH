@@ -151,6 +151,9 @@ def main() -> int:
             cwd=repo,
         )
         mark_raw_extraction_directed(graph_path, repo, selected)
+        canonical = json.loads(graph_path.read_text(encoding="utf-8"))
+        if set(canonical.get("extracted_sources", [])) != set(selected):
+            raise RuntimeError("real Graphify extraction provenance omitted a tracked code input")
 
         graph_arg = "graphify-out/graph.json"
         run(
