@@ -70,6 +70,106 @@ class GraphifyPathIdTests(unittest.TestCase):
                 self.assertEqual(value, graphify_id(value))
 
 
+class GraphifyCargoIdentityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="neoth-cargo-identity-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name).resolve()
+        self.graph = self.repo / "raw.json"
+        self.selected = {"Cargo.toml": "code", "helper/Cargo.toml": "code"}
+        for path in self.selected:
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("[package]\n", encoding="utf-8")
+
+    def raw(self) -> dict:
+        nodes = []
+        for name, source in (("app", "Cargo.toml"), ("helper", "helper/Cargo.toml")):
+            shared = {"label": name, "source_file": source, "source_location": "L1"}
+            nodes.extend([
+                {"id": "pkg_" + name, **shared, "file_type": "code",
+                 "_origin": "ast", "type": "package", "ecosystem": "cargo",
+                 "version": "0.0.0"},
+                {"id": "crate:" + name, **shared},
+            ])
+        return {
+            "nodes": nodes,
+            "edges": [
+                {"source": "crate:app", "target": "crate:helper",
+                 "relation": "depends_on", "weight": 0.8, "source_file": "Cargo.toml"},
+                {"source": "crate:helper", "target": "crate:app",
+                 "relation": "references", "context": "reverse"},
+            ],
+            "hyperedges": [
+                {field: ["crate:app", "crate:helper"], "relation": "workspace"}
+                for field in ("nodes", "members", "node_ids")
+            ],
+        }
+
+    def canonicalize(self, raw: dict) -> dict:
+        self.graph.write_text(json.dumps(raw), encoding="utf-8")
+        mark_raw_extraction_directed(self.graph, self.repo, self.selected)
+        return json.loads(self.graph.read_text(encoding="utf-8"))
+
+    def test_cargo_aliases_preserve_provenance_direction_and_edge_metadata(self) -> None:
+        raw = self.raw()
+        result = self.canonicalize(raw)
+        self.assertTrue(result["directed"])
+        self.assertEqual([node["id"] for node in result["nodes"]], ["pkg_app", "pkg_helper"])
+        for original, result_node in zip(raw["nodes"][1::2], result["nodes"]):
+            self.assertEqual(result_node["neoth_cargo_introspection"], original)
+            self.assertEqual(result_node["version"], "0.0.0")
+        expected_edges = [
+            {**edge, "source": "pkg_" + edge["source"].removeprefix("crate:"),
+             "target": "pkg_" + edge["target"].removeprefix("crate:")}
+            for edge in raw["edges"]
+        ]
+        self.assertEqual(result["edges"], expected_edges)
+        for field, edge in zip(("nodes", "members", "node_ids"), result["hyperedges"]):
+            self.assertEqual(edge, {field: ["pkg_app", "pkg_helper"], "relation": "workspace"})
+        self.assertEqual(self.canonicalize(result), result)
+
+    def test_cargo_alias_mismatch_rejects_without_rewriting(self) -> None:
+        for case in ("extra", "label", "source", "origin", "type", "ecosystem",
+                     "location", "ambiguous", "missing", "references", "provenance"):
+            with self.subTest(case=case):
+                raw = self.raw()
+                package, alias = raw["nodes"][:2]
+                if case == "extra":
+                    alias["unknown"] = "not-discardable"
+                elif case == "label":
+                    alias["label"] = "different"
+                elif case == "source":
+                    alias["source_file"] = "helper/Cargo.toml"
+                elif case in ("origin", "type", "ecosystem"):
+                    package[{"origin": "_origin"}.get(case, case)] = "other"
+                elif case == "location":
+                    package["source_location"] = "L2"
+                elif case == "ambiguous":
+                    raw["nodes"].append({**package, "id": "second_package"})
+                elif case == "missing":
+                    raw["nodes"].remove(package)
+                elif case == "references":
+                    raw["hyperedges"][0]["nodes"] = [1]
+                elif case == "provenance":
+                    package["neoth_cargo_introspection"] = {}
+                self.graph.write_text(json.dumps(raw), encoding="utf-8")
+                before = self.graph.read_bytes()
+                with self.assertRaises(ContractError):
+                    mark_raw_extraction_directed(self.graph, self.repo, self.selected)
+                self.assertEqual(self.graph.read_bytes(), before)
+
+    def test_unrelated_same_label_nodes_are_not_merged(self) -> None:
+        raw = self.raw()
+        raw["nodes"] = [node for node in raw["nodes"] if not node["id"].startswith("crate:")]
+        raw["nodes"].append({**raw["nodes"][0], "id": "other", "_origin": "semantic"})
+        raw["edges"] = [{"source": "pkg_app", "target": "other", "relation": "references"}]
+        raw["hyperedges"] = []
+        result = self.canonicalize(raw)
+        self.assertEqual(result["nodes"], raw["nodes"])
+        self.assertEqual(result["edges"], raw["edges"])
+
+
 class GraphifyExtractionProvenanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()

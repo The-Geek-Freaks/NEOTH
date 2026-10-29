@@ -358,6 +358,66 @@ def canonical_source_file(raw: str, repo: Path) -> str:
     return relative
 
 
+def reconcile_cargo_introspection(raw: dict[str, Any], selected_inputs: dict[str, str]) -> None:
+    """Unify only the pinned Cargo introspector's duplicate package records."""
+    aliases: dict[str, str] = {}
+    for node in raw["nodes"]:
+        node_id = node["id"]
+        if not node_id.startswith("crate:"):
+            continue
+        label = node.get("label")
+        source = node.get("source_file")
+        if (
+            set(node) != {"id", "label", "source_file", "source_location"}
+            or not isinstance(label, str)
+            or not label
+            or node_id != "crate:" + label
+            or not isinstance(source, str)
+            or PurePosixPath(source).name != "Cargo.toml"
+            or selected_inputs.get(source) != "code"
+            or node.get("source_location") != "L1"
+        ):
+            raise ContractError("unexpected Cargo introspection node shape")
+        matches = [
+            target
+            for target in raw["nodes"]
+            if target["id"] != node_id
+            and target.get("_origin") == "ast"
+            and target.get("type") == "package"
+            and target.get("ecosystem") == "cargo"
+            and target.get("label") == label
+            and target.get("source_file") == source
+            and target.get("source_location") == node["source_location"]
+        ]
+        if len(matches) != 1:
+            raise ContractError("Cargo introspection has no unique AST package counterpart")
+        target = matches[0]
+        if "neoth_cargo_introspection" in target:
+            raise ContractError("Cargo introspection provenance already exists")
+        target["neoth_cargo_introspection"] = dict(node)
+        aliases[node_id] = target["id"]
+
+    if not aliases:
+        return
+    # Preserve direction, edge attributes and every supported hyperedge alias.
+    for collection in (raw.get("edges", []), raw.get("hyperedges", [])):
+        for edge in collection:
+            for field in ("source", "target"):
+                value = edge.get(field)
+                if isinstance(value, str):
+                    edge[field] = aliases.get(value, value)
+            for field in ("nodes", "members", "node_ids"):
+                if field not in edge:
+                    continue
+                values = edge[field]
+                if not isinstance(values, list) or any(
+                    not isinstance(value, str) for value in values
+                ):
+                    raise ContractError("invalid Cargo hyperedge references")
+                edge[field] = [aliases.get(value, value) for value in values]
+    raw["nodes"] = [node for node in raw["nodes"] if node["id"] not in aliases]
+
+
 def mark_raw_extraction_directed(
     graph_path: Path,
     repo: Path,
@@ -464,6 +524,8 @@ def mark_raw_extraction_directed(
         raise ContractError("Graphify emitted a node without an ID")
     if len(node_ids) != len(set(node_ids)):
         raise ContractError("canonical Graphify file-anchor IDs collide")
+
+    reconcile_cargo_introspection(raw, selected_inputs)
 
     # Graphify 0.9.70 retains dispatched AST paths for incremental ownership.
     # Preserve this provenance, but only for selected code in this checkout.

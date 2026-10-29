@@ -86,8 +86,16 @@ def main() -> int:
         write(
             repo / "Cargo.toml",
             '[package]\nname = "graphify-contract"\nversion = "0.0.0"\n'
-            'edition = "2021"\npublish = false\n',
+            'edition = "2021"\npublish = false\n'
+            '[dependencies]\ngraphify-helper = { path = "helper" }\n'
+            '[workspace]\nmembers = ["helper"]\n',
         )
+        write(
+            repo / "helper" / "Cargo.toml",
+            '[package]\nname = "graphify-helper"\nversion = "0.0.0"\n'
+            'edition = "2021"\npublish = false\n[lib]\npath = "lib.rs"\n',
+        )
+        write(repo / "helper" / "lib.rs", "pub fn helper() {}\n")
         run(["git", "init", "-q"], cwd=repo)
         run(["git", "config", "user.email", "graphify-contract@example.invalid"], cwd=repo)
         run(["git", "config", "user.name", "NEOTH Graphify Contract"], cwd=repo)
@@ -100,6 +108,8 @@ def main() -> int:
                 "src/credentials.rs",
                 "src/.env.fixture.rs",
                 "src/data.json",
+                "helper/Cargo.toml",
+                "helper/lib.rs",
             ],
             cwd=repo,
         )
@@ -150,8 +160,33 @@ def main() -> int:
             ],
             cwd=repo,
         )
+        before = json.loads(graph_path.read_text(encoding="utf-8"))
+        cargo_nodes = {
+            node["id"]: node
+            for node in before["nodes"]
+            if node["id"].startswith("crate:")
+        }
+        if set(cargo_nodes) != {"crate:graphify-contract", "crate:graphify-helper"}:
+            raise RuntimeError("real Cargo introspection did not exercise both duplicate packages")
+        if not any(
+            edge.get("source") == "crate:graphify-contract"
+            and edge.get("target") == "crate:graphify-helper"
+            for edge in before["edges"]
+        ):
+            raise RuntimeError("real Cargo introspection did not emit the directed dependency")
         mark_raw_extraction_directed(graph_path, repo, selected)
         canonical = json.loads(graph_path.read_text(encoding="utf-8"))
+        package_ids = {}
+        for node in canonical["nodes"]:
+            proof = node.get("neoth_cargo_introspection")
+            if proof is not None:
+                if proof != cargo_nodes.get(proof.get("id")):
+                    raise RuntimeError("Cargo reconciliation changed original introspection proof")
+                package_ids[proof["id"]] = node["id"]
+        if set(package_ids) != set(cargo_nodes):
+            raise RuntimeError("Cargo reconciliation lost package provenance")
+        if len(canonical["nodes"]) != len(before["nodes"]) - len(cargo_nodes):
+            raise RuntimeError("Cargo reconciliation removed unrelated nodes")
         if set(canonical.get("extracted_sources", [])) != set(selected):
             raise RuntimeError("real Graphify extraction provenance omitted a tracked code input")
 
@@ -194,6 +229,19 @@ def main() -> int:
                 raise RuntimeError(f"real Graphify manifest lacks AST proof for {path}")
         graph_text = graph_path.read_text(encoding="utf-8")
         graph = json.loads(graph_text)
+        final_nodes = {node["id"]: node for node in graph["nodes"]}
+        if len(final_nodes) != len(canonical["nodes"]):
+            raise RuntimeError("clustering changed canonical node coverage")
+        for alias, package_id in package_ids.items():
+            if final_nodes.get(package_id, {}).get("neoth_cargo_introspection") != cargo_nodes[alias]:
+                raise RuntimeError("clustering lost canonical Cargo package provenance")
+        if not graph.get("directed") or not any(
+            edge.get("source") == package_ids["crate:graphify-contract"]
+            and edge.get("target") == package_ids["crate:graphify-helper"]
+            for edge in graph.get("links", [])
+        ):
+            raise RuntimeError("clustering lost the directed Cargo dependency")
+        print("real Cargo reconciliation: 2 aliases retained; directed dependency preserved")
         if str(repo).casefold() in graph_text.casefold():
             raise RuntimeError("canonical graph leaked its temporary checkout path")
         source_files = {

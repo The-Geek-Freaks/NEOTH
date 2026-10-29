@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "REAL_AST_RECOVERY_PASSED_PROVENANCE_PATH_REPAIR_PENDING",
+  "status": "CARGO_ALIAS_RECONCILIATION_PENDING_HOSTED_PROOF",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -54,9 +54,8 @@
   "fullCiAccepted": false,
   "goldClosed": false,
   "remaining": [
-    "Repeat hosted isolation and all snapshot cases on fixture repair producer",
-    "Run installed Graphify CLI contract without networking",
-    "Produce source-bound navigation with explicit coverage",
+    "Execute27 snapshot cases, isolation and real two-crate CLI/export contract on repaired producer",
+    "Produce and admit original source-bound navigation artifacts",
     "Qualify remaining ZIP and Russh revisions separately"
   ],
   "qualificationAttempt": {
@@ -114,6 +113,24 @@
     "newRegressionCases": 3,
     "expectedSnapshotCases": 24,
     "independentPromptReview": "No definite defect; hosted qualification required",
+    "localRuntimeExecuted": false
+  },
+  "fourthQualificationAttempt": {
+    "run": 40855301821,
+    "producer": "0cef0e1d425fca4cf4d36b29867b451e3b2fbbab",
+    "conclusion": "failure",
+    "snapshotPassed": 24,
+    "releaseIsolationPassed": true,
+    "realOmissionRecovered": 1,
+    "dispatchedProvenancePassed": true,
+    "navigationExecuted": false,
+    "rootCause": "Pinned manifest AST and Cargo introspection emit the same package under distinct IDs; build merges it and raw-to-built shrink guard refuses 10-to-9 overwrite",
+    "sourceEvidence": "Original admitted wheel manifest_ingest.py:99-110; cargo_introspect.py:109-116; build.py:1062-1172",
+    "repair": "Reconcile only exact Cargo aliases with one same-source AST package; retain original alias as node provenance, rewrite directed references, reject ambiguity or unknown metadata; shrink guard unchanged",
+    "newRegressionCases": 3,
+    "expectedSnapshotCases": 27,
+    "realFixture": "Two local workspace packages with an actual directed Cargo dependency, exact alias proofs and final node preservation",
+    "independentPromptReview": "No definite flaw in supplied implementation; actual exporters and hosted qualification required",
     "localRuntimeExecuted": false
   }
 }

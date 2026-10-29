@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2626_DISPATCH_PROVENANCE_REPAIRED_HOSTED24_AND_REAL_CLI_PENDING",
+  "status": "cargo-identity-repair-static-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454627,
-    "sha256": "747D9F41BE96EC8E0DD72F72F857861AC415DD7C47A5E510F61EEC4613AADA93"
+    "bytes": 454607,
+    "sha256": "DE5F79B59C6B69CE320295A914088AE79EE5C036BC07E12B0B6B3A7F6156F3BF"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87918,6 +87918,44 @@
       }
     ],
     "note": "Canonical relative extracted_sources with actual AST recovery input merge;3 regressions retain fail-closed global path validation. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2627CargoIdentity": {
+    "base": "0cef0e1d425fca4cf4d36b29867b451e3b2fbbab",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2696456,
+        "sha256": "526FDC2861FA7C7C37DB32C49F6E5209A06E9C6205B579EF127ECD205D85187E",
+        "blob": "3555b17a8e9851051166a8f4b96bdb7a448bc54a"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 6329,
+        "sha256": "737181BECFF983D8D8BC001F808F6BFF7DC5822F9B65D07D41707AD53B9F6F57",
+        "blob": "8c34c5f0ac6fc92e5befbb75dfb397e6b94884b9"
+      },
+      {
+        "path": "scripts/build_release_self_knowledge.py",
+        "bytes": 82544,
+        "sha256": "CB6832451519399FE2A57A99884ED4E91EDF60A2F6CF490FEB674C1463595334",
+        "blob": "19dcb28799ea3951364fa8b2c93a68d0e2e6ddbf"
+      },
+      {
+        "path": "scripts/test_build_release_self_knowledge.py",
+        "bytes": 35011,
+        "sha256": "6F47B0F0DAD04AA969FBE88ACFB73C3669DD68F86F64BB022B463F9E35E322E0",
+        "blob": "4fe668ba54c494ee069316b7bcb28a5273e622c5"
+      },
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 11127,
+        "sha256": "90472DF6B83371B479A5078BCB414E3F3A7BCE0C7F2E44CB2ADE73DE777565B2",
+        "blob": "b5e865d1deec6a5354c75fe897e846449468e064"
+      }
+    ],
+    "note": "Narrow exact Cargo alias reconciliation with original provenance, direction/reference preservation,27 expected snapshot cases and real2crate CLI; shrink guard retained.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
