@@ -1,0 +1,43 @@
+{
+  "schema": "neoth.wave2629.pin-custody.v1",
+  "status": "SOURCE_CONTRACTS_IMPLEMENTED_HOSTED_PENDING",
+  "base": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
+  "targetVersions": {
+    "zip": "9.0.5",
+    "russh": "0.64.1"
+  },
+  "expectedRegressionCases": 7,
+  "sourceFiles": [
+    ".gitattributes",
+    ".github/workflows/candle-pin-revision.yml",
+    "packaging/candle_pin_revision.py",
+    "packaging/candle_zip_migration.py",
+    "packaging/test_candle_pin_revision.py",
+    "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.candidate.json",
+    "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch"
+  ],
+  "sourceGate": "Retain original97-file Candle custody, authenticate exact3manifest revision, reconstruct original postimages, verify full-index patch replay and reject unknown paths/metadata/modes/links",
+  "qualification": "Exactmain producer; originalgate; isolated3file candidate; seven actual regressions; producer-side1MiBlogcap; exact pre/post source+candidate hashes; checkout remains clean",
+  "independentPromptReview": "No definite defect; post-candidate hashes, success after clean-tree checks and producer log cap incorporated",
+  "graphifyNavigation": {
+    "usedPaths": [
+      "packaging/candle_zip_migration.py",
+      "SRC/neothd/src/transport/ssh_tunnel.rs",
+      "SRC/neothd/src/media/document.rs"
+    ],
+    "producer": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
+    "purpose": "Navigation only; source remains authority",
+    "run": "40857789758"
+  },
+  "pinsImported": false,
+  "solverExecuted": false,
+  "localRuntimeExecuted": false,
+  "goldClosed": false,
+  "remaining": [
+    "Run/admit7hosted source contracts",
+    "Resolvefromcommittedlock with stablemetadata and complete graphdelta",
+    "ZIP/Candle/SSH compatibility and fresh audit",
+    "Root-reviewed import preservingphysicalCargo.lockWIP"
+  ],
+  "patchTransport": "Use the existing exact-patch convention: LF bytes and significant blank context markers preserved; all other whitespace checks retained"
+}

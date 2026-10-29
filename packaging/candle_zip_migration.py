@@ -17,6 +17,8 @@ import subprocess
 import tarfile
 import tomllib
 
+from candle_pin_revision import revision_sources
+
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "packaging/vendor-provenance"
 VENDOR = ROOT / "SRC/vendor/candle-core"
@@ -88,8 +90,15 @@ def prepare(spec: dict, files: dict[str, bytes]) -> None:
     shutil.copyfile(ASSETS / "candle_zip_compat.rs", ROOT / TEST)
 
 
-def verify_source(spec: dict, files: dict[str, bytes]) -> None:
+def verify_source(spec: dict, files: dict[str, bytes], *, require_revision: bool = False) -> None:
     require(VENDOR.is_dir() and not VENDOR.is_symlink(), "missing/linked vendor directory")
+    revision = ASSETS / "candle-core-0.8.4-pin-revision.json"
+    require(not require_revision or revision.is_file(), "required pin revision is missing")
+    restored = revision_sources(ROOT, spec) if revision.exists() else {}
+
+    def original_source(path: str) -> bytes:
+        return restored[path] if path in restored else (ROOT / path).read_bytes()
+
     actual = set()
     for directory, directories, names in os.walk(VENDOR, followlinks=False):
         for name in directories + names:
@@ -103,9 +112,9 @@ def verify_source(spec: dict, files: dict[str, bytes]) -> None:
     for relative, body in files.items():
         path = "SRC/vendor/candle-core/" + relative
         expected = changes[path]["after"] if path in changes else digest(body)
-        require(digest((ROOT / path).read_bytes()) == expected, f"vendor delta changed: {path}")
+        require(digest(original_source(path)) == expected, f"vendor delta changed: {path}")
     for path, change in changes.items():
-        require(digest((ROOT / path).read_bytes()) == change["after"], f"postimage mismatch: {path}")
+        require(digest(original_source(path)) == change["after"], f"postimage mismatch: {path}")
     require((ROOT / TEST).read_bytes() == (ASSETS / "candle_zip_compat.rs").read_bytes(),
             "integration test differs from reviewed template")
     vcs = json.loads((VENDOR / ".cargo_vcs_info.json").read_bytes())
@@ -116,10 +125,26 @@ def verify_source(spec: dict, files: dict[str, bytes]) -> None:
 def verify_resolution(proof: Path) -> None:
     baseline = tomllib.loads(run("git", "show", "HEAD:SRC/Cargo.lock").decode())["package"]
     current = tomllib.loads((ROOT / "SRC/Cargo.lock").read_text())["package"]
+    revision_active = (ASSETS / "candle-core-0.8.4-pin-revision.json").exists()
+    zip_version = "9.0.5" if revision_active else "9.0.0"
+    zip_checksum = (
+        "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+        if revision_active else ZIP_CHECKSUM
+    )
+    if revision_active:
+        russh = [p for p in current if p["name"] == "russh"]
+        require(len(russh) == 1 and russh[0]["version"] == "0.64.1"
+                and russh[0].get("source") == REGISTRY
+                and russh[0].get("checksum")
+                == "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58",
+                "Russh revision resolution/checksum mismatch")
+        require([p for p in baseline if p["name"] == "pageant"]
+                == [p for p in current if p["name"] == "pageant"],
+                "unreviewed Pageant change")
     zip_packages = [p for p in current if p["name"] == "zip"]
-    require(len(zip_packages) == 1 and zip_packages[0]["version"] == "9.0.0"
+    require(len(zip_packages) == 1 and zip_packages[0]["version"] == zip_version
             and zip_packages[0].get("source") == REGISTRY
-            and zip_packages[0].get("checksum") == ZIP_CHECKSUM, "ZIP resolution/checksum mismatch")
+            and zip_packages[0].get("checksum") == zip_checksum, "ZIP resolution/checksum mismatch")
     core = [p for p in current if p["name"] == "candle-core"]
     require(len(core) == 1 and core[0]["version"] == "0.8.4"
             and "source" not in core[0] and "checksum" not in core[0], "Candle source not vendored")
@@ -135,7 +160,7 @@ def verify_resolution(proof: Path) -> None:
             and Path(selected[0]["manifest_path"]).resolve() == (VENDOR / "Cargo.toml").resolve(),
             "metadata does not select exact vendor")
     zips = [p for p in packages if p["name"] == "zip"]
-    require(len(zips) == 1 and zips[0]["version"] == "9.0.0", "metadata retains another ZIP")
+    require(len(zips) == 1 and zips[0]["version"] == zip_version, "metadata retains another ZIP")
     for name in ("neoth", "candle-core"):
         package = next(p for p in packages if p["name"] == name)
         node = next(n for n in first["resolve"]["nodes"] if n["id"] == package["id"])

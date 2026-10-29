@@ -2,14 +2,14 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T10:26:04.4103428Z",
-  "validationStatus": "fixture-anchor-root-hosted-pending",
+  "capturedUtc": "2026-10-29T10:35:09.3304375Z",
+  "validationStatus": "graphify-accepted-pin-custody-source-contracts-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 1920,
-      "sha256": "33566B5A02A8E74B0C004530D75D64F6C22AC468065D7B9272219F67B0F92DE2"
+      "bytes": 2012,
+      "sha256": "BE61A29325C853BB1241EC1A5BD2309E5695B2C71EF4548B562AF95B1249026C"
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -125,6 +125,11 @@
       "path": ".github/workflows/bge-m3.yml",
       "bytes": 4970,
       "sha256": "CE587DC01FA879DBD4BF211AA059C9783E0CA2D9BDD7804B0CCB3E8DDD7216AB"
+    },
+    {
+      "path": ".github/workflows/candle-pin-revision.yml",
+      "bytes": 9037,
+      "sha256": "2046AF9E6B8F721935A47DF4ECF98B99A060FC4BD1DA86F8C3B5B6ED83DA5579"
     },
     {
       "path": ".github/workflows/candle-zip-migration.yml",
@@ -4653,8 +4658,13 @@
     },
     {
       "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
-      "bytes": 7047,
-      "sha256": "2BC65DF8D543B2793EB1209BD23701732AF6F96BCA3C0DE449290CA068E64933"
+      "bytes": 7975,
+      "sha256": "E58CEBB6637EA8C8761AB215A472B4FEE7C820F0BB6A53076961178C167316A1"
+    },
+    {
+      "path": "docs/verification/gold-wave2629-pin-custody.json",
+      "bytes": 2018,
+      "sha256": "113AE9248E854797BF25A12F759F1EA61A0A7B7CA5D5E5A83DC72D48A08AE99E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5492,9 +5502,14 @@
       "sha256": "7CC34662D013E677163BF37D74B74D14E9F87DC49E8BFA2B5F7609B95D4FCD19"
     },
     {
+      "path": "packaging/candle_pin_revision.py",
+      "bytes": 7464,
+      "sha256": "50131F71D7C00E22EFF53678A84876BB005B3A15C928698B612B39FDBA8B343D"
+    },
+    {
       "path": "packaging/candle_zip_migration.py",
-      "bytes": 10185,
-      "sha256": "606471452413DD100366D752547263C8B06386C4EBA0598897CF74C7ED6A1997"
+      "bytes": 11488,
+      "sha256": "E7ACAD1039C0BC099F63427C156B2EBFA6F74228391CD94F256BD3640B846A06"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -5625,6 +5640,11 @@
       "path": "packaging/specialize_silero.py",
       "bytes": 25585,
       "sha256": "F6D84B9E7514AA2A0C169139E5739A5499C6453E08E50EB6FBF4B9509157D6AE"
+    },
+    {
+      "path": "packaging/test_candle_pin_revision.py",
+      "bytes": 9136,
+      "sha256": "5FC47E7317EB745EB782A87F834E3C74AD51FCBE3E18BC73D58DB70238170E55"
     },
     {
       "path": "packaging/tests/citation_acceptance.py",
@@ -5777,6 +5797,11 @@
       "sha256": "5A40B58317CC03A0C81F4D8C46635DFD2E1056AD82818565A5AEF6E303B80AE8"
     },
     {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.candidate.json",
+      "bytes": 1626,
+      "sha256": "247601E2CA23E2002471BC3FB26C38D26FF944AEAA9584E0593D4D9B3CF16EAA"
+    },
+    {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
       "bytes": 1949,
       "sha256": "2D1DC07ADD0B8FF945A493FE7C696FC155D3BB8BA45741356AC2A97C461B0157"
@@ -5827,6 +5852,11 @@
       "sha256": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF"
     },
     {
+      "path": "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch",
+      "bytes": 2545,
+      "sha256": "FDEA622BAC60FAA46A23338134C24631ED8845F0D51A50A3D0037E9D4EA01080"
+    },
+    {
       "path": "packaging/windows/smoke-installer.ps1",
       "bytes": 52630,
       "sha256": "376C113510BC09BEE2F6439DF5F14A5DDB001248E85553B8B4CF500A1D975877"
@@ -5868,8 +5898,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2697293,
-      "sha256": "A4558432DA699C8091C83BD395D853D279B4259C56B92408A65E6CCA7C8DEEC8"
+      "bytes": 2699074,
+      "sha256": "C02769B1366B354582D482230D4C0AE48F1DB41C512C54F60266D811E743D0CA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

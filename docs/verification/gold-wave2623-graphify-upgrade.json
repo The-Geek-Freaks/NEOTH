@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "CARGO_RECONCILIATION_PASSED_FIXTURE_ANCHOR_ACCOUNTING_REPAIR_PENDING",
+  "status": "HOSTED_CONTRACTS_AND_STRUCTURAL_NAVIGATION_ROOT_ADMITTED",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -50,13 +50,13 @@
   "newPythonCases": 5,
   "registeredPortableRustCases": 3080,
   "localRuntimeExecuted": false,
-  "runtimeCompatibilityAccepted": false,
+  "runtimeCompatibilityAccepted": true,
   "fullCiAccepted": false,
   "goldClosed": false,
   "remaining": [
-    "Execute27 snapshot cases, isolation and real two-crate CLI/export contract on repaired producer",
-    "Produce and admit original source-bound navigation artifacts",
-    "Qualify remaining ZIP and Russh revisions separately"
+    "Qualify ZIP9.0.5 and Russh0.64.1 source custody/solver/behavior/audit",
+    "A02 acquisition and current full/native/device/release acceptance remain open",
+    "Structural navigation has320 explicitly unsupported inputs; it is not complete semantic coverage"
   ],
   "qualificationAttempt": {
     "run": 40851410051,
@@ -147,5 +147,32 @@
     "productionChange": false,
     "navigationExecuted": false,
     "localRuntimeExecuted": false
+  },
+  "acceptedQualification": {
+    "run": "40857789758",
+    "producer": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
+    "snapshotCases": 27,
+    "realCliPassed": true,
+    "releaseIsolationPassed": true,
+    "actualCargoAliases": 2,
+    "cargoDirectionAndProvenancePassed": true,
+    "contractSourceBindings": 10,
+    "navigationSourceBindings": 1865,
+    "nodes": 76778,
+    "edges": 250010,
+    "supportedInputs": 1545,
+    "unsupportedInputs": 320,
+    "warnings": 0,
+    "modelCalls": 0,
+    "parallel": false,
+    "originalArchives": 2,
+    "originalEntries": 17,
+    "proof": "work/gold-20260906/wave2628-graphify-anchor-accounting/ROOT_ADMISSION.json",
+    "proofSha256": "8FD1C2104F471E4DCAFC01498BB02BAE50CCBC61090E2BE76C7E6894C4D7AF5F",
+    "completeSemanticMap": false,
+    "fullCurrentCiAccepted": false,
+    "nativeAccepted": false,
+    "releaseAccepted": false,
+    "goldAccepted": false
   }
 }

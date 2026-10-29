@@ -1,0 +1,187 @@
+name: Candle pin revision source contracts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main producer for ZIP and Russh pin custody regressions
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candle-pin-revision
+  cancel-in-progress: false
+
+jobs:
+  source_contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.10'
+      - name: Verify original source and build isolated exact pin candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          import tempfile
+
+          sys.path.insert(0, str(Path("packaging").resolve()))
+          import candle_zip_migration as gate
+
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-pin-contracts"
+          proof.mkdir(exist_ok=False)
+          bundle = proof / "inputs"
+          bundle.mkdir()
+          assets = gate.ASSETS
+          spec = gate.bindings()
+          gate.verify_source(spec, gate.upstream_files())
+          template = assets / "candle-core-0.8.4-pin-revision.candidate.json"
+          revision = json.loads(template.read_bytes())
+          patch_path = assets / "zip9.0.5-russh0.64.1.patch"
+          patch = patch_path.read_bytes()
+          sha = lambda data: hashlib.sha256(data).hexdigest()
+          if sha(patch) != revision["patchSha256"]:
+              raise SystemExit("candidate patch hash differs")
+          names = {
+              "SRC/neothd/Cargo.toml": "neothd-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml": "candle-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml.orig": "candle-Cargo.toml.orig",
+          }
+          if len(revision["changes"]) != 3 or {c["path"] for c in revision["changes"]} != set(names):
+              raise SystemExit("candidate manifest scope differs")
+          lock = subprocess.check_output(["git", "show", "HEAD:SRC/Cargo.lock"])
+          if Path("SRC/Cargo.lock").read_bytes() != lock:
+              raise SystemExit("checkout lock differs from producer")
+          with tempfile.TemporaryDirectory(prefix="neoth-pin-inputs-") as directory:
+              temporary = Path(directory)
+              for change in revision["changes"]:
+                  relative = change["path"]
+                  data = Path(relative).read_bytes()
+                  if sha(data) != change["before"]:
+                      raise SystemExit("candidate preimage differs")
+                  destination = temporary / relative
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  destination.write_bytes(data)
+              for args in (["--check"], []):
+                  subprocess.run(["git", "apply", *args, "-"], cwd=temporary,
+                                 input=patch, check=True, timeout=15)
+              actual = {p.relative_to(temporary).as_posix() for p in temporary.rglob("*") if p.is_file()}
+              if actual != set(names):
+                  raise SystemExit("candidate patch output scope differs")
+              for change in revision["changes"]:
+                  path = temporary / change["path"]
+                  if path.is_symlink() or sha(path.read_bytes()) != change["after"]:
+                      raise SystemExit("candidate postimage differs")
+                  shutil.copyfile(path, bundle / names[change["path"]])
+          shutil.copyfile(template, bundle / template.name)
+          shutil.copyfile(patch_path, bundle / patch_path.name)
+          inputs = {
+              ".gitattributes", ".github/workflows/candle-pin-revision.yml",
+              "packaging/candle_pin_revision.py", "packaging/candle_zip_migration.py",
+              "packaging/test_candle_pin_revision.py",
+              "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.candidate.json",
+              "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch",
+              "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+              "packaging/vendor-provenance/candle-core-0.8.4.crate",
+              "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
+              "packaging/vendor-provenance/candle_zip_compat.rs",
+              gate.TEST, "SRC/Cargo.lock",
+          } | {c["path"] for c in spec["changes"]}
+          inputs |= {p.relative_to(gate.ROOT).as_posix()
+                     for p in gate.VENDOR.rglob("*") if p.is_file()}
+          receipt = {
+              "schema": "neoth.pin-custody-contracts.v1",
+              "producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "inputHashes": {p: sha(Path(p).read_bytes()) for p in sorted(inputs)},
+              "candidateHashes": {p.name: sha(p.read_bytes()) for p in sorted(bundle.iterdir())},
+              "baselineLockSha256": sha(lock), "expectedCases": 7,
+              "pinsImported": False, "solverExecuted": False, "goldAccepted": False,
+          }
+          (proof / "prepared.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - name: Run seven custody regressions without applying pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/neoth-pin-contracts"
+          export NEOTH_PIN_REVISION_INPUT="$proof/inputs"
+          timeout 120 python packaging/test_candle_pin_revision.py 2>&1 | (ulimit -f 1024; tee "$proof/contracts.log")
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-pin-contracts"
+          log = (proof / "contracts.log").read_text()
+          if (len(log) > 1024 * 1024 or not re.search(r"^Ran 7 tests in [0-9.]+s$", log, re.M)
+                  or not re.search(r"^OK$", log, re.M) or re.search(r"^(FAILED|ERROR:|FAIL:)", log, re.M)):
+              raise SystemExit("exact custody test terminal missing")
+          receipt = json.loads((proof / "prepared.json").read_bytes())
+          for name, expected in receipt["inputHashes"].items():
+              if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
+                  raise SystemExit("producer source changed during custody tests")
+          bundle = proof / "inputs"
+          if {p.name for p in bundle.iterdir()} != set(receipt["candidateHashes"]):
+              raise SystemExit("candidate inventory changed during custody tests")
+          for name, expected in receipt["candidateHashes"].items():
+              path = bundle / name
+              if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                  raise SystemExit("candidate input changed during custody tests")
+          subprocess.run(["git", "diff", "--exit-code"], check=True)
+          if subprocess.check_output(["git", "status", "--porcelain"]):
+              raise SystemExit("checkout changed during custody tests")
+          receipt["passedCases"] = 7
+          receipt["status"] = "HOSTED_SOURCE_CONTRACTS_ROOT_REVIEW_REQUIRED"
+          (proof / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          names = ("contracts.log", "prepared.json", "receipt.json")
+          (proof / "SHA256SUMS").write_text("".join(
+              hashlib.sha256((proof / name).read_bytes()).hexdigest() + "  " + name + "\n"
+              for name in names
+          ))
+          PY
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - name: Retain exact custody proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pin-custody-${{ inputs.source_head }}
+          path: |
+            ${{ runner.temp }}/neoth-pin-contracts/contracts.log
+            ${{ runner.temp }}/neoth-pin-contracts/prepared.json
+            ${{ runner.temp }}/neoth-pin-contracts/receipt.json
+            ${{ runner.temp }}/neoth-pin-contracts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30

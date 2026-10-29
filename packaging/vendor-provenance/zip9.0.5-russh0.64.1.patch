@@ -1,0 +1,48 @@
+diff --git a/SRC/neothd/Cargo.toml b/SRC/neothd/Cargo.toml
+index b3a1cfc6401fa5c83cfab08c5f1f33036956e9e2..fb76d5bef5c3353a3fe124aeefbec5d32be9c8a3 100644
+--- a/SRC/neothd/Cargo.toml
++++ b/SRC/neothd/Cargo.toml
+@@ -362,7 +362,7 @@ zstd = "=0.14.3"
+ # Both pure-Rust — no system liblzma linkage, no shell-out — so the
+ # self-contained-binary rule (memory/neoth-hard-rule-self-contained)
+ # stays honoured.
+-zip     = { version = "=9.0.0", default-features = false, features = ["deflate"] }
++zip     = { version = "=9.0.5", default-features = false, features = ["deflate"] }
+ lzma-rs = "0.3"
+ 
+ # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
+@@ -672,7 +672,7 @@ rand                = { version = "0.9", default-features = false, features = ["
+ # TERMIX-01/02 (feature `ssh-tunnel`, default OFF). `ring` backend (NOT aws-lc-rs)
+ # so it builds on Windows MSVC with no cmake/nasm. `russh::keys` (merged-in, no
+ # separate russh-keys crate) supplies the ssh-key PublicKey/PrivateKey types.
+-russh               = { version = "=0.63.2", default-features = false, features = ["ring"], optional = true }
++russh               = { version = "=0.64.1", default-features = false, features = ["ring"], optional = true }
+ # D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
+ tokio-stream        = { version = "0.1", default-features = false }
+ # Phase 5C streaming -- async-stream macro builds Stream impls from async {}
+diff --git a/SRC/vendor/candle-core/Cargo.toml b/SRC/vendor/candle-core/Cargo.toml
+index 70ec32259cfc877306b1415e881475a6df1587f3..b60bbafdadd74307add8890e6c1eda5c2bca59dd 100644
+--- a/SRC/vendor/candle-core/Cargo.toml
++++ b/SRC/vendor/candle-core/Cargo.toml
+@@ -199,7 +199,7 @@ version = "0.7.2"
+ features = ["derive"]
+ 
+ [dependencies.zip]
+-version = "=9.0.0"
++version = "=9.0.5"
+ default-features = false
+ 
+ [dev-dependencies.anyhow]
+diff --git a/SRC/vendor/candle-core/Cargo.toml.orig b/SRC/vendor/candle-core/Cargo.toml.orig
+index 3ec56e4b7f69286b830e26014b50225df4184660..f3b88337afa7990cb90279be8bdee93a8ae4a0e4 100644
+--- a/SRC/vendor/candle-core/Cargo.toml.orig
++++ b/SRC/vendor/candle-core/Cargo.toml.orig
+@@ -31,7 +31,7 @@ thiserror = { workspace = true }
+ ug-cuda = { workspace = true, optional = true }
+ ug-metal = { workspace = true, optional = true }
+ yoke = { workspace = true }
+-zip = { version = "=9.0.0", default-features = false }
++zip = { version = "=9.0.5", default-features = false }
+ 
+ [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ ug = { workspace = true }

@@ -1,0 +1,49 @@
+{
+  "schema": "neoth.candle-zip-russh-pin-revision.v1",
+  "original": {
+    "specPath": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+    "specSha256": "2d1dc07add0b8ff945a493fe7c696fc155d3bb8ba45741356ac2a97c461b0157",
+    "archiveSha256": "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1",
+    "patchSha256": "b525955dfed52c03660a3173911737fcd410e66392865bec2813ce051c7d4f2f"
+  },
+  "patchSha256": "fdea622bac60faa46a23338134c24631ed8845f0d51a50a3d0037e9d4ea01080",
+  "changes": [
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "before": "9fee53afb2ea7f340e64f61dfc6d168f91fd77bb425fb78bacb37a0e3cb3fde8",
+      "after": "15aac037ffcfe73b3a54a08d991766facbfc97e8aa90daeb849d0ac7b9e67c58",
+      "edits": [
+        {
+          "after": "\"=9.0.5\"",
+          "before": "\"=9.0.0\""
+        },
+        {
+          "after": "\"=0.64.1\"",
+          "before": "\"=0.63.2\""
+        }
+      ]
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml",
+      "before": "4f91c55c9fb77cc2a6f91d783c5be0d52195038c7a0335e45891a91d8eab6e2b",
+      "after": "170f4c7695e4b4ee0a5f8c279d806d21c6fa57db2788873d1a59e6a9163ae873",
+      "edits": [
+        {
+          "after": "\"=9.0.5\"",
+          "before": "\"=9.0.0\""
+        }
+      ]
+    },
+    {
+      "path": "SRC/vendor/candle-core/Cargo.toml.orig",
+      "before": "5d87068638d7e3f333a2ad8164ee3524b4f3cc9482827eb415027d1b9195253b",
+      "after": "3bfa9f7cc71fa65568a30ff6791d0a0604b88e63902dcbcc2956f0a7b4fb76d9",
+      "edits": [
+        {
+          "after": "\"=9.0.5\"",
+          "before": "\"=9.0.0\""
+        }
+      ]
+    }
+  ]
+}
