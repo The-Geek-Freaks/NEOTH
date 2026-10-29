@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2634.budget-acquisition.v1",
-  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "IMPLEMENTED_HOSTED_FORMATTED_RUNTIME_PENDING",
   "baseProducer": "da3913398eee2c2f80828937fa70716e69f86916",
   "roadmap": "ADOPT-20261012-A02",
   "owner": "ProviderIntentLifecycle",
@@ -33,8 +33,16 @@
     "Prompt-only independent lifecycle reviewer found no concrete defect after bounded settlement wait correction"
   ],
   "open": [
-    "Hosted formatting, compile, both Clippy lanes and exact67 runtime proof",
+    "Fresh fast gates, compile, both Clippy lanes and exact67 runtime proof",
     "Complete per-stage acquisition history before combined observation, canonical reader and product presentation",
     "Current-producer platform/native/release/Gold acceptance"
-  ]
+  ],
+  "hostedFormatting": {
+    "run": "40869145805",
+    "producer": "3d947ed592e98907ff91da8a197cfc0ae5cd84c1",
+    "artifact": "preflight-rustfmt-patch-receipt",
+    "rootOriginalZipAndMembersVerified": true,
+    "paths": 2,
+    "localFormatterExecuted": false
+  }
 }

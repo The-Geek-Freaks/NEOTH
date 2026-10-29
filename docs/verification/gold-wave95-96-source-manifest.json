@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T11:55:08.0062748Z",
-  "validationStatus": "W2634_ACQUISITION_STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-29T11:57:36.3936724Z",
+  "validationStatus": "W2634_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4673,8 +4673,8 @@
     },
     {
       "path": "docs/verification/gold-wave2634-budget-acquisition.json",
-      "bytes": 2617,
-      "sha256": "B9CF4707BE947690E164E7C1E0812705059029B689055AF40021CCD47B4824E3"
+      "bytes": 2883,
+      "sha256": "2D2BD7D8D28BE2EED18A9F15A3145AD456C2CD5183030ECBE591806E15E55528"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5913,8 +5913,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2708481,
-      "sha256": "9286EDB3A1E47CBCD591AFC1457F4AC7E4E034715F4F75CDA57A17BFBBA18413"
+      "bytes": 2708850,
+      "sha256": "68718F177B7B075DA2FE8ACB19ACCF843DA4E072A493F91AEC7459479F71D481"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7348,8 +7348,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
-      "bytes": 29184,
-      "sha256": "3990E245A6ED834E249AE43F04CF56198406738FE69F1E990487930D62C4BF69"
+      "bytes": 29392,
+      "sha256": "17425C5C9B8D747D662592145E88812CE63CFCD5BF3B85B10AE3EE1CE0776DDC"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service.rs",
@@ -9168,8 +9168,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 412053,
-      "sha256": "2E69823AAE0B88CC3AE7C64A3651C0ACE47CC43D4E092E30B74F5C2DC3D7462C"
+      "bytes": 415327,
+      "sha256": "EB619F7148164F77F31F6F2C475E1947932F98117B2A9F3FC49B7359F295C4D9"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
