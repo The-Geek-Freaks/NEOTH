@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2620_WORKFLOW_ENV_CORRECTED_HOSTED_PENDING",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 453176,
-    "sha256": "C42D6F0CAAE69A5260DA3911721E274B2FB8FA0F6D367CFC16F071084CFB6FC7"
+    "bytes": 453369,
+    "sha256": "6AA5F172CF37BB99463BDFBBF2A5FD5DFBC27195666970F49DE00B5818831BD2"
   },
-  "sourceInputs": 2474,
+  "sourceInputs": 2475,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -87704,6 +87704,38 @@
       }
     ],
     "note": "GitHub runner context unavailable at job.env; use RUNNER_TEMP/GITHUB_ENV in source-bound first step.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2621GraphifyQualification": {
+    "base": "b3d670569c715d83c5029c4a9705155f42500e9b",
+    "sources": [
+      {
+        "path": ".github/workflows/graphify-navigation.yml",
+        "bytes": 16601,
+        "sha256": "EE8D0E0B0ED2DF9A162C38194C9581EB8105BB2AAC223D6ECEED485D9513F3D1",
+        "blob": "7c7bd152cb3ca0118865c25a8d77f68ac76e81cb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2689440,
+        "sha256": "9E7201C82446D7A3AB45A6BAD60CEB034DC4F10A8CF80D3B20ED1DB135D313F5",
+        "blob": "e4af83cc263ea3df764500caa762447b3eedca80"
+      },
+      {
+        "path": "docs/COST_PROVENANCE.md",
+        "bytes": 5832,
+        "sha256": "E04DFBA8EC2D18AAF399C721FE57D04628B132D576C88D575D73A5E0442CD0B6",
+        "blob": "69ee8e078c5ba285d06626975956ced8e273c81e"
+      },
+      {
+        "path": "docs/verification/gold-wave2621-graphify-qualification.json",
+        "bytes": 1230,
+        "sha256": "5B9D42FF25C7FDB801E005A415304905CF9B73B1F975F313447E4B659FB01702",
+        "blob": "a09734882a737b54c7fe44ca8e15740e3f205e68"
+      }
+    ],
+    "note": "Optional offline installed-CLI and snapshot contracts; full solver dependency graph retained. Runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -7,6 +7,11 @@ on:
         description: Exact producer for the structural navigation map
         required: true
         type: string
+      verify_contracts:
+        description: Run the installed CLI and snapshot contracts without network access before mapping
+        required: false
+        default: false
+        type: boolean
       graphify_upgrade_candidate:
         description: Resolve the reviewed Graphify 0.9.70 and Pillow 13 candidate outside the checkout
         required: false
@@ -59,6 +64,92 @@ jobs:
           set -euo pipefail
           export UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/neoth-graphify-venv"
           uv sync --locked --no-dev --python 3.12.10 --directory packaging/graphify-release
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        if: ${{ inputs.verify_contracts }}
+        with:
+          toolchain: '1.91.0'
+      - name: Verify CLI and snapshot contracts without network access
+        if: ${{ inputs.verify_contracts }}
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/neoth-graphify-contracts"
+          mkdir "$proof"
+          mkdir "$proof/home" "$proof/cargo"
+          GRAPHIFY_BIN="$RUNNER_TEMP/neoth-graphify-venv/bin/graphify"
+          GRAPHIFY_PYTHON="$RUNNER_TEMP/neoth-graphify-venv/bin/python"
+          command -v unshare
+          command -v setpriv
+          # All fixture children inherit the isolated network namespace. There
+          # is no network-enabled fallback and no provider credential scope.
+          offline=(
+            sudo unshare --net -- setpriv
+            --reuid="$(id -u)" --regid="$(id -g)" --init-groups --no-new-privs
+            env -i "HOME=$proof/home" "PATH=$PATH"
+            "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN=1.91.0
+            "CARGO_HOME=$proof/cargo" CARGO_NET_OFFLINE=true
+            PYTHONDONTWRITEBYTECODE=1 PYTHONHASHSEED=0
+            GRAPHIFY_MAX_WORKERS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+            OPENAI_API_KEY=neoth-offline-contract OPENAI_BASE_URL=http://127.0.0.1:9
+            LC_ALL=C.UTF-8 TZ=UTC
+          )
+          "${offline[@]}" "$GRAPHIFY_BIN" --version | tee "$proof/version.log"
+          "${offline[@]}" "$GRAPHIFY_PYTHON" .github/release-tools/test-release-isolation.py \
+            2>&1 | tee "$proof/release-isolation.log"
+          "${offline[@]}" "$GRAPHIFY_PYTHON" scripts/test_build_release_self_knowledge.py \
+            2>&1 | tee "$proof/snapshot-contracts.log"
+          "${offline[@]}" "$GRAPHIFY_PYTHON" scripts/test_graphify_cli_contract.py \
+            --graphify-bin "$GRAPHIFY_BIN" --graphify-python "$GRAPHIFY_PYTHON" \
+            --backend openai --model neoth-offline-contract \
+            2>&1 | tee "$proof/real-cli.log"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-contracts"
+          (proof / "receipt.json").write_text(json.dumps({
+              "producer": os.environ["GITHUB_SHA"],
+              "expectedProducer": os.environ["EXPECTED_HEAD"],
+              "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "networkNamespace": "isolated-unprivileged-no-fallback",
+              "releaseAccepted": False,
+              "inputs": {
+                  p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+                  for p in (
+                      ".github/workflows/graphify-navigation.yml",
+                      ".github/workflows/release.yml",
+                      ".github/release-tools/test-release-isolation.py",
+                      "packaging/graphify-release/pyproject.toml",
+                      "packaging/graphify-release/uv.lock",
+                      "scripts/build_graphify_navigation.py",
+                      "scripts/build_release_self_knowledge.py",
+                      "scripts/test_build_release_self_knowledge.py",
+                      "scripts/test_graphify_cli_contract.py",
+                      "scripts/augment_graphify_tracked_code.py",
+                  )
+              },
+          }, indent=2) + "\n")
+          files = sorted(p for p in proof.iterdir() if p.is_file())
+          (proof / "SHA256SUMS").write_text("".join(
+              f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in files
+          ))
+          PY
+          git diff --exit-code
+      - name: Retain installed Graphify contract proof
+        if: ${{ inputs.verify_contracts && always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: graphify-contracts-${{ inputs.source_head }}
+          path: |
+            ${{ runner.temp }}/neoth-graphify-contracts/*.log
+            ${{ runner.temp }}/neoth-graphify-contracts/receipt.json
+            ${{ runner.temp }}/neoth-graphify-contracts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
       - name: Generate serial structural map without model calls
         shell: bash
         run: |
@@ -179,6 +270,34 @@ jobs:
           expected = "sha256:6cb0f060b93778552511e8881c92700d7879a0023b89d69936c77cc9b42239da"
           if {w["hash"] for w in graphify.get("wheels", [])} != {expected}:
               raise SystemExit("resolved Graphify wheel differs from reviewed PyPI artifact")
+          import hashlib
+          import json
+
+          baseline_path = Path("packaging/graphify-release/uv.lock")
+          baseline = tomllib.loads(baseline_path.read_text())["package"]
+          def identity(package):
+              return (package["name"], package["version"],
+                      json.dumps(package.get("source", {}), sort_keys=True))
+          before = {identity(p): p for p in baseline}
+          after = {identity(p): p for p in packages}
+          if len(before) != len(baseline) or len(after) != len(packages):
+              raise SystemExit("duplicate resolved package identity")
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-proof"
+          (proof / "resolved-graph.json").write_text(json.dumps({
+              "producer": os.environ["EXPECTED_HEAD"],
+              "baselineLockSha256": hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
+              "candidateLockSha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              "baselinePackageCount": len(baseline),
+              "candidatePackageCount": len(packages),
+              "packages": packages,
+              "added": [after[k] for k in sorted(after.keys() - before.keys())],
+              "removed": [before[k] for k in sorted(before.keys() - after.keys())],
+              "changed": [
+                  {"before": before[k], "after": after[k]}
+                  for k in sorted(before.keys() & after.keys()) if before[k] != after[k]
+              ],
+              "integrationAccepted": False,
+          }, indent=2) + "\n")
           PY
       - name: Install locked candidate wheels and retain distribution notices
         shell: bash

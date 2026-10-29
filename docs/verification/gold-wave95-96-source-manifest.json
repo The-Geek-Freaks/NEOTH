@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T08:21:47.1625734Z",
-  "validationStatus": "W2620_WORKFLOW_ENV_CORRECTED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-29T09:02:22.8742513Z",
+  "validationStatus": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/graphify-navigation.yml",
-      "bytes": 10483,
-      "sha256": "2C6E98848C237970A2F3EDB1AC1618FA9E2E428FDC56CC9A04A4032D60C2B083"
+      "bytes": 16601,
+      "sha256": "EE8D0E0B0ED2DF9A162C38194C9581EB8105BB2AAC223D6ECEED485D9513F3D1"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -743,8 +743,8 @@
     },
     {
       "path": "docs/COST_PROVENANCE.md",
-      "bytes": 4326,
-      "sha256": "72256B11EB268F5597BE708351564AC352474286C225E7E96F0F5DF23AA8614B"
+      "bytes": 5832,
+      "sha256": "E04DFBA8EC2D18AAF399C721FE57D04628B132D576C88D575D73A5E0442CD0B6"
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
@@ -4647,6 +4647,11 @@
       "sha256": "D6E449449E248BF1D9C9D580E8ABE4A51A62171FAAE34661E7DACE508F9D8ACB"
     },
     {
+      "path": "docs/verification/gold-wave2621-graphify-qualification.json",
+      "bytes": 1230,
+      "sha256": "5B9D42FF25C7FDB801E005A415304905CF9B73B1F975F313447E4B659FB01702"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5848,8 +5853,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2688517,
-      "sha256": "A012F80091883A7CFE8B562226C96E144B6EC24FE2CBF8CF54368CCF94160B0C"
+      "bytes": 2689440,
+      "sha256": "9E7201C82446D7A3AB45A6BAD60CEB034DC4F10A8CF80D3B20ED1DB135D313F5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -1,0 +1,32 @@
+{
+  "schema": "neoth.wave2621.graphify-qualification.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "baseProducer": "b3d670569c715d83c5029c4a9705155f42500e9b",
+  "scope": "Optional installed-Graphify qualification before navigation; complete hosted solver graph evidence",
+  "contracts": [
+    "release isolation",
+    "snapshot builder regressions",
+    "real installed CLI and tracked-code recovery"
+  ],
+  "boundary": "Unprivileged fresh network namespace, clean environment, isolated HOME/CARGO_HOME, no fallback, no provider credentials",
+  "toolchains": {
+    "rust": "1.91.0",
+    "python": "3.12.10",
+    "uv": "0.9.28"
+  },
+  "solverEvidence": [
+    "complete resolved packages",
+    "added removed changed packages",
+    "original and candidate lock hashes",
+    "duplicate-identity rejection"
+  ],
+  "review": {
+    "agent": "/root/graphify_candidate_review",
+    "mode": "prompt-only",
+    "finding": "No definite flaw in supplied implementation; hosted validation required"
+  },
+  "includedDocs": "Planned authorization-price evidence documented in docs/COST_PROVENANCE.md; acquisition remains separate and open",
+  "localRuntimeExecuted": false,
+  "runtimeAccepted": false,
+  "goldClosed": false
+}
