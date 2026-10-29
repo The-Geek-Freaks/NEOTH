@@ -81,7 +81,7 @@ class WarningCapture(logging.Handler):
 
 
 def build(repo, producer, output):
-    require(version("graphifyy") == "0.8.41", "requires exact locked graphifyy 0.8.41")
+    require(version("graphifyy") == "0.9.70", "requires exact locked graphifyy 0.9.70")
     require(re.fullmatch(r"[0-9a-f]{40}", producer), "expected full source commit")
     require(not output.is_relative_to(repo), "output must be outside checkout")
     require(not output.exists(), "refusing to reuse navigation output or cached results")
@@ -111,10 +111,10 @@ def build(repo, producer, output):
     failure = None
     graph = None
 
-    def observed_extract(selected, path):
+    def observed_extract(selected, path, *, scan_root=None):
         relative = path.resolve().relative_to(repo).as_posix()
         require(relative not in outcomes, f"duplicate extraction: {relative}")
-        result = original(selected, path)
+        result = original(selected, path, scan_root=scan_root)
         require(isinstance(result, dict), f"invalid extraction result: {relative}")
         error = result.get("error")
         outcomes[relative] = {
@@ -129,7 +129,7 @@ def build(repo, producer, output):
     extractor._safe_extract = observed_extract
     try:
         graph = extractor.extract([repo / item["path"] for item in supported],
-                                  cache_root=repo, parallel=False)
+                                  cache_root=repo, root=repo, parallel=False, max_workers=1)
         require(set(outcomes) == {item["path"] for item in supported},
                 "not all supported files were observed; cache/dispatch mismatch")
         require(isinstance(graph.get("nodes"), list) and graph["nodes"], "empty/invalid graph")
@@ -186,7 +186,7 @@ def build(repo, producer, output):
     receipt = {
         "schema": "neoth.graphify.navigation.v1", "producer": producer,
         "run": os.environ.get("GITHUB_RUN_ID"), "attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
-        "workflowCommit": os.environ.get("GITHUB_SHA"), "graphify": "0.8.41",
+        "workflowCommit": os.environ.get("GITHUB_SHA"), "graphify": "0.9.70",
         "python": sys.version, "status": status, "failure": failure,
         "inputs": len(records), "supported": len(supported), "observed": len(outcomes),
         "unsupported": len(unsupported), "warnings": len(warnings.messages),

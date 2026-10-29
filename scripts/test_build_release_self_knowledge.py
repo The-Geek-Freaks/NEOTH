@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 
+from build_release_self_knowledge import graphify_id
+
 
 SCRIPT = Path(__file__).with_name("build_release_self_knowledge.py")
 
@@ -34,6 +36,28 @@ def run(
         stderr=subprocess.PIPE,
         env=environment,
     )
+
+
+class GraphifyPathIdTests(unittest.TestCase):
+    def test_unicode_path_ids_match_pinned_normalization(self) -> None:
+        cases = {
+            "src/My File.rs": "src_my_file_rs",
+            "\u0130slemYap": "i_slemyap",
+            "Stra\u00dfe": "strasse",
+            "\uff26\uff2f\uff2f": "foo",
+            "": "",
+            "._": "",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(graphify_id(raw), expected)
+
+    def test_combining_mark_ids_are_caseless_and_idempotent(self) -> None:
+        for raw in ("\u1fb7", "\u03b1\u0342\u0345", "\u0130slemYap"):
+            with self.subTest(raw=raw):
+                value = graphify_id(raw)
+                self.assertEqual(value, graphify_id(raw.casefold()))
+                self.assertEqual(value, graphify_id(value))
 
 
 class ReleaseSelfKnowledgeContractTests(unittest.TestCase):
@@ -77,12 +101,12 @@ class ReleaseSelfKnowledgeContractTests(unittest.TestCase):
         fake_graphify = self.fake_site / "graphify"
         fake_graphify.mkdir(parents=True)
         (fake_graphify / "__init__.py").write_text("", encoding="utf-8")
-        fake_distribution = self.fake_site / "graphifyy_fixture-0.8.41.dist-info"
+        fake_distribution = self.fake_site / "graphifyy_fixture-0.9.70.dist-info"
         fake_distribution.mkdir()
         (fake_distribution / "METADATA").write_text(
             "Metadata-Version: 2.1\n"
             "Name: graphifyy-fixture\n"
-            "Version: 0.8.41\n",
+            "Version: 0.9.70\n",
             encoding="utf-8",
         )
         (fake_graphify / "detect.py").write_text(
@@ -218,11 +242,15 @@ skip = os.environ.get('FAKE_GRAPHIFY_SKIP', '')
 if args[0] == 'extract':
     semantic = '' if os.environ.get('FAKE_GRAPHIFY_OMIT_SEMANTIC') else 'b' * 32
     source_file = str((Path.cwd() / 'src' / 'lib.rs').resolve())
+    normalized = source_file.strip('_.')
+    for _ in range(6):
+        folded = unicodedata.normalize('NFKC', normalized.casefold())
+        if folded == normalized:
+            break
+        normalized = folded
     file_id = re.sub(
-        r'_+',
-        '_',
-        re.sub(r'[^\\w]+', '_', unicodedata.normalize('NFKC', source_file)),
-    ).strip('_').casefold()
+        r'_+', '_', re.sub(r'[^\\w]+', '_', normalized),
+    ).strip('_')
     (out / 'graph.json').write_text(json.dumps({
       'nodes': [
         {'id':file_id,'label':'lib.rs','source_file':source_file,'_origin':'ast'},

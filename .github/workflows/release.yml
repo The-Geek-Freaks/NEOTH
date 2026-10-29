@@ -443,8 +443,8 @@ jobs:
             --python 3.12.10 \
             --directory packaging/graphify-release
           GRAPHIFY_BIN="$UV_PROJECT_ENVIRONMENT/bin/graphify"
-          [[ "$($GRAPHIFY_BIN --version)" == 'graphify 0.8.41' ]] || {
-            echo "::error::Graphify executable is not exactly graphifyy 0.8.41"
+          [[ "$($GRAPHIFY_BIN --version)" == 'graphify 0.9.70' ]] || {
+            echo "::error::Graphify executable is not exactly graphifyy 0.9.70"
             exit 1
           }
 

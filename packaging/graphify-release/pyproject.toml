@@ -3,8 +3,9 @@ name = "neoth-release-graphify"
 version = "0.0.0"
 requires-python = "==3.12.*"
 dependencies = [
-    "graphifyy==0.8.41",
+    "graphifyy==0.9.70",
     "matplotlib==3.10.8",
+    "pillow==13.0.0",
 ]
 
 [tool.uv]

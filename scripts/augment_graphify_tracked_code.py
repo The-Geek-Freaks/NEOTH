@@ -35,7 +35,7 @@ def git_tracked_code(repo: Path) -> list[Path]:
             raise RuntimeError(f"tracked code is not a regular file: {relative}")
         if _get_extractor(path) is None:
             raise RuntimeError(
-                f"Graphify 0.8.41 has no AST extractor for tracked code: {relative}"
+                f"Graphify 0.9.70 has no AST extractor for tracked code: {relative}"
             )
         paths.append(path.resolve())
     if not paths:
@@ -90,7 +90,9 @@ def augment(repo: Path, graph_path: Path) -> int:
         print("tracked-code AST augmentation: no detector omissions")
         return 0
 
-    extracted = extract(missing, cache_root=repo)
+    extracted = extract(
+        missing, cache_root=repo, root=repo, parallel=False, max_workers=1
+    )
     nodes = extracted.get("nodes")
     edges = extracted.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):

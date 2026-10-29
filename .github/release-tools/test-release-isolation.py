@@ -368,14 +368,15 @@ require(
 
 graphify_dependencies = GRAPHIFY_MANIFEST.get("project", {}).get("dependencies", [])
 require(
-    graphify_dependencies == ["graphifyy==0.8.41", "matplotlib==3.10.8"],
+    graphify_dependencies == ["graphifyy==0.9.70", "matplotlib==3.10.8", "pillow==13.0.0"],
     "release Graphify environment is not exactly version-pinned",
 )
 require(
     {(package.get("name"), package.get("version")) for package in GRAPHIFY_LOCK.get("package", [])}
     >= {
-        ("graphifyy", "0.8.41"),
+        ("graphifyy", "0.9.70"),
         ("matplotlib", "3.10.8"),
+        ("pillow", "13.0.0"),
         ("neoth-release-graphify", "0.0.0"),
     },
     "release Graphify lock does not contain the exact generator contract",
@@ -394,7 +395,7 @@ require("persist-credentials: false" in self_knowledge, "self-knowledge checkout
 require(RUST_MSRV_PIN in self_knowledge, "self-knowledge Cargo parser does not use the workspace MSRV")
 require("uv sync" in self_knowledge and "--locked" in self_knowledge, "Graphify environment is not lock-enforced")
 require("$RUNNER_TEMP/neoth-graphify-venv" in self_knowledge, "Graphify environment is created inside the checkout")
-require("graphify 0.8.41" in self_knowledge, "Graphify executable version is not runtime-verified")
+require("graphify 0.9.70" in self_knowledge, "Graphify executable version is not runtime-verified")
 require(
     'probe_tool_version(("rustc", "-Vv")' in SELF_KNOWLEDGE_BUILDER_TEXT
     and 'probe_tool_version(("cargo", "-V")' in SELF_KNOWLEDGE_BUILDER_TEXT,

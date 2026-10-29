@@ -1,0 +1,62 @@
+{
+  "schema": "neoth.wave2623.graphify-upgrade.v1",
+  "status": "LOCK_AND_SOURCE_IMPORTED_HOSTED_COMPATIBILITY_PENDING",
+  "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
+  "versions": {
+    "graphifyy": "0.9.70",
+    "pillow": "13.0.0",
+    "matplotlib": "3.10.8",
+    "python": "3.12.10"
+  },
+  "solver": {
+    "run": 40850427887,
+    "producer": "45cf7e65e82efa119bd842773d2b163f84224213",
+    "packages": 41,
+    "registryArtifacts": 322,
+    "changedPackages": 2,
+    "lockSha256": "3baf9c574c2799604b7428b86b6bd9ef04b7308a5eae70fe85aaa58502f19641",
+    "archiveSha256": "D992CEBDCE57A744E353F3BDFD8899EF266244A590250538A40863D47EE1FEE7",
+    "rootProof": "work/gold-20260906/wave2621-graphify-qualification/ROOT_GRAPH_REVIEW.json"
+  },
+  "sourceChanges": [
+    "Forward scan_root and preserve serial extraction root",
+    "Mirror pinned Unicode path-ID normalization and compare against installed package",
+    "Update exact version and release-isolation contracts",
+    "Retain Apache LICENSE plus MIT heritage license and NOTICE"
+  ],
+  "sourceFiles": [
+    "packaging/graphify-release/pyproject.toml",
+    "scripts/build_graphify_navigation.py",
+    ".github/release-tools/test-release-isolation.py",
+    ".github/workflows/release.yml",
+    "scripts/augment_graphify_tracked_code.py",
+    "scripts/build_release_self_knowledge.py",
+    "scripts/test_build_release_self_knowledge.py",
+    "scripts/test_graphify_cli_contract.py",
+    "packaging/graphify-release/uv.lock"
+  ],
+  "focusedAcceptance": {
+    "run": 40840697628,
+    "producer": "712123dcd845b818a09bcb683972588b1cf4dedb",
+    "cases": 59,
+    "originalEntries": 124,
+    "sourceBindings": 26,
+    "bothClippyPassed": true,
+    "publicCliPassed": true,
+    "proof": "work/gold-20260906/wave2617-next-frontier/ROOT_ADMISSION.json",
+    "proofSha256": "BACAEAA3424C6706C9138C934959AD45523DD1EAC6A5FDF0BBBFE96545308AC6"
+  },
+  "sourceReview": "Static candidate review plus original PyPI artifacts and hosted locked solver; real CLI/snapshot/isolation/navigation qualification still required",
+  "newPythonCases": 2,
+  "registeredPortableRustCases": 3080,
+  "localRuntimeExecuted": false,
+  "runtimeCompatibilityAccepted": false,
+  "fullCiAccepted": false,
+  "goldClosed": false,
+  "remaining": [
+    "Hosted installed CLI and snapshot contracts without networking",
+    "Release isolation on integrated producer",
+    "Source-bound navigation and explicit coverage",
+    "Fresh advisory status; no dismissals or ignores"
+  ]
+}

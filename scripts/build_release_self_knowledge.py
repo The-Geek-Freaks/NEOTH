@@ -325,10 +325,15 @@ def ensure_output_is_safe(repo: Path, graphify_out: Path, output: Path) -> None:
 
 
 def graphify_id(raw: str) -> str:
-    """Mirror Graphify 0.8.41's path-ID normalisation."""
-    combined = unicodedata.normalize("NFKC", raw.strip("_."))
-    cleaned = re.sub(r"[^\w]+", "_", combined, flags=re.UNICODE)
-    return re.sub(r"_+", "_", cleaned).strip("_").casefold()
+    """Match the pinned Graphify 0.9.70 single-part path ID."""
+    current = raw.strip("_.")
+    for _ in range(6):
+        normalized = unicodedata.normalize("NFKC", current.casefold())
+        if normalized == current:
+            break
+        current = normalized
+    cleaned = re.sub(r"[^\w]+", "_", current, flags=re.UNICODE)
+    return re.sub(r"_+", "_", cleaned).strip("_")
 
 
 def canonical_source_file(raw: str, repo: Path) -> str:
@@ -360,7 +365,7 @@ def mark_raw_extraction_directed(
 ) -> None:
     """Canonicalise the raw graph and preserve source->target direction.
 
-    Graphify 0.8.41's headless extractor has no directed switch. Its
+    The pinned Graphify headless extractor has no directed switch. Its
     ``--no-cluster`` output is still the lossless extraction shape, so adding
     this build-mode bit before cluster-only is the only public-CLI path that
     avoids collapsing reverse-direction relations. The headless CLI also emits
@@ -768,7 +773,7 @@ print("NEOTH_GRAPHIFY_SELECTION=" + json.dumps(payload, sort_keys=True))
         canonical_unsupported.append(canonical_source_file(raw, repo))
     if canonical_unsupported:
         raise ContractError(
-            "Graphify classified tracked code for which 0.8.41 has no pinned AST extractor: "
+            "Graphify classified tracked code for which 0.9.70 has no pinned AST extractor: "
             + ", ".join(sorted(canonical_unsupported)[:8])
         )
 

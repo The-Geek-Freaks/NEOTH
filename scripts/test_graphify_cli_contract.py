@@ -10,10 +10,12 @@ import subprocess
 import tempfile
 
 from build_release_self_knowledge import (
+    graphify_id,
     mark_raw_extraction_directed,
 )
 from graphify.detect import FileType, classify_file, detect
 from graphify.extract import _get_extractor
+from graphify.ids import make_id
 
 
 def run(argv: list[str], *, cwd: Path) -> None:
@@ -57,6 +59,14 @@ def main() -> int:
     parser.add_argument("--backend", required=True)
     parser.add_argument("--model", required=True)
     args = parser.parse_args()
+    # Compare with the installed package, independently of the fixture generator.
+    for raw in (
+        "", "._", "src/My File.rs", "\u0130slemYap", "Stra\u00dfe",
+        "\uff26\uff2f\uff2f", "\u1fb7", "\u03b1\u0342\u0345",
+        r"C:\checkout\src\Lib.rs", "/tmp/checkout/src/lib.rs",
+    ):
+        if graphify_id(raw) != make_id(raw):
+            raise RuntimeError(f"pinned Graphify path-ID mismatch for {raw!r}")
     augmentation = Path(__file__).with_name("augment_graphify_tracked_code.py").resolve()
 
     with tempfile.TemporaryDirectory(prefix="neoth-graphify-contract-") as raw:

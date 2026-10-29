@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "LOCK_ADMITTED_COMPATIBILITY_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 453369,
-    "sha256": "6AA5F172CF37BB99463BDFBBF2A5FD5DFBC27195666970F49DE00B5818831BD2"
+    "bytes": 454598,
+    "sha256": "E2AB9ADAAACFDAF171DE4A83A0AC1ED1EEDE6DDF02FA4B25CA374FB4C2B32F17"
   },
-  "sourceInputs": 2475,
+  "sourceInputs": 2482,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -87736,6 +87736,80 @@
       }
     ],
     "note": "Optional offline installed-CLI and snapshot contracts; full solver dependency graph retained. Runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2623GraphifyUpgrade": {
+    "base": "45cf7e65e82efa119bd842773d2b163f84224213",
+    "sources": [
+      {
+        "path": ".github/release-tools/test-release-isolation.py",
+        "bytes": 28094,
+        "sha256": "156151DFDB3DB76F841033DCC6FAEABDC02DE1B77BE0C40046CBA9E3A8556CB4",
+        "blob": "bea61fc66171654db0432a358de085e3b7a4bcaf"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "bytes": 149726,
+        "sha256": "EEAF3338D87F8A1B2127286860F8D9C226958980D13042E56A1E4D4257AAECE3",
+        "blob": "052e4a62c7b923485b86fcbf6669b8f7448bdc0d"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2690850,
+        "sha256": "D2581F641A195DC34BF5524EC3838406C0A10862059A7A75B68055F4EFFAA94E",
+        "blob": "56a4dd3fbfee8bb19f1b628ec5efbfd88a1f29cb"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 2507,
+        "sha256": "D01784B2D0A18569127A28B6EBD5936040FA674874B750F91E6905BB294C8860",
+        "blob": "b47fceddfe8ed8a9e2ba13f15362b33165004c23"
+      },
+      {
+        "path": "packaging/graphify-release/pyproject.toml",
+        "bytes": 208,
+        "sha256": "22C89EDDB98E4F67730BB953A3ED4A3304397875A6F537FFE706FF5886E4C029",
+        "blob": "6d1f4c1b146981d38a9f5a2ab52bca221e8bf479"
+      },
+      {
+        "path": "packaging/graphify-release/uv.lock",
+        "bytes": 110533,
+        "sha256": "3BAF9C574C2799604B7428B86B6BD9EF04B7308A5EAE70FE85AAA58502F19641",
+        "blob": "42f8fb505b46b6712b05b45ea7dec822c9c050eb"
+      },
+      {
+        "path": "scripts/augment_graphify_tracked_code.py",
+        "bytes": 5795,
+        "sha256": "C2562015634F412911E49C8191AF101A109F6E0E8C58663B3126B006406B7497",
+        "blob": "a48d36dd5d0a02b78a43cfada9b33acc68f97aaf"
+      },
+      {
+        "path": "scripts/build_graphify_navigation.py",
+        "bytes": 11151,
+        "sha256": "C807CC0E357957A79ACD77613DC4184290942A4E1FD10018E55F337A691FA671",
+        "blob": "8233031820aa2be36fe3d0f9fd10a55f0ec8f2e3"
+      },
+      {
+        "path": "scripts/build_release_self_knowledge.py",
+        "bytes": 78741,
+        "sha256": "C360C19562A82A367ED44CBB94208541B7FB285E9FBE0AB4AADBBC3264D21D35",
+        "blob": "e465e9df2a4b8df104aa304e9f93d7dd030ec437"
+      },
+      {
+        "path": "scripts/test_build_release_self_knowledge.py",
+        "bytes": 26425,
+        "sha256": "FBF408B7227F50D5A0DCDECBFCAF8E9BD9BE26B957A8C6F9BA6641547F4D746A",
+        "blob": "676ddff8fcfc878123f63830f71a835b37474556"
+      },
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 7766,
+        "sha256": "33C57146CA749D7B7E6FB19BCC4D1A106162E632E1D73A488DD540E40E15907C",
+        "blob": "ec54626b8b0f5b894e73ce503a96a0d60ca8e0e3"
+      }
+    ],
+    "note": "Graphify0.9.70/Pillow13 locked solver admitted; source adaptations imported. Focused59 and bothClippy accepted on712123dc; actual new Graphify qualification pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

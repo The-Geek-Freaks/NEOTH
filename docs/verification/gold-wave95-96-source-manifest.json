@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T09:02:22.8742513Z",
-  "validationStatus": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-29T09:36:58.6670069Z",
+  "validationStatus": "LOCK_ADMITTED_COMPATIBILITY_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -13,8 +13,8 @@
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
-      "bytes": 28046,
-      "sha256": "44F14C51056EF2E76E5E4CCA8281D6CD5F463B7899B2C7FD2BFDD795B7AE6232"
+      "bytes": 28094,
+      "sha256": "156151DFDB3DB76F841033DCC6FAEABDC02DE1B77BE0C40046CBA9E3A8556CB4"
     },
     {
       "path": ".github/scripts/mobile/assemble-native-manifest.ps1",
@@ -309,7 +309,7 @@
     {
       "path": ".github/workflows/release.yml",
       "bytes": 149726,
-      "sha256": "AA3266ABC1A5B18394739D74C5CD404C25495FF6D70607D0F2D2169CC31AC2D5"
+      "sha256": "EEAF3338D87F8A1B2127286860F8D9C226958980D13042E56A1E4D4257AAECE3"
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
@@ -4652,6 +4652,11 @@
       "sha256": "5B9D42FF25C7FDB801E005A415304905CF9B73B1F975F313447E4B659FB01702"
     },
     {
+      "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+      "bytes": 2507,
+      "sha256": "D01784B2D0A18569127A28B6EBD5936040FA674874B750F91E6905BB294C8860"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5517,6 +5522,16 @@
       "sha256": "8599FF62047126FBA00782EF17EE28BB618FDFC4266E16919251ABEB0569F84E"
     },
     {
+      "path": "packaging/graphify-release/pyproject.toml",
+      "bytes": 208,
+      "sha256": "22C89EDDB98E4F67730BB953A3ED4A3304397875A6F537FFE706FF5886E4C029"
+    },
+    {
+      "path": "packaging/graphify-release/uv.lock",
+      "bytes": 110533,
+      "sha256": "3BAF9C574C2799604B7428B86B6BD9EF04B7308A5EAE70FE85AAA58502F19641"
+    },
+    {
       "path": "packaging/imbl_provenance_gate.py",
       "bytes": 14824,
       "sha256": "2B83D272F93A69CF086E9FF342046FC1DEB249092A0EE9F46F5568700711585E"
@@ -5853,8 +5868,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2689440,
-      "sha256": "9E7201C82446D7A3AB45A6BAD60CEB034DC4F10A8CF80D3B20ED1DB135D313F5"
+      "bytes": 2690850,
+      "sha256": "D2581F641A195DC34BF5524EC3838406C0A10862059A7A75B68055F4EFFAA94E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5882,9 +5897,19 @@
       "sha256": "EA94F50A699D7D878140D3F11EE76F955271724E84D7E8706470A42F98AD7667"
     },
     {
+      "path": "scripts/augment_graphify_tracked_code.py",
+      "bytes": 5795,
+      "sha256": "C2562015634F412911E49C8191AF101A109F6E0E8C58663B3126B006406B7497"
+    },
+    {
       "path": "scripts/build_graphify_navigation.py",
-      "bytes": 11085,
-      "sha256": "90668F0D0CFF868B7B6519EA52F70557661B2CFF1E3E9F2ABDBBC3176318904D"
+      "bytes": 11151,
+      "sha256": "C807CC0E357957A79ACD77613DC4184290942A4E1FD10018E55F337A691FA671"
+    },
+    {
+      "path": "scripts/build_release_self_knowledge.py",
+      "bytes": 78741,
+      "sha256": "C360C19562A82A367ED44CBB94208541B7FB285E9FBE0AB4AADBBC3264D21D35"
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
@@ -5897,9 +5922,19 @@
       "sha256": "3ACAD7AD93F0B854B491A505CE7B2ECDD48FFE71F8CA3A21BB3BBE01B825C161"
     },
     {
+      "path": "scripts/test_build_release_self_knowledge.py",
+      "bytes": 26425,
+      "sha256": "FBF408B7227F50D5A0DCDECBFCAF8E9BD9BE26B957A8C6F9BA6641547F4D746A"
+    },
+    {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
       "bytes": 16402,
       "sha256": "3D02C1AE7CC9EEC4C63CB7796A6F08747CACD9B5ABE54D70870C051BAE961D43"
+    },
+    {
+      "path": "scripts/test_graphify_cli_contract.py",
+      "bytes": 7766,
+      "sha256": "33C57146CA749D7B7E6FB19BCC4D1A106162E632E1D73A488DD540E40E15907C"
     },
     {
       "path": "SRC/_gate_gui_check.bat",
