@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T12:32:33.7433563Z",
-  "validationStatus": "W2635_DEPENDENCY_CONTRACT_ALIGNMENT_HOSTED_PENDING",
+  "capturedUtc": "2026-10-29T12:40:46.4803271Z",
+  "validationStatus": "W2635_NATIVE_COMPILATION_REUSE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 58058,
-      "sha256": "C826FAFD644C261EA2044313BF4619927C9701B9DC9FF2C748FB6A7498024FE7"
+      "bytes": 58589,
+      "sha256": "717383CCF8899B8B9036F795601DDCFBA41279D1EFD51947E6B1588F68CB2EAF"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -4678,8 +4678,8 @@
     },
     {
       "path": "docs/verification/gold-wave2635-native-dependencies.json",
-      "bytes": 4943,
-      "sha256": "14FEF993A8F44ED5537C0759EFF85D77D052EF8470C8DEAE9D9A9894A4933FB0"
+      "bytes": 5082,
+      "sha256": "04878D2F0D1866DDC2672A570F959F3DF3AFFF2280F6ABDA1EED9836D387C154"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5688,8 +5688,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 81968,
-      "sha256": "A5DEF129821496431AB1672CB1FCE81DD70A1B6F5C1282F60DB00726D6ADEF08"
+      "bytes": 82127,
+      "sha256": "7418EA9D55FA2897F295846A5F3FB0B38D344AD3208950DF5ADB0D3F05FA1E65"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5923,8 +5923,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2711228,
-      "sha256": "3FCB8CEC8F9291F0A8B36D52189AC186D9E76413CCD7FF345A944215569620B6"
+      "bytes": 2711461,
+      "sha256": "FCD114E3EA17655244CE496D57D40156FA82E01297D7CCCECE1D90F28B08636B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

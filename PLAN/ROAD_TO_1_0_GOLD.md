@@ -19591,3 +19591,5 @@ The operator's physical SRC/Cargo.lock is preserved byte-for-byte (5F274ACA1AD71
 Report: docs/verification/gold-wave2635-native-dependencies.json. Root custody: work/gold-20260906/wave2635-native-dependencies/IMPORT_STAGED.json. Publish this reviewed batch and qualify its fast gates while the existing focused67/Clippy run finishes. Start one full integration only after the active heavy run finishes and the required focused and fast gates pass; do not dispatch a second heavy stream.
 
 W2635 follow-up: Preflight 40873698076 rejected the old release-capability expectation (=0.63.2). The contract now requires the exact admitted =0.64.1 pin, all three SSH platforms and the locked library test command with discovery/result evidence. Optional/default-off and ring assertions remain unchanged; hosted recheck is required.
+
+W2635 native acceleration: feature lanes may restore existing same-feature or Rust1.91 platform compilation caches. Every locked compile, exact discovery and runtime check still executes; no cached test receipt supplies acceptance.

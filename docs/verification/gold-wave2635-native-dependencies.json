@@ -111,7 +111,8 @@
     "compileWorkers": 1,
     "runtimeLocal": false,
     "transportCasesOsGated": false,
-    "rawContextAndCaseResultsRetained": true
+    "rawContextAndCaseResultsRetained": true,
+    "cacheReuse": "Existing same-feature and Rust1.91 platform caches restore compilation only; locked check/discovery/runtime all rerun"
   },
   "protectedPhysicalLock": {
     "sha256": "5F274ACA1AD7148414803ADFD6034BAD7F083B915BC8177D8319332AA683CE52",

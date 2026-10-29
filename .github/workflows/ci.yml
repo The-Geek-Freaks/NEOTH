@@ -935,6 +935,14 @@ jobs:
             ~/.cargo/git
             SRC/target
           key: ${{ runner.os }}-feature-${{ matrix.feature }}-${{ hashFiles('SRC/Cargo.lock') }}
+          # Native SSH lanes are new. Reuse existing compiler work, then let
+          # Cargo's locked freshness checks rebuild the actual selected graph.
+          # Restored output is never a test result: all discovery/tests rerun.
+          restore-keys: |
+            ${{ runner.os }}-feature-${{ matrix.feature }}-
+            ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-
 
       - name: Pre-flight — verify nvcc available (qwen-cuda only)
         id: cuda-preflight

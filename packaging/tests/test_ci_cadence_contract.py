@@ -1593,6 +1593,8 @@ class CiCadenceContractTests(unittest.TestCase):
 
     def test_native_ssh_lanes_require_discovery_results_and_bound_evidence(self) -> None:
         feature_matrix = workflow_jobs(CI_TEXT)["feature-matrix"]
+        self.assertIn("${{ runner.os }}-feature-${{ matrix.feature }}-", feature_matrix)
+        self.assertIn("${{ runner.os }}-1.91-cargo-", feature_matrix)
         for os in ("ubuntu-24.04", "windows-2022", "macos-14"):
             self.assertEqual(
                 feature_matrix.count(f"- {{ os: {os}, feature: ssh-tunnel }}"), 1
