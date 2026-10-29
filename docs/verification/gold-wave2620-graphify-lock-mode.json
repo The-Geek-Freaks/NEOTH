@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.wave2620.graphify-lock-mode.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "baseProducer": "712123dcd845b818a09bcb683972588b1cf4dedb",
+  "scope": "Optional exclusive hosted lock candidate mode; current Graphify dependency and default map retained",
+  "input": "graphify_upgrade_candidate=true",
+  "target": {
+    "graphifyy": "0.9.70",
+    "python": "3.12.10",
+    "uv": "0.9.28",
+    "matplotlib": "3.10.8",
+    "pillow": "13.0.0"
+  },
+  "boundaries": [
+    "Exact main source/workflow producer",
+    "Reviewed baseline and generated manifest SHA256",
+    "Reviewed Graphify wheel hash",
+    "Fresh external project and cache; no source builds",
+    "Required LICENSE, LICENSE-MIT and NOTICE",
+    "Checksummed original lock and source/run receipts",
+    "No model calls or release dispatch"
+  ],
+  "review": "Prompt-only /root/graphify_candidate_review; no definite defect; full dependency/compatibility qualification remains required",
+  "existingFull": {
+    "windowsSkipped": 34,
+    "proof": "work/gold-20260906/wave2616-full-integration/FINAL_ASSESSMENT.json",
+    "macosPassed": 19567,
+    "linuxPassed": 19584,
+    "linuxSkipped": 32,
+    "windowsPassed": 19445,
+    "macosSkipped": 35,
+    "status": "FAILED_ONLY_LINUX_CLIPPY",
+    "run": 40689238801,
+    "producer": "8ee53deef9e39c732baa2990f3f8b14020153a04"
+  },
+  "activeFocused": {
+    "status": "PENDING",
+    "clippyGates": 2,
+    "run": 40840697628,
+    "cases": 59,
+    "producer": "712123dcd845b818a09bcb683972588b1cf4dedb"
+  },
+  "candidateUpgradeAccepted": false,
+  "currentDependenciesChanged": false,
+  "localRuntimeExecuted": false,
+  "goldClosed": false,
+  "remaining": [
+    "Execute hosted solver and inspect full resolved graph and notices",
+    "Integrate exact generated lock with reviewed source adaptations",
+    "Real installed CLI contract and release isolation",
+    "Regenerate source-bound navigation and verify explicit coverage"
+  ]
+}

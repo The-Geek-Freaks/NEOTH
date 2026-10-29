@@ -7,6 +7,11 @@ on:
         description: Exact producer for the structural navigation map
         required: true
         type: string
+      graphify_upgrade_candidate:
+        description: Resolve the reviewed Graphify 0.9.70 and Pillow 13 candidate outside the checkout
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,6 +22,7 @@ concurrency:
 
 jobs:
   map:
+    if: ${{ !inputs.graphify_upgrade_candidate }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -69,5 +75,158 @@ jobs:
             ${{ runner.temp }}/neoth-navigation/*.json
             ${{ runner.temp }}/neoth-navigation/GRAPH_REPORT.md
             ${{ runner.temp }}/neoth-navigation/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  upgrade_lock:
+    if: ${{ inputs.graphify_upgrade_candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      UV_CACHE_DIR: ${{ runner.temp }}/neoth-graphify-upgrade-cache
+      UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/neoth-graphify-upgrade-venv
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Bind upgrade candidate to exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: '0.9.28'
+          enable-cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.10'
+      - name: Prepare exact upgrade manifest outside checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import shutil
+          import tomllib
+
+          project = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-project"
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-proof"
+          project.mkdir(exist_ok=False)
+          proof.mkdir(exist_ok=False)
+          source = Path("packaging/graphify-release/pyproject.toml").read_bytes()
+          expected_source = "c72ac4240c7d8aa1f6647fdeff04f97bb2aa2b35b12861cc79571c763b8e174b"
+          if hashlib.sha256(source).hexdigest() != expected_source:
+              raise SystemExit("committed Graphify manifest differs from reviewed baseline")
+          manifest = source.replace(b'"graphifyy==0.8.41"', b'"graphifyy==0.9.70"')
+          manifest = manifest.replace(b'    "matplotlib==3.10.8",\n', b'    "matplotlib==3.10.8",\n    "pillow==13.0.0",\n')
+          expected_candidate = "22c89eddb98e4f67730bb953a3ed4a3304397875a6f537ffe706ff5886e4c029"
+          if hashlib.sha256(manifest).hexdigest() != expected_candidate:
+              raise SystemExit("generated manifest differs from reviewed upgrade candidate")
+          if tomllib.loads(manifest.decode())["project"]["dependencies"] != [
+              "graphifyy==0.9.70", "matplotlib==3.10.8", "pillow==13.0.0"
+          ]:
+              raise SystemExit("unexpected candidate dependency set")
+          (project / "pyproject.toml").write_bytes(manifest)
+          shutil.copyfile("packaging/graphify-release/uv.lock", project / "uv.lock")
+          (proof / "source-head.txt").write_text(os.environ["EXPECTED_HEAD"] + "\n")
+          (proof / "inputs.json").write_text(json.dumps({
+              "producer": os.environ["EXPECTED_HEAD"],
+              "workflowProducer": os.environ["GITHUB_SHA"],
+              "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "inputs": {
+                  name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
+                  for name in (
+                      "packaging/graphify-release/pyproject.toml",
+                      "packaging/graphify-release/uv.lock",
+                      ".github/workflows/graphify-navigation.yml",
+                  )
+              },
+              "candidateManifestSha256": expected_candidate,
+              "integrationAccepted": False,
+          }, indent=2) + "\n")
+          PY
+      - name: Resolve candidate and verify reviewed Graphify wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --python 3.12.10 --directory "$RUNNER_TEMP/neoth-graphify-upgrade-project"
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import tomllib
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-project/uv.lock"
+          packages = tomllib.loads(path.read_text())["package"]
+          for name, version in (("graphifyy", "0.9.70"), ("pillow", "13.0.0"), ("matplotlib", "3.10.8")):
+              matches = [p for p in packages if p["name"] == name]
+              if len(matches) != 1 or matches[0]["version"] != version:
+                  raise SystemExit(f"unexpected resolved package: {name}")
+          graphify = next(p for p in packages if p["name"] == "graphifyy")
+          expected = "sha256:6cb0f060b93778552511e8881c92700d7879a0023b89d69936c77cc9b42239da"
+          if {w["hash"] for w in graphify.get("wheels", [])} != {expected}:
+              raise SystemExit("resolved Graphify wheel differs from reviewed PyPI artifact")
+          PY
+      - name: Install locked candidate wheels and retain distribution notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --locked --no-dev --no-build --python 3.12.10 --directory "$RUNNER_TEMP/neoth-graphify-upgrade-project"
+          "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY'
+          from importlib.metadata import distribution, version
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import shutil
+          import sys
+
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-proof"
+          project = Path(os.environ["RUNNER_TEMP"]) / "neoth-graphify-upgrade-project"
+          expected = {"graphifyy": "0.9.70", "pillow": "13.0.0", "matplotlib": "3.10.8"}
+          actual = {name: version(name) for name in expected}
+          if actual != expected or sys.version_info[:3] != (3, 12, 10):
+              raise SystemExit("installed candidate version contract differs")
+          graphify = distribution("graphifyy")
+          for name in ("LICENSE", "LICENSE-MIT", "NOTICE"):
+              matches = [p for p in graphify.files or () if p.name == name and ".dist-info/" in str(p)]
+              if len(matches) != 1:
+                  raise SystemExit(f"required Graphify notice missing or ambiguous: {name}")
+              data = Path(graphify.locate_file(matches[0])).read_bytes()
+              if not data or len(data) > 262144:
+                  raise SystemExit(f"invalid Graphify notice size: {name}")
+              (proof / f"graphify-{name}").write_bytes(data)
+          for name in ("pyproject.toml", "uv.lock"):
+              shutil.copyfile(project / name, proof / name)
+          (proof / "installed.json").write_text(json.dumps({
+              "python": sys.version, "versions": actual,
+              "integrationAccepted": False,
+              "remaining": ["source adaptations", "real CLI contract", "release isolation", "navigation coverage"],
+          }, indent=2) + "\n")
+          files = sorted(p for p in proof.iterdir() if p.is_file())
+          (proof / "SHA256SUMS").write_text("".join(
+              f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in files
+          ))
+          PY
+          git diff --exit-code
+      - name: Retain lock candidate with exact provenance
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: graphify-upgrade-candidate-${{ inputs.source_head }}
+          path: ${{ runner.temp }}/neoth-graphify-upgrade-proof/*
           if-no-files-found: error
           retention-days: 30

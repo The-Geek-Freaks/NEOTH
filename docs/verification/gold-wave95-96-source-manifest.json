@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-28T14:35:57.2857667Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-29T08:19:27.8045905Z",
+  "validationStatus": "W2620_STATIC_REVIEWED_HOSTED_LOCK_MODE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/graphify-navigation.yml",
-      "bytes": 2480,
-      "sha256": "41BB92DC57C1989C33A5F2B5235871AF9452ABAB5226D655724B9E7B8A12F47D"
+      "bytes": 10423,
+      "sha256": "E82B8A023143652B198649647A120DAE260C90E81BD9860034E41F1872E958E7"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -4642,6 +4642,11 @@
       "sha256": "570D8BB2BF888048636EC26D58C7763F877BB3C203BE5EA206D4511545531B18"
     },
     {
+      "path": "docs/verification/gold-wave2620-graphify-lock-mode.json",
+      "bytes": 1964,
+      "sha256": "7F5B87F8B4892D372818446703CD36EB377732B765E8A07934C97C60B8798609"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5843,8 +5848,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2686487,
-      "sha256": "9EBB5378AC769F520CA5C8A85EDFE16EED94CBE658D213E022F3C86E0B4F04EC"
+      "bytes": 2688164,
+      "sha256": "97C3A78C92CBBA14D75775E37A4EDEB6B041DC360D263C82A9996F32729419AC"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
