@@ -185,8 +185,22 @@ def main() -> int:
                 package_ids[proof["id"]] = node["id"]
         if set(package_ids) != set(cargo_nodes):
             raise RuntimeError("Cargo reconciliation lost package provenance")
-        if len(canonical["nodes"]) != len(before["nodes"]) - len(cargo_nodes):
-            raise RuntimeError("Cargo reconciliation removed unrelated nodes")
+        represented = {
+            Path(node["source_file"]).resolve().relative_to(repo).as_posix()
+            for node in before["nodes"]
+            if node.get("source_file")
+        }
+        expected_anchor_sources = set(selected) - represented
+        actual_anchor_sources = {
+            node["source_file"]
+            for node in canonical["nodes"]
+            if node.get("_origin") == "neoth-release-input-anchor"
+        }
+        if actual_anchor_sources != expected_anchor_sources:
+            raise RuntimeError("canonicalization changed entity-free input coverage")
+        expected_nodes = len(before["nodes"]) - len(cargo_nodes) + len(expected_anchor_sources)
+        if len(canonical["nodes"]) != expected_nodes:
+            raise RuntimeError("Cargo reconciliation changed unrelated node coverage")
         if set(canonical.get("extracted_sources", [])) != set(selected):
             raise RuntimeError("real Graphify extraction provenance omitted a tracked code input")
 

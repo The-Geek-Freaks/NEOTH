@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "CARGO_ALIAS_RECONCILIATION_PENDING_HOSTED_PROOF",
+  "status": "CARGO_RECONCILIATION_PASSED_FIXTURE_ANCHOR_ACCOUNTING_REPAIR_PENDING",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -131,6 +131,21 @@
     "expectedSnapshotCases": 27,
     "realFixture": "Two local workspace packages with an actual directed Cargo dependency, exact alias proofs and final node preservation",
     "independentPromptReview": "No definite flaw in supplied implementation; actual exporters and hosted qualification required",
+    "localRuntimeExecuted": false
+  },
+  "fifthQualificationAttempt": {
+    "run": 40857068436,
+    "producer": "7d23d6f6c9f94c9345cc5e81a5ddea87bc1a67ee",
+    "conclusion": "failure",
+    "snapshotPassed": 27,
+    "releaseIsolationPassed": true,
+    "actualCargoPackages": 2,
+    "actualCargoEdges": 1,
+    "cargoReconciliationAndProofPassed": true,
+    "rootCause": "New fixture count omitted the intentional metadata-only anchor added for entity-free data.json",
+    "repair": "Derive exact absent source set from real raw nodes, require exact generated anchor source set, then account for both proven Cargo aliases and anchors",
+    "productionChange": false,
+    "navigationExecuted": false,
     "localRuntimeExecuted": false
   }
 }

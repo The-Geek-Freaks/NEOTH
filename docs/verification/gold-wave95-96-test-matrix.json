@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "cargo-identity-repair-static-hosted-pending",
+  "status": "fixture-anchor-accounting-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454607,
-    "sha256": "DE5F79B59C6B69CE320295A914088AE79EE5C036BC07E12B0B6B3A7F6156F3BF"
+    "bytes": 454604,
+    "sha256": "1EC9693D53AB9762E7394FA541FA3BB871C4D979D7CC6CF40ED82E529C2A5376"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87956,6 +87956,32 @@
       }
     ],
     "note": "Narrow exact Cargo alias reconciliation with original provenance, direction/reference preservation,27 expected snapshot cases and real2crate CLI; shrink guard retained.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2628AnchorAccounting": {
+    "base": "7d23d6f6c9f94c9345cc5e81a5ddea87bc1a67ee",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2697293,
+        "sha256": "A4558432DA699C8091C83BD395D853D279B4259C56B92408A65E6CCA7C8DEEC8",
+        "blob": "f173ea3896ac45ce139ab8efa4ad0b6c3e18c912"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 7047,
+        "sha256": "2BC65DF8D543B2793EB1209BD23701732AF6F96BCA3C0DE449290CA068E64933",
+        "blob": "e41b23db4f8c631b9b78afe8521db89e31d69d31"
+      },
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 11791,
+        "sha256": "D912970A56C14E16AE88436C77724EEE53C4EBFA45E954127818216D289AA7B6",
+        "blob": "c10a9fd268486bc905567c187ee6a23d88178f46"
+      }
+    ],
+    "note": "27 snapshot cases pass; actual Cargo alias proof passes; account exactly for required entity-free anchors before next real CLI qualification.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
