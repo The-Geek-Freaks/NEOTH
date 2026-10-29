@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2624_STATIC_FIXTURE_REPAIR_HOSTED_REQUALIFICATION_PENDING",
+  "status": "W2625_SNAPSHOT21_PASSED_REAL_CLI_CONTRACT_REQUALIFICATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454621,
-    "sha256": "13639D1D1462F1933CDF40EBE2F1132A18A16BFB4E549FD2F917495083C77711"
+    "bytes": 454628,
+    "sha256": "3DE22F764115F3D56AEFF5462CC8308FEA59D391885466D753FB0C1658943683"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87842,6 +87842,38 @@
       }
     ],
     "note": "Narrow root keyword fixture repair, failure diagnostics and skipped-navigation artifact guard. Previous20/21 snapshot result preserved; no runtime acceptance claimed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2625GraphifyDetectorContract": {
+    "base": "6f3b5db93135f3c9df9750db82b3bd16e49e5219",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2693412,
+        "sha256": "131D0B784CE69C3C11F2D8D5385A3799FB0B94F4CD81A609F0DAB9FE5D653E58",
+        "blob": "374e740033d607b4e003b0700ebbf8ce94be7ed5"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 4372,
+        "sha256": "DD4DF05D3584F084A7172CDAEE4A1565C18D9F5AED90C19057798230F2DEF4AD",
+        "blob": "2dac083c8a6f885fd5aa879f18d41a90a91f4176"
+      },
+      {
+        "path": "scripts/augment_graphify_tracked_code.py",
+        "bytes": 5710,
+        "sha256": "F9E76B715C5BC1EFBB567BF001F364A96B09BEF94C7BBFEBF131275E2A6363E4",
+        "blob": "12cbac6d3f24157fda4c3a6fc08426b681346e68"
+      },
+      {
+        "path": "scripts/test_graphify_cli_contract.py",
+        "bytes": 8186,
+        "sha256": "B8E7788FEFA621D4FF90E8A3AD7722121B8B2E31F2E0D9C3D0142F1C99046FCA",
+        "blob": "98b009e25eba4d975106ee5eb1e17392e0933944"
+      }
+    ],
+    "note": "Real pinned detector includes credentials.rs; synthetic dotenv-pattern Rust source now retains actual omission/recovery coverage. No mocked detector or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

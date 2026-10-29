@@ -76,6 +76,12 @@ def main() -> int:
             repo / "src" / "credentials.rs",
             "pub struct CredentialStore;\nimpl CredentialStore { pub fn load(&self) {} }\n",
         )
+        # Synthetic source only: this specific dotenv-like pattern remains
+        # omitted by 0.9.70, while ordinary credentials.rs is now included.
+        write(
+            repo / "src" / ".env.fixture.rs",
+            "pub fn local_fixture() -> bool { true }\n",
+        )
         write(repo / "src" / "data.json", "[1, 2, 3]\n")
         write(
             repo / "Cargo.toml",
@@ -92,6 +98,7 @@ def main() -> int:
                 "Cargo.toml",
                 "src/lib.rs",
                 "src/credentials.rs",
+                "src/.env.fixture.rs",
                 "src/data.json",
             ],
             cwd=repo,
@@ -116,23 +123,20 @@ def main() -> int:
         )
         graph_path = repo / "graphify-out" / "graph.json"
         selected, missing = real_detector_selection(repo)
-        if missing != ["src/credentials.rs"]:
+        if missing != ["src/.env.fixture.rs"]:
             raise RuntimeError(
-                "real Graphify detector did not reproduce the expected sensitive-file "
-                f"omission: {missing!r}"
+                "real Graphify detector did not reproduce the expected synthetic "
+                f"dotenv-pattern omission: {missing!r}"
             )
         raw_manifest = json.loads(
             (repo / "graphify-out" / "manifest.json").read_text(encoding="utf-8")
         )
-        if "src/credentials.rs" in raw_manifest:
-            raise RuntimeError(
-                "real Graphify unexpectedly included the sensitive-file fixture before "
-                "the local AST recovery phase"
-            )
         raw_graph_text = graph_path.read_text(encoding="utf-8")
-        if "credentials.rs" in raw_graph_text:
+        if "src/credentials.rs" not in raw_manifest or "credentials.rs" not in raw_graph_text:
+            raise RuntimeError("real Graphify omitted ordinary credentials.rs source")
+        if "src/.env.fixture.rs" in raw_manifest or ".env.fixture.rs" in raw_graph_text:
             raise RuntimeError(
-                "real Graphify unexpectedly graphed the sensitive-file fixture before "
+                "real Graphify included the synthetic omitted source before "
                 "the local AST recovery phase"
             )
         run(
@@ -181,7 +185,7 @@ def main() -> int:
         manifest = json.loads(
             (repo / "graphify-out" / "manifest.json").read_text(encoding="utf-8")
         )
-        for path in ("src/lib.rs", "src/credentials.rs", "src/data.json"):
+        for path in ("src/lib.rs", "src/credentials.rs", "src/.env.fixture.rs", "src/data.json"):
             ast_hash = manifest.get(path, {}).get("ast_hash", "")
             if not isinstance(ast_hash, str) or len(ast_hash) < 32:
                 raise RuntimeError(f"real Graphify manifest lacks AST proof for {path}")
@@ -194,8 +198,9 @@ def main() -> int:
             for item in [*graph.get("nodes", []), *graph.get("links", [])]
             if isinstance(item, dict) and item.get("source_file")
         }
-        if "src/credentials.rs" not in source_files:
-            raise RuntimeError("sensitive-looking tracked code is absent from the final graph")
+        for required_source in ("src/credentials.rs", "src/.env.fixture.rs"):
+            if required_source not in source_files:
+                raise RuntimeError(f"tracked source is absent from the final graph: {required_source}")
         if "src/data.json" not in source_files:
             raise RuntimeError("entity-free tracked input lacks its final graph file anchor")
         for required in (

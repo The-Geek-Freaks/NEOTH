@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "HOSTED_SNAPSHOT_FIXTURE_REPAIRED_REQUALIFICATION_PENDING",
+  "status": "SNAPSHOT21_PASSED_REAL_CLI_DETECTOR_CONTRACT_REPAIRED_REQUALIFICATION_PENDING",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -84,5 +84,19 @@
     "dismissals": 0,
     "newIgnores": 0,
     "proof": "work/gold-20260906/wave2623-graphify-upgrade/ADVISORY_REFRESH.json"
+  },
+  "secondQualificationAttempt": {
+    "run": 40852906772,
+    "producer": "6f3b5db93135f3c9df9750db82b3bd16e49e5219",
+    "conclusion": "failure",
+    "releaseIsolationPassed": true,
+    "snapshotPassed": 21,
+    "snapshotErrors": 0,
+    "realCliReached": true,
+    "navigationExecuted": false,
+    "rootCause": "Graphify0.9.70 now includes ordinary credentials.rs; test still required its historical omission",
+    "repair": "Retain and assert natural credentials.rs inclusion, add synthetic src/.env.fixture.rs source matching an actual remaining detector omission, require real local AST recovery and final coverage for both",
+    "independentPromptReview": "No definite defect; actual extractor recovery and all exports require hosted confirmation",
+    "localRuntimeExecuted": false
   }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T09:47:26.7733195Z",
-  "validationStatus": "W2624_STATIC_FIXTURE_REPAIR_HOSTED_REQUALIFICATION_PENDING",
+  "capturedUtc": "2026-10-29T09:55:29.0024693Z",
+  "validationStatus": "W2625_SNAPSHOT21_PASSED_REAL_CLI_CONTRACT_REQUALIFICATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4653,8 +4653,8 @@
     },
     {
       "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
-      "bytes": 3558,
-      "sha256": "1B8807BBA0E6A2ACEC9E9255055FA3176AA0124B365D2A2B21FAC459A83F187C"
+      "bytes": 4372,
+      "sha256": "DD4DF05D3584F084A7172CDAEE4A1565C18D9F5AED90C19057798230F2DEF4AD"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5868,8 +5868,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2692114,
-      "sha256": "970579C9029F70088F03977C630009BE064E9E74EC208F745A8C448FF3E8C60C"
+      "bytes": 2693412,
+      "sha256": "131D0B784CE69C3C11F2D8D5385A3799FB0B94F4CD81A609F0DAB9FE5D653E58"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5898,8 +5898,8 @@
     },
     {
       "path": "scripts/augment_graphify_tracked_code.py",
-      "bytes": 5795,
-      "sha256": "C2562015634F412911E49C8191AF101A109F6E0E8C58663B3126B006406B7497"
+      "bytes": 5710,
+      "sha256": "F9E76B715C5BC1EFBB567BF001F364A96B09BEF94C7BBFEBF131275E2A6363E4"
     },
     {
       "path": "scripts/build_graphify_navigation.py",
@@ -5933,8 +5933,8 @@
     },
     {
       "path": "scripts/test_graphify_cli_contract.py",
-      "bytes": 7766,
-      "sha256": "33C57146CA749D7B7E6FB19BCC4D1A106162E632E1D73A488DD540E40E15907C"
+      "bytes": 8186,
+      "sha256": "B8E7788FEFA621D4FF90E8A3AD7722121B8B2E31F2E0D9C3D0142F1C99046FCA"
     },
     {
       "path": "SRC/_gate_gui_check.bat",

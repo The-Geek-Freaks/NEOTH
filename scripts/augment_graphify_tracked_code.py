@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Add locally extracted AST data for tracked code Graphify's detector skips.
 
-Graphify intentionally excludes sensitive-looking filenames before deciding
-whether a file is code or prose. That is correct for semantic/cloud extraction,
-but names such as ``credentials.rs`` are public, tracked source and essential to
-NEOTH's architecture map. This release-only phase recovers those files through
-Graphify's local AST extractor; it never submits their bytes to an LLM backend.
+Graphify may omit tracked code matching its exclusion rules. Version 0.9.70
+includes ordinary credentials.rs source, while specific sensitive patterns
+still omit some inputs. This release-only phase recovers omitted tracked code
+through Graphify's local AST extractor; it never submits bytes to an LLM backend.
 """
 
 from __future__ import annotations
