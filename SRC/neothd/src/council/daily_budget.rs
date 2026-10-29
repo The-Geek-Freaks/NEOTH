@@ -217,6 +217,11 @@ impl DailyBudgetReservationPlan {
 }
 
 impl DailyBudgetReservation {
+    /// Exact admitted bound, for observation only; does not debit or settle.
+    pub(crate) fn reserved_usd_nanos(&self) -> u64 {
+        self.reserved_usd_nanos
+    }
+
     /// Replace this pending bound with the reported actual cost. `None` keeps
     /// the full bound: an unmetered/failed response must never be interpreted
     /// as free after the provider may already have billed it.

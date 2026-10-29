@@ -299,6 +299,16 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(len(expected), 59)
         self.assertEqual(len(set(expected)), 59)
         self.assertEqual(selection["requiredTests"], sorted(expected))
+        acquisition = json.loads(
+            (ROOT / "docs/verification/gold-wave2634-budget-acquisition.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(acquisition["tests"]), 8)
+        expected.extend(acquisition["tests"])
+        selection = matrix["wave2634BudgetAcquisitionRegressions"]
+        self.assertEqual(selection["requiredCount"], 67)
+        self.assertEqual(len(expected), 67)
+        self.assertEqual(len(set(expected)), 67)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):

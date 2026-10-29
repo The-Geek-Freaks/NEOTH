@@ -322,6 +322,8 @@ pub enum ExtendedSubtype {
     CompanionMutationReceipt = 0x3B,
     /// W2557: closed pre-send Paperless claim; never document completion.
     PaperlessPostReceipt = 0x3C,
+    /// A02: historical successful budget acquisition, never spend or authority.
+    ProviderBudgetAcquired = 0x3D,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -436,6 +438,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::RealtimeTurnCancel => "realtime_turn_cancel",
             ExtendedSubtype::CompanionMutationReceipt => "companion_mutation_receipt",
             ExtendedSubtype::PaperlessPostReceipt => "paperless_post_receipt",
+            ExtendedSubtype::ProviderBudgetAcquired => "provider_budget_acquired",
         }
     }
 
@@ -502,6 +505,7 @@ impl ExtendedSubtype {
             0x3A => Some(ExtendedSubtype::RealtimeTurnCancel),
             0x3B => Some(ExtendedSubtype::CompanionMutationReceipt),
             0x3C => Some(ExtendedSubtype::PaperlessPostReceipt),
+            0x3D => Some(ExtendedSubtype::ProviderBudgetAcquired),
             _ => None,
         }
     }
@@ -570,6 +574,7 @@ impl ExtendedSubtype {
             Self::RealtimeTurnCancel,
             Self::CompanionMutationReceipt,
             Self::PaperlessPostReceipt,
+            Self::ProviderBudgetAcquired,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4208,6 +4213,7 @@ mod tests {
             ExtendedSubtype::DocumentNoteApplied,
             ExtendedSubtype::CompanionMutationReceipt,
             ExtendedSubtype::PaperlessPostReceipt,
+            ExtendedSubtype::ProviderBudgetAcquired,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

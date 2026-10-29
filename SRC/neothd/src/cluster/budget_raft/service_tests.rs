@@ -495,6 +495,33 @@ impl ThreeNodeFixture {
         self.wait_for_leader().await;
     }
 
+    pub(crate) async fn persisted_grant(
+        &self,
+        grant_id: &str,
+    ) -> super::state_machine::GrantRecord {
+        let leader = self.wait_for_leader().await;
+        let index = self.identities.iter().position(|identity| {
+            self.config.raft_node_id(identity.stable_node_id()) == Some(leader)
+        }).unwrap();
+        let path = self.homes[index].path().join("budget-raft.db");
+        let grant_id = BudgetGrantId(grant_id.to_owned());
+        tokio::task::spawn_blocking(move || {
+            let connection = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ).unwrap();
+            connection.busy_timeout(Duration::from_secs(5)).unwrap();
+            let bytes: Vec<u8> = connection.query_row(
+                "SELECT ledger FROM raft_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            ).unwrap();
+            let mut ledger: super::state_machine::BudgetLedger = serde_json::from_slice(&bytes).unwrap();
+            ledger.validate().unwrap();
+            ledger.grants.remove(&grant_id).expect("committed grant missing from leader store")
+        }).await.unwrap()
+    }
+
     pub(crate) async fn shutdown(self) {
         for service in &self.services {
             service.shutdown().await.unwrap();

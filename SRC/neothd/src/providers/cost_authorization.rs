@@ -1243,6 +1243,10 @@ enum ProviderIntentState {
     Pending(tokio::task::JoinHandle<Result<()>>),
     Durable,
     NotDurable,
+    ObservationPending(tokio::task::JoinHandle<Result<()>>),
+    ObservationDurable,
+    /// The intent remains durable even when its observation append fails.
+    ObservationFailed,
     #[cfg(test)]
     Disabled,
     Disarmed,
@@ -1255,6 +1259,34 @@ enum ProviderIntentState {
 struct ProviderIntentLifecycle {
     ticket: Option<ProviderCallAuditTicket>,
     state: ProviderIntentState,
+}
+
+/// A historical observation of successful acquisitions, not a new budget
+/// authority or a claim about current balance, provider execution or spending.
+/// A missing record remains unknown; Some(0) is an observed acquisition.
+#[derive(serde::Serialize)]
+struct ProviderBudgetAcquisition {
+    schema: &'static str,
+    invocation_id: String,
+    request_binding_sha256: String,
+    provider: &'static str,
+    wire_model: String,
+    ts_unix: u64,
+    daily_reserved_usd_nanos: Option<u64>,
+    operation: Option<OperationBudgetAcquisition>,
+    cluster: Option<ClusterBudgetAcquisition>,
+}
+
+#[derive(serde::Serialize)]
+struct OperationBudgetAcquisition {
+    reserved_tokens: u64,
+    reserved_microusd: u64,
+}
+
+#[derive(serde::Serialize)]
+struct ClusterBudgetAcquisition {
+    reserved_usd_nanos: u64,
+    grant_id: String,
 }
 
 impl ProviderIntentLifecycle {
@@ -1313,6 +1345,9 @@ impl ProviderIntentLifecycle {
             ProviderIntentState::Disabled => return Ok(()),
             ProviderIntentState::Durable
             | ProviderIntentState::NotDurable
+            | ProviderIntentState::ObservationPending(_)
+            | ProviderIntentState::ObservationDurable
+            | ProviderIntentState::ObservationFailed
             | ProviderIntentState::Disarmed => {
                 unreachable!("provider intent durability can be awaited only once")
             }
@@ -1325,18 +1360,68 @@ impl ProviderIntentLifecycle {
         result
     }
 
+    fn start_observation(&mut self, observation: ProviderBudgetAcquisition) -> Result<()> {
+        #[cfg(test)]
+        if matches!(self.state, ProviderIntentState::Disabled) {
+            return Ok(());
+        }
+        assert!(matches!(self.state, ProviderIntentState::Durable));
+        let ticket = self.ticket.as_ref().expect("provider intent ticket missing");
+        // Keep Durable until an owned append task exists. Serialization or
+        // runtime failure must still trigger the existing terminal owner.
+        let payload = serde_json::to_vec(&observation)?;
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            &payload,
+        )
+        .event_subtype(crate::wal::events::ExtendedSubtype::ProviderBudgetAcquired as u8)
+        .session_context(ticket.context.wal_session)
+        .build();
+        let writer = match &ticket.audit_sink {
+            ProviderCallAuditSink::Wal(writer) => writer.clone(),
+            #[cfg(test)]
+            ProviderCallAuditSink::Disabled => unreachable!("disabled observation bypassed"),
+        };
+        let runtime = tokio::runtime::Handle::try_current()?;
+        self.state = ProviderIntentState::ObservationPending(runtime.spawn(async move {
+            writer.append(header, payload).await.map(|_| ()).map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider budget observation WAL append failed; dispatch blocked: {error}"
+                )))
+            })
+        }));
+        Ok(())
+    }
+
+    async fn wait_observation(&mut self) -> Result<()> {
+        let result = match &mut self.state {
+            ProviderIntentState::ObservationPending(task) => match task.await {
+                Ok(result) => result,
+                Err(error) => Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider budget observation task failed; dispatch blocked: {error}"
+                )))),
+            },
+            #[cfg(test)]
+            ProviderIntentState::Disabled => return Ok(()),
+            _ => unreachable!("provider observation must be started exactly once"),
+        };
+        self.state = if result.is_ok() {
+            ProviderIntentState::ObservationDurable
+        } else {
+            ProviderIntentState::ObservationFailed
+        };
+        result
+    }
+
     fn into_guard(
         mut self,
-        reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
-        #[cfg(feature = "cluster")] cluster_budget_dispatch: Option<
-            crate::cluster::budget_raft::service::ProviderDispatchTicket,
-        >,
-        #[cfg(feature = "cluster")] cluster_budget_permit: Option<
-            crate::cluster::budget_raft::service::NewDispatchPermit,
-        >,
+        reservation: Option<BeforeDispatchReservation>,
+        observation_required: bool,
     ) -> ProviderCallAuditGuard {
-        debug_assert!(match &self.state {
-            ProviderIntentState::Durable => true,
+        // Validate while the daily rollback owner is still armed.
+        assert!(match &self.state {
+            ProviderIntentState::Durable => !observation_required,
+            ProviderIntentState::ObservationDurable => observation_required,
             #[cfg(test)]
             ProviderIntentState::Disabled => true,
             _ => false,
@@ -1346,12 +1431,7 @@ impl ProviderIntentLifecycle {
             .ticket
             .take()
             .expect("provider intent lifecycle ticket already consumed");
-        ticket.daily_budget_reservation = reservation;
-        #[cfg(feature = "cluster")]
-        {
-            ticket.cluster_budget_dispatch = cluster_budget_dispatch;
-            ticket.cluster_budget_permit = cluster_budget_permit;
-        }
+        ticket.daily_budget_reservation = reservation.map(BeforeDispatchReservation::into_dispatched);
         ticket.started = Instant::now();
         ProviderCallAuditGuard {
             ticket: Some(ticket),
@@ -1398,7 +1478,15 @@ impl Drop for ProviderIntentLifecycle {
                         "abandoned provider intent task failed; no durable request was acknowledged"
                     ),
                 },
-                ProviderIntentState::Durable => append_abandoned.await,
+                ProviderIntentState::ObservationPending(task) => {
+                    // Keep the owned append alive through caller cancellation.
+                    // Its completion is not authority to dispatch after error.
+                    let _ = task.await;
+                    append_abandoned.await;
+                }
+                ProviderIntentState::Durable
+                | ProviderIntentState::ObservationDurable
+                | ProviderIntentState::ObservationFailed => append_abandoned.await,
                 ProviderIntentState::NotDurable | ProviderIntentState::Disarmed => {}
                 #[cfg(test)]
                 ProviderIntentState::Disabled => {}
@@ -1456,9 +1544,9 @@ impl AuthorizedLeafCall {
                 })?;
             reservation_guard = Some(BeforeDispatchReservation::new(reservation));
         }
-        if let Some(plan) = self.ticket.operation_budget_plan.take()
-            && let Err(error) = plan.budget.reserve(plan.tokens, plan.microusd)
-        {
+        let mut operation_acquisition = None;
+        if let Some(plan) = self.ticket.operation_budget_plan.take() {
+            if let Err(error) = plan.budget.reserve(plan.tokens, plan.microusd) {
             // The daily ledger has not observed a provider dispatch yet, so
             // it can roll back this rejected second intersection cleanly.
             // The operation reservation itself never refunds after admission.
@@ -1474,6 +1562,11 @@ impl AuthorizedLeafCall {
                 "{} ({}/{}): operation budget reservation denied; dispatch blocked: {error}",
                 self.ticket.call_scope, self.ticket.provider, self.ticket.wire_model
             ))));
+            }
+            operation_acquisition = Some(OperationBudgetAcquisition {
+                reserved_tokens: plan.tokens,
+                reserved_microusd: plan.microusd,
+            });
         }
 
         let mut intent = match ProviderIntentLifecycle::start(self.ticket) {
@@ -1499,7 +1592,6 @@ impl AuthorizedLeafCall {
             }
             return Err(intent_error);
         }
-        #[cfg(feature = "cluster")]
         // The lifecycle intent is durable, but there is still no provider
         // transport capability. Cluster workers now require a quorum reserve
         // and first committed claim; a replay or unavailable quorum cannot
@@ -1530,13 +1622,46 @@ impl AuthorizedLeafCall {
             }
         };
         #[cfg(feature = "cluster")]
-        return Ok(intent.into_guard(
-            reservation_guard.map(BeforeDispatchReservation::into_dispatched),
-            cluster_budget_dispatch,
-            cluster_budget_permit,
-        ));
+        let cluster_acquisition = {
+            let ticket = intent.ticket.as_mut().expect("provider intent ticket missing");
+            let acquisition = cluster_budget_permit.as_ref().map(|permit| {
+                ClusterBudgetAcquisition {
+                    reserved_usd_nanos: ticket.cluster_budget_plan.as_ref()
+                        .expect("claimed cluster plan missing").reserve.bound_usd_nanos,
+                    grant_id: permit.grant_id().0.clone(),
+                }
+            });
+            // Transfer the sole settlement owner synchronously before the new
+            // observation await; dropping these local values cannot settle it.
+            ticket.cluster_budget_dispatch = cluster_budget_dispatch;
+            ticket.cluster_budget_permit = cluster_budget_permit;
+            acquisition
+        };
         #[cfg(not(feature = "cluster"))]
-        Ok(intent.into_guard(reservation_guard.map(BeforeDispatchReservation::into_dispatched)))
+        let cluster_acquisition = None;
+        let daily_reserved_usd_nanos = reservation_guard.as_ref().map(|guard| {
+            guard.reservation.as_ref().expect("daily reservation missing").reserved_usd_nanos()
+        });
+        let observation_required = daily_reserved_usd_nanos.is_some()
+            || operation_acquisition.is_some()
+            || cluster_acquisition.is_some();
+        if observation_required {
+            let ticket = intent.ticket.as_ref().expect("provider intent ticket missing");
+            let observation = ProviderBudgetAcquisition {
+                schema: "neoth.provider-budget-acquired.v1",
+                invocation_id: ticket.invocation_id.clone(),
+                request_binding_sha256: ticket.request_binding_sha256.clone(),
+                provider: ticket.provider,
+                wire_model: ticket.wire_model.clone(),
+                ts_unix: crate::time::now_unix_secs(),
+                daily_reserved_usd_nanos,
+                operation: operation_acquisition,
+                cluster: cluster_acquisition,
+            };
+            intent.start_observation(observation)?;
+            intent.wait_observation().await?;
+        }
+        Ok(intent.into_guard(reservation_guard, observation_required))
     }
 }
 
@@ -3765,6 +3890,218 @@ mod tests {
         crate::config::TokensConfig::default_max_per_request()
     }
 
+    async fn acquisition_leaf(
+        writer: WalWriterHandle,
+        budget: Option<OperationBudget>,
+        daily_home: Option<&Path>,
+    ) -> AuthorizedLeafCall {
+        // Bypass unrelated permission ceremonies, then use the real lifecycle
+        // writer and real reservation owners for the transition under test.
+        let mut authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full);
+        if let Some(budget) = budget {
+            authorizer = authorizer.with_operation_budget(budget);
+        }
+        if let Some(home) = daily_home {
+            authorizer = authorizer.with_council_daily_cap(home, Some(0.02)).unwrap();
+        }
+        let (provider, model) = if daily_home.is_some() {
+            ("openai_api", "gpt-4o")
+        } else {
+            ("local_ollama", "qwen-test")
+        };
+        let mut leaf = authorizer.authorize_leaf(
+            provider,
+            &Request {
+                model: Some(model.into()),
+                prompt: "private acquisition fixture content".into(),
+                ..Request::default()
+            },
+            "test.budget_acquisition",
+            false,
+            Some(128),
+        ).await.unwrap();
+        leaf.ticket.audit_sink = ProviderCallAuditSink::Wal(writer);
+        leaf
+    }
+
+    async fn drain_acquisition_writer(writer: WalWriterHandle, join: tokio::task::JoinHandle<()>) {
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), join).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_observes_zero_operation_cost_without_second_debit() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-zero.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), None).await;
+        let plan = leaf.ticket.operation_budget_plan.as_ref().unwrap();
+        let tokens = plan.tokens;
+        assert_eq!(plan.microusd, 0);
+        drop(leaf.begin_dispatch().await.unwrap());
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.iter().map(|frame| frame.0).collect::<Vec<_>>(), [
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+        ]);
+        let observation = &frames[1].1;
+        assert_eq!(observation["schema"], "neoth.provider-budget-acquired.v1");
+        assert_eq!(observation["invocation_id"], frames[0].1["invocation_id"]);
+        assert_eq!(observation["request_binding_sha256"], frames[0].1["request_binding_sha256"]);
+        assert_eq!(observation["operation"]["reserved_tokens"], tokens);
+        assert_eq!(observation["operation"]["reserved_microusd"], 0);
+        assert!(observation["daily_reserved_usd_nanos"].is_null());
+        assert!(observation["cluster"].is_null());
+        assert!(!observation.to_string().contains("private acquisition fixture content"));
+        let state = budget.state.lock().unwrap();
+        assert_eq!(state.remaining_tokens, 4_000 - tokens);
+        assert_eq!(state.remaining_microusd, 20_000);
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_records_actual_daily_and_operation_units() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-daily.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let leaf = acquisition_leaf(writer.clone(), Some(new_operation_budget(4_000, 0.02).unwrap()), Some(dir.path())).await;
+        let operation = leaf.ticket.operation_budget_plan.as_ref().unwrap();
+        let expected_operation = (operation.tokens, operation.microusd);
+        let guard = leaf.begin_dispatch().await.unwrap();
+        let admitted = guard.ticket.as_ref().unwrap().daily_budget_reservation.as_ref().unwrap().reserved_usd_nanos();
+        assert!(admitted > 0);
+        drop(guard);
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        let observation = frames.iter().find(|frame| frame.1["schema"] == "neoth.provider-budget-acquired.v1").unwrap();
+        assert_eq!(observation.1["daily_reserved_usd_nanos"], admitted);
+        assert_eq!(observation.1["operation"]["reserved_tokens"], expected_operation.0);
+        assert_eq!(observation.1["operation"]["reserved_microusd"], expected_operation.1);
+        assert!(observation.1["cluster"].is_null());
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_cancellation_waits_for_ack_before_terminal_and_rolls_back_daily() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-cancel.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), Some(dir.path())).await;
+        let daily = leaf.ticket.daily_budget_plan.as_ref().unwrap().clone();
+        let tokens = leaf.ticket.operation_budget_plan.as_ref().unwrap().tokens;
+        let mut dispatch = Box::pin(leaf.begin_dispatch());
+        tokio::select! {
+            _ = &mut dispatch => panic!("dispatch permit escaped before observation acknowledgement"),
+            result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => result.unwrap(),
+        }
+        drop(dispatch);
+        assert_eq!(budget.state.lock().unwrap().remaining_tokens, 4_000 - tokens);
+        // Reusing this exact reservation ID proves its pending charge was
+        // released; a still-live original reservation rejects the duplicate.
+        daily.reserve(crate::time::now_unix_i64()).unwrap().release_before_dispatch().unwrap();
+        assert!(!wal_frames(&segment).iter().any(|frame| frame.0 == crate::wal::events::EVENT_TYPE_PROVIDER_ERROR));
+        gate.release();
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[1].1["schema"], "neoth.provider-budget-acquired.v1");
+        assert_eq!(frames[2].1["provider_outcome"], "not_dispatched");
+        assert_eq!(frames[2].1["invocation_id"], frames[1].1["invocation_id"]);
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_write_failure_blocks_permit_and_preserves_operation_charge() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-write-failure.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), Some(dir.path())).await;
+        let daily = leaf.ticket.daily_budget_plan.as_ref().unwrap().clone();
+        let tokens = leaf.ticket.operation_budget_plan.as_ref().unwrap().tokens;
+        let mut dispatch = Box::pin(leaf.begin_dispatch());
+        tokio::select! {
+            _ = &mut dispatch => panic!("dispatch permit escaped before intent acknowledgement"),
+            result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => result.unwrap(),
+        }
+        join.abort();
+        assert!(join.await.unwrap_err().is_cancelled());
+        gate.release();
+        let error = match dispatch.await {
+            Ok(_) => panic!("dead observation writer must not yield a dispatch permit"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("budget observation WAL append failed"));
+        assert_eq!(budget.state.lock().unwrap().remaining_tokens, 4_000 - tokens);
+        daily.reserve(crate::time::now_unix_i64()).unwrap().release_before_dispatch().unwrap();
+        assert_eq!(wal_frames(&segment).len(), 1);
+        drop(writer);
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_join_failure_after_durable_append_attempts_existing_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-join-failure.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let leaf = acquisition_leaf(writer.clone(), None, None).await;
+        let mut intent = ProviderIntentLifecycle::start(leaf.ticket).unwrap();
+        intent.wait_for_durability().await.unwrap();
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        budget.reserve(1, 0).unwrap();
+        let ticket = intent.ticket.as_ref().unwrap();
+        let observation = ProviderBudgetAcquisition {
+            schema: "neoth.provider-budget-acquired.v1",
+            invocation_id: ticket.invocation_id.clone(),
+            request_binding_sha256: ticket.request_binding_sha256.clone(),
+            provider: ticket.provider,
+            wire_model: ticket.wire_model.clone(),
+            ts_unix: crate::time::now_unix_secs(),
+            daily_reserved_usd_nanos: None,
+            operation: Some(OperationBudgetAcquisition { reserved_tokens: 1, reserved_microusd: 0 }),
+            cluster: None,
+        };
+        intent.start_observation(observation).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()).await.unwrap();
+        // This injects loss of the caller's ACK after the actual append is
+        // durable. It does not claim to test an abort before enqueueing.
+        match &intent.state {
+            ProviderIntentState::ObservationPending(task) => task.abort(),
+            _ => panic!("observation lost its owned acknowledgement"),
+        }
+        assert!(intent.wait_observation().await.is_err());
+        assert!(matches!(intent.state, ProviderIntentState::ObservationFailed));
+        drop(intent);
+        gate.release();
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[1].1["schema"], "neoth.provider-budget-acquired.v1");
+        assert_eq!(frames[2].1["provider_outcome"], "not_dispatched");
+        assert_eq!(budget.state.lock().unwrap().remaining_tokens, 3_999);
+    }
+
+    #[tokio::test]
+    async fn budget_acquisition_absent_scopes_preserve_old_lifecycle_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("acquisition-none.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let leaf = acquisition_leaf(writer.clone(), None, None).await;
+        drop(leaf.begin_dispatch().await.unwrap());
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.iter().map(|frame| frame.0).collect::<Vec<_>>(), [
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+        ]);
+    }
+
     #[cfg(feature = "cluster")]
     #[test]
     fn cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost() {
@@ -3875,6 +4212,106 @@ mod tests {
             cluster_budget_usd_to_nanos_ceil(bound.bound_usd("openai_api", "gpt-4o").unwrap())
                 .unwrap()
         );
+        let frames = wal_frames(&segment);
+        let observations = frames.iter().filter(|frame| frame.1["schema"] == "neoth.provider-budget-acquired.v1").collect::<Vec<_>>();
+        assert_eq!(observations.len(), 1);
+        let observation = &observations[0].1;
+        let admitted = payloads.iter().find(|payload| payload["invocation_id"] == observation["invocation_id"]).unwrap();
+        assert_eq!(admitted["request_binding_sha256"], observation["request_binding_sha256"]);
+        let admitted_bound: super::super::pricing_basis::AuthorizationPriceBound = serde_json::from_value(admitted["authorization_price_bound"].clone()).unwrap();
+        let expected = cluster_budget_usd_to_nanos_ceil(admitted_bound.bound_usd("openai_api", "gpt-4o").unwrap()).unwrap();
+        let grant = fixture.persisted_grant(observation["cluster"]["grant_id"].as_str().unwrap()).await;
+        assert_eq!(observation["cluster"]["reserved_usd_nanos"], expected);
+        assert_eq!(grant.reserve.reserved_usd_nanos, expected);
+        assert_eq!(grant.reserve.provider_intent_id, observation["invocation_id"].as_str().unwrap());
+        fixture.shutdown().await;
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn budget_acquisition_cluster_cancellation_settles_unknown_full_bound() {
+        use crate::cluster::budget_raft::{state_machine::GrantState, types::GrantTerminal};
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("cluster-acquisition-cancel.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = Arc::new(CountingProvider { name: "openai_api", calls: AtomicUsize::new(0), default_model: Some("gpt-4o".into()) });
+        let provider = cluster_budget_leaf_provider(inner.clone(), fixture.follower_service().await, home.path(), writer.clone(), "cluster-acquisition-cancel");
+        let mut leaf = provider.authorizer.authorize_leaf("openai_api", &Request { model: Some("gpt-4o".into()), ..Request::default() }, provider.call_scope, false, Some(4096)).await.unwrap();
+        let expected = leaf.ticket.cluster_budget_plan.as_ref().unwrap().reserve.bound_usd_nanos;
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        leaf.ticket.audit_sink = ProviderCallAuditSink::Wal(writer.clone().with_test_ack_gate(gate.clone()));
+        let mut dispatch = Box::pin(leaf.begin_dispatch());
+        tokio::select! {
+            _ = &mut dispatch => panic!("cluster permit escaped before observation acknowledgement"),
+            result = tokio::time::timeout(Duration::from_secs(10), gate.wait_until_durable()) => result.unwrap(),
+        }
+        let frames = wal_frames(&segment);
+        let observation = &frames.iter().find(|frame| frame.1["schema"] == "neoth.provider-budget-acquired.v1").unwrap().1;
+        let grant_id = observation["cluster"]["grant_id"].as_str().unwrap().to_owned();
+        let before = fixture.persisted_grant(&grant_id).await;
+        assert!(matches!(before.state, GrantState::Claimed(_)));
+        assert_eq!(before.reserve.reserved_usd_nanos, expected);
+        assert_eq!(observation["cluster"]["reserved_usd_nanos"], expected);
+        drop(dispatch);
+        assert!(!wal_frames(&segment).iter().any(|frame| frame.0 == crate::wal::events::EVENT_TYPE_PROVIDER_ERROR));
+        gate.release();
+        drop(provider);
+        drain_acquisition_writer(writer, join).await;
+        let settled = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let record = fixture.persisted_grant(&grant_id).await;
+                if matches!(record.state, GrantState::Settled { .. }) { break record; }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }).await.unwrap();
+        let GrantState::Settled { settlement, receipt, .. } = settled.state else { unreachable!() };
+        assert_eq!(settlement.actual_usd_nanos, None);
+        assert_eq!(receipt.terminal, GrantTerminal::Settled { charged_usd_nanos: expected, actual_cost_was_unknown: true });
+        assert_eq!(settled.reserve.reserved_usd_nanos, expected);
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        let frames = wal_frames(&segment);
+        let terminal = frames.iter().find(|frame| frame.0 == crate::wal::events::EVENT_TYPE_PROVIDER_ERROR).unwrap();
+        assert_eq!(terminal.1["provider_outcome"], "not_dispatched");
+        assert_eq!(terminal.1["invocation_id"], observation["invocation_id"]);
+        fixture.shutdown().await;
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn budget_acquisition_cluster_terminal_write_failure_keeps_claim_outstanding() {
+        use crate::cluster::budget_raft::state_machine::GrantState;
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("cluster-acquisition-terminal-failure.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = Arc::new(CountingProvider { name: "openai_api", calls: AtomicUsize::new(0), default_model: Some("gpt-4o".into()) });
+        let provider = cluster_budget_leaf_provider(inner.clone(), fixture.follower_service().await, home.path(), writer.clone(), "cluster-acquisition-terminal-failure");
+        let leaf = provider.authorizer.authorize_leaf("openai_api", &Request { model: Some("gpt-4o".into()), ..Request::default() }, provider.call_scope, false, Some(4096)).await.unwrap();
+        let expected = leaf.ticket.cluster_budget_plan.as_ref().unwrap().reserve.bound_usd_nanos;
+        let mut guard = leaf.begin_dispatch().await.unwrap();
+        let ticket = guard.ticket.take().unwrap();
+        let grant_id = ticket.cluster_budget_permit.as_ref().unwrap().grant_id().0.clone();
+        join.abort();
+        assert!(join.await.unwrap_err().is_cancelled());
+        let error = ticket.append_terminal(ProviderCallTerminal::Failure {
+            kind: ProviderCallFailureKind::ClientAbandoned { provider_outcome: ProviderOutcome::NotDispatched },
+            latency_ns: 0,
+            input_tokens: None,
+            output_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+        }).await.unwrap_err();
+        assert!(error.to_string().contains("provider terminal WAL append failed"));
+        let record = fixture.persisted_grant(&grant_id).await;
+        assert!(matches!(record.state, GrantState::Claimed(_)));
+        assert_eq!(record.reserve.reserved_usd_nanos, expected);
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        let frames = wal_frames(&segment);
+        assert!(!frames.iter().any(|frame| frame.0 == crate::wal::events::EVENT_TYPE_PROVIDER_ERROR));
+        assert_eq!(frames.iter().filter(|frame| frame.1["schema"] == "neoth.provider-budget-acquired.v1").count(), 1);
+        drop(provider);
+        drop(writer);
         fixture.shutdown().await;
     }
 

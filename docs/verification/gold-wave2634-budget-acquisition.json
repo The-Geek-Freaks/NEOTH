@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.wave2634.budget-acquisition.v1",
+  "status": "IMPLEMENTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "baseProducer": "da3913398eee2c2f80828937fa70716e69f86916",
+  "roadmap": "ADOPT-20261012-A02",
+  "owner": "ProviderIntentLifecycle",
+  "tests": [
+    "providers::cost_authorization::tests::budget_acquisition_observes_zero_operation_cost_without_second_debit",
+    "providers::cost_authorization::tests::budget_acquisition_records_actual_daily_and_operation_units",
+    "providers::cost_authorization::tests::budget_acquisition_cancellation_waits_for_ack_before_terminal_and_rolls_back_daily",
+    "providers::cost_authorization::tests::budget_acquisition_write_failure_blocks_permit_and_preserves_operation_charge",
+    "providers::cost_authorization::tests::budget_acquisition_join_failure_after_durable_append_attempts_existing_terminal",
+    "providers::cost_authorization::tests::budget_acquisition_absent_scopes_preserve_old_lifecycle_frames",
+    "providers::cost_authorization::tests::budget_acquisition_cluster_cancellation_settles_unknown_full_bound",
+    "providers::cost_authorization::tests::budget_acquisition_cluster_terminal_write_failure_keeps_claim_outstanding"
+  ],
+  "newTests": 8,
+  "newRequiredRegistrations": 8,
+  "focusedRequiredCount": 67,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "fullAdmissionHistoryComplete": false,
+  "implementation": [
+    "Additive extended 0x3D observed-acquisition record binds request/invocation to actual daily, successful operation and committed cluster amounts",
+    "Owned WAL acknowledgement precedes provider guard; existing cancellation, daily rollback, nonrefundable operation and cluster terminal owners retained",
+    "No acquisition record means unknown; null scope and present zero remain distinct; no prompt text or executable capability",
+    "No reader, replay debit, GUI or mobile projection introduced"
+  ],
+  "verification": [
+    "Eight new regressions plus existing real quorum success assertions",
+    "Cluster cancellation reads validated persisted Raft ledger and waits for full-bound unknown-cost settlement",
+    "Terminal WAL failure proves outstanding claim without claiming a terminal was written",
+    "Prompt-only independent lifecycle reviewer found no concrete defect after bounded settlement wait correction"
+  ],
+  "open": [
+    "Hosted formatting, compile, both Clippy lanes and exact67 runtime proof",
+    "Complete per-stage acquisition history before combined observation, canonical reader and product presentation",
+    "Current-producer platform/native/release/Gold acceptance"
+  ]
+}

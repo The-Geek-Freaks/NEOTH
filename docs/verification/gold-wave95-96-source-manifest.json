@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T11:27:42.0732907Z",
-  "validationStatus": "W2633_EXPANDED_SOLVER_ADMITTED_BEHAVIOR_SLINT_BUILD_PENDING",
+  "capturedUtc": "2026-10-29T11:55:08.0062748Z",
+  "validationStatus": "W2634_ACQUISITION_STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 51366,
-      "sha256": "655E5A81097944CC49BC969CF3CBDDA316EAB703C7F542D815FF57005639AA19"
+      "bytes": 51870,
+      "sha256": "63A9AA8B65EE09AAB2B8D43E59BECF46AFA9046A721F6B8FD478284CECD7E1D8"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -748,8 +748,8 @@
     },
     {
       "path": "docs/COST_PROVENANCE.md",
-      "bytes": 5832,
-      "sha256": "E04DFBA8EC2D18AAF399C721FE57D04628B132D576C88D575D73A5E0442CD0B6"
+      "bytes": 7607,
+      "sha256": "2460C041F41951170AB3DA135BC08BF8E251E022DEB7E344A060CC7B15881964"
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
@@ -4672,6 +4672,11 @@
       "sha256": "A407B2FD95196F58141A7B8DCA23DFF7BA0664A5E08D71FF879E8B4B237E80A6"
     },
     {
+      "path": "docs/verification/gold-wave2634-budget-acquisition.json",
+      "bytes": 2617,
+      "sha256": "B9CF4707BE947690E164E7C1E0812705059029B689055AF40021CCD47B4824E3"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5678,8 +5683,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 79614,
-      "sha256": "553D2D13028EC4E32C28587EAD570481077B4DACDB51ACC7509DB9D92099E367"
+      "bytes": 80154,
+      "sha256": "0BDE1F7395CBB7727472EEF5FCAE78AD174CB38BA728F8A223A0AE28D6F32357"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5908,8 +5913,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2706298,
-      "sha256": "B9C29ED1D9B570439AF907375F8EDC43413573B79BFCD66832B8E0AA08E56B40"
+      "bytes": 2708481,
+      "sha256": "9286EDB3A1E47CBCD591AFC1457F4AC7E4E034715F4F75CDA57A17BFBBA18413"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7343,8 +7348,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
-      "bytes": 27948,
-      "sha256": "7EDBD75431624376139A4F35F8628A3726B29FD1F729D5C32B8DC307B9B3ED0E"
+      "bytes": 29184,
+      "sha256": "3990E245A6ED834E249AE43F04CF56198406738FE69F1E990487930D62C4BF69"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service.rs",
@@ -7750,6 +7755,11 @@
       "path": "SRC/neothd/src/context/compaction.rs",
       "bytes": 22236,
       "sha256": "F3E49EF6D7480593E88EA7143BE43F8C345E6ACBDBC01B1526747586B624BC02"
+    },
+    {
+      "path": "SRC/neothd/src/council/daily_budget.rs",
+      "bytes": 21904,
+      "sha256": "7EB658FDC94EFA4142AFE8036624729812F6E308451C4CF8B08720B4F0FA5862"
     },
     {
       "path": "SRC/neothd/src/council/factual_check.rs",
@@ -9158,8 +9168,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 387618,
-      "sha256": "4A264E850ECF3DE276744A537103AF08D9A6E8E3E005BB49943F2EE5E02123E1"
+      "bytes": 412053,
+      "sha256": "2E69823AAE0B88CC3AE7C64A3651C0ACE47CC43D4E092E30B74F5C2DC3D7462C"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
@@ -9688,8 +9698,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/events.rs",
-      "bytes": 275804,
-      "sha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C"
+      "bytes": 276165,
+      "sha256": "98F8662B0953FF3FD6A66F2D0C28DC0B3AD52CCA8F13CD2D5ED706CD8CD07B14"
     },
     {
       "path": "SRC/neothd/src/wal/header.rs",
