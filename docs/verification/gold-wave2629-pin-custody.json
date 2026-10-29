@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2629.pin-custody.v1",
-  "status": "SOURCE_CONTRACTS_IMPLEMENTED_HOSTED_PENDING",
+  "status": "SEVEN_SOURCE_CONTRACTS_ROOT_ADMITTED_SOLVER_WIRED_PENDING",
   "base": "312fe759f08d30d7c3284e7d9bdf8d7b4eee0fcd",
   "targetVersions": {
     "zip": "9.0.5",
@@ -34,10 +34,32 @@
   "localRuntimeExecuted": false,
   "goldClosed": false,
   "remaining": [
-    "Run/admit7hosted source contracts",
-    "Resolvefromcommittedlock with stablemetadata and complete graphdelta",
+    "Resolve from committed lock with stable metadata and complete graph delta",
     "ZIP/Candle/SSH compatibility and fresh audit",
-    "Root-reviewed import preservingphysicalCargo.lockWIP"
+    "Root-reviewed import preserving physical Cargo.lock WIP"
   ],
-  "patchTransport": "Use the existing exact-patch convention: LF bytes and significant blank context markers preserved; all other whitespace checks retained"
+  "patchTransport": "Use the existing exact-patch convention: LF bytes and significant blank context markers preserved; all other whitespace checks retained",
+  "sourceAcceptance": {
+    "producer": "b673dbea8da880a8410ed0b7e28bd42efba93830",
+    "run": "40859097519",
+    "passed": 7,
+    "sourceBindings": 113,
+    "vendorInputs": 97,
+    "candidateBindings": 5,
+    "originalZipSha256": "8A2D769959134928076EABAE7BB87159779AF4AD5FBAE1B6D2607EAB2BC3946F",
+    "proof": "work/gold-20260906/wave2629-pin-custody/ROOT_ADMISSION.json",
+    "proofSha256": "3D12C89423EE3CB31881857595CB7485851D55499E7A3FEB98F1D2B5D38B1773"
+  },
+  "solverQualification": {
+    "optIn": "resolve_candidate",
+    "sourceProof": "Same-run original custody artifact; exact commit/run/attempt, inventory, checksums, 113 source hashes and five candidate hashes",
+    "toolchain": "Explicit cargo +1.91.0; no project Cargo config or toolchain override exists",
+    "baseline": "Raw Git HEAD:SRC/Cargo.lock; never local WIP",
+    "scope": "Exact three manifests and committed lock; active revision only untracked input",
+    "proof": "Full solver delta, two byte-stable locked metadata snapshots, original and candidate lock, candidate manifests, revision and qualified source receipt",
+    "independentPromptReview": "Receipt binding and project config/toolchain checked; no definite design error; hosted qualification pending",
+    "dependencyBehaviorAccepted": false,
+    "freshAuditAccepted": false,
+    "pinsImported": false
+  }
 }

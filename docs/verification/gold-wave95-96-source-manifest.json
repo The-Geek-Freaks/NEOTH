@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T10:35:09.3304375Z",
-  "validationStatus": "graphify-accepted-pin-custody-source-contracts-pending",
+  "capturedUtc": "2026-10-29T10:47:26.9087186Z",
+  "validationStatus": "SOURCE_CUSTODY_ADMITTED_HOSTED_SOLVER_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/candle-pin-revision.yml",
-      "bytes": 9037,
-      "sha256": "2046AF9E6B8F721935A47DF4ECF98B99A060FC4BD1DA86F8C3B5B6ED83DA5579"
+      "bytes": 20155,
+      "sha256": "6C49C98048F71B8769CED2DE8BB41517C71200B6F1E8A44E16A8C204D5AF6A08"
     },
     {
       "path": ".github/workflows/candle-zip-migration.yml",
@@ -4663,8 +4663,8 @@
     },
     {
       "path": "docs/verification/gold-wave2629-pin-custody.json",
-      "bytes": 2018,
-      "sha256": "113AE9248E854797BF25A12F759F1EA61A0A7B7CA5D5E5A83DC72D48A08AE99E"
+      "bytes": 3346,
+      "sha256": "524A49A086157CE3533870FAE5C997B2CADBB26B1E2FB7BC441C636F1EE6451D"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5898,8 +5898,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2699074,
-      "sha256": "C02769B1366B354582D482230D4C0AE48F1DB41C512C54F60266D811E743D0CA"
+      "bytes": 2700616,
+      "sha256": "F1955CAD695F8C61DBCC69FE56BD72C6353F1FA239D45D963B39B87D01594D7E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

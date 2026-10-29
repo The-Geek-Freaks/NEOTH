@@ -8,6 +8,12 @@ on:
         required: true
         type: string
 
+      resolve_candidate:
+        description: Resolve qualified exact pins from the committed lock without compiling
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
@@ -183,5 +189,201 @@ jobs:
             ${{ runner.temp }}/neoth-pin-contracts/prepared.json
             ${{ runner.temp }}/neoth-pin-contracts/receipt.json
             ${{ runner.temp }}/neoth-pin-contracts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  resolve_candidate:
+    needs: source_contracts
+    if: github.ref == 'refs/heads/main' && inputs.resolve_candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.10'
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: '1.91.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pin-custody-${{ inputs.source_head }}
+          path: ${{ runner.temp }}/qualified-pin-custody
+      - name: Bind solver to the qualified source candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          printf 'PROOF=%s/neoth-pin-solver\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          sys.path.insert(0, str(Path("packaging").resolve()))
+          import candle_zip_migration as gate
+          proof = Path(os.environ["RUNNER_TEMP"]) / "neoth-pin-solver"
+          proof.mkdir(exist_ok=False)
+          custody = proof.parent / "qualified-pin-custody"
+          expected = {"contracts.log", "prepared.json", "receipt.json", "SHA256SUMS"}
+          if {p.name for p in custody.iterdir()} != expected:
+              raise SystemExit("source proof inventory differs")
+          sha = lambda data: hashlib.sha256(data).hexdigest()
+          seen = set()
+          for line in (custody / "SHA256SUMS").read_text().splitlines():
+              match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)", line)
+              if not match or match[2] not in expected - {"SHA256SUMS"} or match[2] in seen:
+                  raise SystemExit("source proof checksum inventory differs")
+              seen.add(match[2])
+              if sha((custody / match[2]).read_bytes()) != match[1]:
+                  raise SystemExit("source proof digest differs")
+          if seen != expected - {"SHA256SUMS"}:
+              raise SystemExit("incomplete source proof")
+          receipt = json.loads((custody / "receipt.json").read_bytes())
+          if (receipt["producer"] != os.environ["GITHUB_SHA"]
+                  or receipt["run"] != os.environ["GITHUB_RUN_ID"]
+                  or receipt["attempt"] != os.environ["GITHUB_RUN_ATTEMPT"]
+                  or receipt["status"] != "HOSTED_SOURCE_CONTRACTS_ROOT_REVIEW_REQUIRED"
+                  or receipt["passedCases"] != 7 or receipt["expectedCases"] != 7
+                  or receipt["pinsImported"] or receipt["solverExecuted"]):
+              raise SystemExit("source qualification binding differs")
+          for path, expected_hash in receipt["inputHashes"].items():
+              if sha(Path(path).read_bytes()) != expected_hash:
+                  raise SystemExit("source qualification input differs")
+          spec = gate.bindings()
+          gate.verify_source(spec, gate.upstream_files())
+          assets = gate.ASSETS
+          template = assets / "candle-core-0.8.4-pin-revision.candidate.json"
+          patch_path = assets / "zip9.0.5-russh0.64.1.patch"
+          revision = json.loads(template.read_bytes())
+          patch = patch_path.read_bytes()
+          for path in (template, patch_path):
+              if sha(path.read_bytes()) != receipt["candidateHashes"][path.name]:
+                  raise SystemExit("qualified revision asset differs")
+          if sha(patch) != revision["patchSha256"]:
+              raise SystemExit("revision patch differs")
+          baseline = subprocess.check_output(["git", "show", "HEAD:SRC/Cargo.lock"])
+          if sha(baseline) != receipt["baselineLockSha256"] or Path("SRC/Cargo.lock").read_bytes() != baseline:
+              raise SystemExit("solver did not start from committed lock")
+          (proof / "baseline-Cargo.lock").write_bytes(baseline)
+          subprocess.run(["git", "apply", "--check", "-"], input=patch, check=True, timeout=15)
+          subprocess.run(["git", "apply", "-"], input=patch, check=True, timeout=15)
+          active = assets / "candle-core-0.8.4-pin-revision.json"
+          if active.exists():
+              raise SystemExit("revision unexpectedly active")
+          shutil.copyfile(template, active)
+          names = {
+              "SRC/neothd/Cargo.toml": "neothd-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml": "candle-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml.orig": "candle-Cargo.toml.orig",
+          }
+          for path, name in names.items():
+              if sha(Path(path).read_bytes()) != receipt["candidateHashes"][name]:
+                  raise SystemExit("applied candidate differs from qualified source")
+          gate.verify_source(spec, gate.upstream_files(), require_revision=True)
+          receipt["policyHashes"] = {
+              p: sha(Path(p).read_bytes()) for p in ("SRC/.cargo/audit.toml", "SRC/deny.toml")
+          }
+          (proof / "qualified-inputs.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+      - name: Resolve exact pins and prove stable locked metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.91.0 update --manifest-path SRC/Cargo.toml -p zip --precise 9.0.5 2>&1 | (ulimit -f 10240; tee "$PROOF/zip-resolve.log")
+          cargo +1.91.0 update --manifest-path SRC/Cargo.toml -p russh --precise 0.64.1 2>&1 | (ulimit -f 10240; tee "$PROOF/russh-resolve.log")
+          sha256sum SRC/Cargo.lock > "$PROOF/stable-lock.SHA256SUMS"
+          cargo +1.91.0 metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-1.json"
+          sha256sum -c "$PROOF/stable-lock.SHA256SUMS"
+          cargo +1.91.0 metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$PROOF/metadata-2.json"
+          sha256sum -c "$PROOF/stable-lock.SHA256SUMS"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+
+          sys.path.insert(0, str(Path("packaging").resolve()))
+          import candle_zip_migration as gate
+          proof = Path(os.environ["PROOF"])
+          receipt = json.loads((proof / "qualified-inputs.json").read_bytes())
+          sha = lambda data: hashlib.sha256(data).hexdigest()
+          names = {
+              "SRC/neothd/Cargo.toml": "neothd-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml": "candle-Cargo.toml",
+              "SRC/vendor/candle-core/Cargo.toml.orig": "candle-Cargo.toml.orig",
+          }
+          gate.verify_source(gate.bindings(), gate.upstream_files(), require_revision=True)
+          gate.verify_resolution(proof)
+          changed = set(subprocess.check_output(["git", "diff", "HEAD", "--name-only"]).decode().splitlines())
+          if changed != set(names) | {"SRC/Cargo.lock"}:
+              raise SystemExit("solver changed unrelated tracked sources")
+          active = "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json"
+          untracked = subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "-z"]).decode().split("\0")
+          if set(filter(None, untracked)) != {active}:
+              raise SystemExit("solver created unrelated inputs")
+          for path, expected in {**receipt["inputHashes"], **receipt["policyHashes"]}.items():
+              if path in names or path == "SRC/Cargo.lock":
+                  continue
+              if sha(Path(path).read_bytes()) != expected:
+                  raise SystemExit("qualified source or policy changed")
+          for path, name in names.items():
+              if sha(Path(path).read_bytes()) != receipt["candidateHashes"][name]:
+                  raise SystemExit("solver changed qualified manifest")
+              shutil.copyfile(path, proof / name)
+          if sha(Path(active).read_bytes()) != receipt["candidateHashes"]["candle-core-0.8.4-pin-revision.candidate.json"]:
+              raise SystemExit("active revision changed")
+          shutil.copyfile(active, proof / "active-revision.json")
+          shutil.copyfile("SRC/Cargo.lock", proof / "candidate-Cargo.lock")
+          lock_hash = sha(Path("SRC/Cargo.lock").read_bytes())
+          if lock_hash != (proof / "stable-lock.SHA256SUMS").read_text().split()[0]:
+              raise SystemExit("candidate lock changed after metadata")
+          metadata_hashes = [sha((proof / name).read_bytes()) for name in ("metadata-1.json", "metadata-2.json")]
+          if metadata_hashes[0] != metadata_hashes[1]:
+              raise SystemExit("metadata byte serialization is unstable")
+          result = {
+              "schema": "neoth.pin-solver-candidate.v1",
+              "producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "status": "ROOT_REVIEW_REQUIRED",
+              "qualifiedSourceReceiptSha256": sha((proof / "qualified-inputs.json").read_bytes()),
+              "lockSha256": lock_hash, "metadataSha256": metadata_hashes,
+              "pins": {"zip": "9.0.5", "russh": "0.64.1"},
+              "passedSourceCases": 7, "solverExecuted": True, "dependencyCompileOrTestsExecuted": False,
+              "dependencyBehaviorAccepted": False, "freshAuditAccepted": False,
+              "pinsImported": False, "goldAccepted": False,
+          }
+          (proof / "receipt.json").write_text(json.dumps(result, indent=2) + "\n")
+          files = sorted(p for p in proof.iterdir() if p.is_file())
+          if sum(p.stat().st_size for p in files) > 128 * 1024 * 1024:
+              raise SystemExit("solver proof exceeds bound")
+          (proof / "SHA256SUMS").write_text("".join(
+              sha(p.read_bytes()) + "  " + p.name + "\n" for p in files
+          ))
+          PY
+      - name: Retain original solver candidate and full delta
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pin-solver-${{ inputs.source_head }}
+          path: ${{ runner.temp }}/neoth-pin-solver/*
           if-no-files-found: error
           retention-days: 30

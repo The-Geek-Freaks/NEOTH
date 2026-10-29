@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "graphify-accepted-pin-custody-source-contracts-pending",
+  "status": "SOURCE_CUSTODY_ADMITTED_HOSTED_SOLVER_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 455713,
-    "sha256": "6B70DBD833F755AD0878B8557F5798FAAA8A99E822FBF25D70AB514947FF3B29"
+    "bytes": 455705,
+    "sha256": "7553BF7BAD2567D3FDB63CFFA528D4D404B1F183B75A37580935C0598B025072"
   },
   "sourceInputs": 2488,
   "requiredNativeTests": [
@@ -88064,6 +88064,32 @@
       }
     ],
     "note": "Graphify27+realCLI+1865source map admitted on312fe759; seven exact pin-custody regression methods and hosted workflow wired without changing pins.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2630PinSolver": {
+    "base": "b673dbea8da880a8410ed0b7e28bd42efba93830",
+    "sources": [
+      {
+        "path": ".github/workflows/candle-pin-revision.yml",
+        "bytes": 20155,
+        "sha256": "6C49C98048F71B8769CED2DE8BB41517C71200B6F1E8A44E16A8C204D5AF6A08",
+        "blob": "f91b36c32a8066502ac74aa5b47c6dda8189573c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2700616,
+        "sha256": "F1955CAD695F8C61DBCC69FE56BD72C6353F1FA239D45D963B39B87D01594D7E",
+        "blob": "9af630041a6741508ec591001dd0a750d677565d"
+      },
+      {
+        "path": "docs/verification/gold-wave2629-pin-custody.json",
+        "bytes": 3346,
+        "sha256": "524A49A086157CE3533870FAE5C997B2CADBB26B1E2FB7BC441C636F1EE6451D",
+        "blob": "db3607d60dedc350d80ec3de7ed252087e7c3650"
+      }
+    ],
+    "note": "Seven custody contracts admitted on b673dbea; same-run source-bound optional solver added; no pin import or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
