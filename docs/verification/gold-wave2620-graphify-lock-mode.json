@@ -49,5 +49,12 @@
     "Integrate exact generated lock with reviewed source adaptations",
     "Real installed CLI contract and release isolation",
     "Regenerate source-bound navigation and verify explicit coverage"
-  ]
+  ],
+  "hostedWorkflowCorrection": {
+    "failedRun": 40841367968,
+    "annotation": "Unrecognized named-value: 'runner' in job env lines87-88",
+    "change": "Initialize UV paths using RUNNER_TEMP and GITHUB_ENV inside existing source-bound first runner step",
+    "solverExecuted": false,
+    "validation": "GitHub workflow parser recheck pending"
+  }
 }

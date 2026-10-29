@@ -84,8 +84,6 @@ jobs:
     timeout-minutes: 20
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
-      UV_CACHE_DIR: ${{ runner.temp }}/neoth-graphify-upgrade-cache
-      UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/neoth-graphify-upgrade-venv
       OMP_NUM_THREADS: '1'
       OPENBLAS_NUM_THREADS: '1'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -103,6 +101,8 @@ jobs:
           test "$GITHUB_SHA" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git diff --exit-code
+          printf 'UV_CACHE_DIR=%s\n' "$RUNNER_TEMP/neoth-graphify-upgrade-cache" >> "$GITHUB_ENV"
+          printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$RUNNER_TEMP/neoth-graphify-upgrade-venv" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: '0.9.28'

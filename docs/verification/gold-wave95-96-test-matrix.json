@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2620_STATIC_REVIEWED_HOSTED_LOCK_MODE_PENDING",
+  "status": "W2620_WORKFLOW_ENV_CORRECTED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 453179,
-    "sha256": "F7F962A4809F551C8F2645F6BC2CA5A2BF7F850B0D1750ADB1582240E42C9267"
+    "bytes": 453176,
+    "sha256": "C42D6F0CAAE69A5260DA3911721E274B2FB8FA0F6D367CFC16F071084CFB6FC7"
   },
   "sourceInputs": 2474,
   "requiredNativeTests": [
@@ -87678,6 +87678,32 @@
       }
     ],
     "note": "Optional hosted Graphify lock candidate mode; product dependency unchanged. Focused59 and bothClippy active on prior exact producer.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2620GraphifyLockModeCorrection": {
+    "base": "ae0117231e0a4bef6628650dc879de38d3eb909a",
+    "sources": [
+      {
+        "path": ".github/workflows/graphify-navigation.yml",
+        "bytes": 10483,
+        "sha256": "2C6E98848C237970A2F3EDB1AC1618FA9E2E428FDC56CC9A04A4032D60C2B083",
+        "blob": "48142b9804d676d0447bfb53d97001282a0385cf"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2688517,
+        "sha256": "A012F80091883A7CFE8B562226C96E144B6EC24FE2CBF8CF54368CCF94160B0C",
+        "blob": "b60f6626c8d8f17f3d845a0169386865280dbb80"
+      },
+      {
+        "path": "docs/verification/gold-wave2620-graphify-lock-mode.json",
+        "bytes": 2314,
+        "sha256": "D6E449449E248BF1D9C9D580E8ABE4A51A62171FAAE34661E7DACE508F9D8ACB",
+        "blob": "292de67bd0c12cd68673d30c1efb5219d99f3c5e"
+      }
+    ],
+    "note": "GitHub runner context unavailable at job.env; use RUNNER_TEMP/GITHUB_ENV in source-bound first step.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
