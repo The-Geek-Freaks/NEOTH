@@ -872,9 +872,9 @@ jobs:
   # reason.
   # ──────────────────────────────────────────────────────────────────
   feature-matrix:
-    name: feature-flag compile / ${{ matrix.feature }}
+    name: feature-flag compile / ${{ matrix.os }} / ${{ matrix.feature }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.feature == 'ssh-tunnel' && 180 || 45 }}
     env:
       # Optional frontends can add large dependency trees on a cold cache.
       # One Cargo worker keeps this matrix within the hosted runner's memory
@@ -913,6 +913,8 @@ jobs:
           # optional client dependency cannot silently rot behind the default
           # feature set.
           - { os: ubuntu-24.04, feature: ssh-tunnel }
+          - { os: windows-2022, feature: ssh-tunnel }
+          - { os: macos-14, feature: ssh-tunnel }
           # IRC and Nostr are both default-OFF connection adapters. Their
           # pure APIs compile in ordinary CI, but their live adapter modules
           # and dependency trees need one hermetic feature-enabled lane.
@@ -953,8 +955,32 @@ jobs:
 
       - name: cargo test ssh-tunnel contract
         if: matrix.feature == 'ssh-tunnel'
+        shell: bash
         working-directory: SRC
-        run: cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1
+        run: |
+          proof="$RUNNER_TEMP/ssh-native-proof"
+          mkdir -p "$proof"
+          printf 'producer=%s\nref=%s\nrun=%s\nattempt=%s\nos=%s\n' \
+            "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_OS" > "$proof/context.txt"
+          for path in Cargo.lock neothd/Cargo.toml vendor/candle-core/Cargo.toml vendor/candle-core/Cargo.toml.orig; do
+            printf '%s %s\n' "$(git hash-object --no-filters "$path")" "SRC/$path"
+          done > "$proof/input-blobs.txt"
+          printf '%s %s\n' "$(git hash-object --no-filters ../packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json)" \
+            packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json >> "$proof/input-blobs.txt"
+          cargo test -p neoth --lib --locked --features ssh-tunnel transport::ssh_ -- --list --color never \
+            | tr -d '\r' | tee "$proof/transport-discovery.log"
+          sed -n 's/^\(transport::ssh_.*\): test$/\1/p' "$proof/transport-discovery.log" \
+            | LC_ALL=C sort > "$proof/transport-cases.txt"
+          test "$(wc -l < "$proof/transport-cases.txt" | tr -d ' ')" -eq 40
+          test "$(uniq "$proof/transport-cases.txt" | wc -l | tr -d ' ')" -eq 40
+          cargo test -p neoth --lib --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1 --color never \
+            | tr -d '\r' | tee "$proof/transport-results.log"
+          while IFS= read -r test_name; do
+            test "$(grep -Fxc "test $test_name ... ok" "$proof/transport-results.log")" -eq 1
+          done < "$proof/transport-cases.txt"
+          test "$(grep -Ec '^test result: ok\. 40 passed; 0 failed; 0 ignored;' "$proof/transport-results.log")" -eq 1
+          git diff --exit-code -- Cargo.lock neothd/Cargo.toml vendor/candle-core/Cargo.toml vendor/candle-core/Cargo.toml.orig \
+            ../packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json
 
       # Credential authority is outside the transport::ssh_ filter. Discover
       # and execute every required migration/bundle case explicitly.
@@ -968,14 +994,17 @@ jobs:
             local test_name="$1"
             local listed executed
             listed="$(cargo test -p neoth --lib --locked --features ssh-tunnel "$test_name" -- --exact --list --color never)"
-            printf '%s\n' "$listed"
+            listed="$(printf '%s\n' "$listed" | tr -d '\r')"
+            printf '%s\n' "$listed" | tee -a "$RUNNER_TEMP/ssh-native-proof/authority-discovery.log"
             test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
             if ! executed="$(cargo test -p neoth --lib --locked --features ssh-tunnel "$test_name" -- --exact --test-threads=1 --color never 2>&1)"; then
               printf '%s\n' "$executed"
               return 1
             fi
-            printf '%s\n' "$executed"
+            executed="$(printf '%s\n' "$executed" | tr -d '\r')"
+            printf '%s\n' "$executed" | tee -a "$RUNNER_TEMP/ssh-native-proof/authority-results.log"
             test "$(printf '%s\n' "$executed" | grep -Fxc "test $test_name ... ok")" -eq 1
+            test "$(printf '%s\n' "$executed" | grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;')" -eq 1
           }
           run_ssh_authority_exact config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing
           run_ssh_authority_exact config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file
@@ -984,6 +1013,15 @@ jobs:
           run_ssh_authority_exact config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle
           run_ssh_authority_exact config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed
           run_ssh_authority_exact config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite
+
+      - name: Retain native SSH contract evidence
+        if: always() && matrix.feature == 'ssh-tunnel'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ssh-native-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/ssh-native-proof/
+          if-no-files-found: error
+          retention-days: 14
 
       # Each exact hermetic test is listed before execution. cargo test exits
       # zero on an empty filter, so the exact `: test` count is the proof that

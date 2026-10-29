@@ -199,7 +199,7 @@ version = "0.7.2"
 features = ["derive"]
 
 [dependencies.zip]
-version = "=9.0.0"
+version = "=9.0.5"
 default-features = false
 
 [dev-dependencies.anyhow]

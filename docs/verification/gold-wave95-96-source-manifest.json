@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T11:57:36.3936724Z",
-  "validationStatus": "W2634_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-29T12:28:56.6700379Z",
+  "validationStatus": "W2635_PROVISIONAL_DEPENDENCY_IMPORT_NATIVE_ACCEPTANCE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 55286,
-      "sha256": "43D98A40B602CCC4BF358933DAFC0CF2EB00AF00968F3A8CB91A73CE6124FA9A"
+      "bytes": 58058,
+      "sha256": "C826FAFD644C261EA2044313BF4619927C9701B9DC9FF2C748FB6A7498024FE7"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -4677,6 +4677,11 @@
       "sha256": "2D2BD7D8D28BE2EED18A9F15A3145AD456C2CD5183030ECBE591806E15E55528"
     },
     {
+      "path": "docs/verification/gold-wave2635-native-dependencies.json",
+      "bytes": 4565,
+      "sha256": "A9AC74536541C57AE434FFB09EFA40F75771BE60721136C8A20509EADC09789A"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5683,8 +5688,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 80154,
-      "sha256": "0BDE1F7395CBB7727472EEF5FCAE78AD174CB38BA728F8A223A0AE28D6F32357"
+      "bytes": 81968,
+      "sha256": "A5DEF129821496431AB1672CB1FCE81DD70A1B6F5C1282F60DB00726D6ADEF08"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5817,6 +5822,11 @@
       "sha256": "247601E2CA23E2002471BC3FB26C38D26FF944AEAA9584E0593D4D9B3CF16EAA"
     },
     {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json",
+      "bytes": 1626,
+      "sha256": "247601E2CA23E2002471BC3FB26C38D26FF944AEAA9584E0593D4D9B3CF16EAA"
+    },
+    {
       "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
       "bytes": 1949,
       "sha256": "2D1DC07ADD0B8FF945A493FE7C696FC155D3BB8BA45741356AC2A97C461B0157"
@@ -5913,8 +5923,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2708850,
-      "sha256": "68718F177B7B075DA2FE8ACB19ACCF843DA4E072A493F91AEC7459479F71D481"
+      "bytes": 2710892,
+      "sha256": "858D4D21B3265D84B0EACEFF3C38F01F709A09E4C7D11BBD79974D3267B8F13D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6008,8 +6018,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 387130,
-      "sha256": "8BBA731049696411D897FD8A9FB1F97CBED5CEFD1546620D5E37B90D166D9106"
+      "bytes": 387150,
+      "sha256": "D10D904AEE9DA564BAA18B3D3F0F4E644FE2715FCE4F1EDCDBF3D633A7A97469"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -6654,7 +6664,7 @@
     {
       "path": "SRC/neothd/Cargo.toml",
       "bytes": 46688,
-      "sha256": "9FEE53AFB2EA7F340E64F61DFC6D168F91FD77BB425FB78BACB37A0E3CB3FDE8"
+      "sha256": "15AAC037FFCFE73B3A54A08D991766FACBFC97E8AA90DAEB849D0AC7B9E67C58"
     },
     {
       "path": "SRC/neothd/src/adr/extractor.rs",
@@ -9984,12 +9994,12 @@
     {
       "path": "SRC/vendor/candle-core/Cargo.toml",
       "bytes": 4222,
-      "sha256": "4F91C55C9FB77CC2A6F91D783C5BE0D52195038C7A0335E45891A91D8EAB6E2B"
+      "sha256": "170F4C7695E4B4EE0A5F8C279D806D21C6FA57DB2788873D1A59E6A9163AE873"
     },
     {
       "path": "SRC/vendor/candle-core/Cargo.toml.orig",
       "bytes": 1716,
-      "sha256": "5D87068638D7E3F333A2AD8164EE3524B4F3CC9482827EB415027D1B9195253B"
+      "sha256": "3BFA9F7CC71FA65568A30FF6791D0A0604B88E63902DCBCC2956F0A7B4FB76D9"
     },
     {
       "path": "SRC/vendor/candle-core/examples/basics.rs",
@@ -12453,8 +12463,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2326473,
-      "sha256": "A83247A5235017782106A7CB7AB9A6A90D5D175F1C681061D0C9421E17D5F519"
+      "bytes": 2326597,
+      "sha256": "E5C4E6B63B8CD010E01971DAB1335C3170C9912A024E588EA05A12777B5DDF34"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",

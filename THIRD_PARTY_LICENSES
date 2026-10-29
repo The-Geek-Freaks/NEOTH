@@ -145,7 +145,7 @@ SOFTWARE.
 
 ## Rust distribution dependencies
 
-Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1217 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
+Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1218 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
 
 ### Exact package inventory
 
@@ -748,6 +748,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `new_debug_unreachable 1.0.6` - `MIT` - https://github.com/mbrubeck/rust-debug-unreachable - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nix 0.29.0` - `MIT` - https://github.com/nix-rust/nix - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nix 0.30.1` - `MIT` - https://github.com/nix-rust/nix - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `nix 0.31.3` - `MIT` - https://github.com/nix-rust/nix - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `no_std_io2 0.9.4` - `Apache-2.0 OR MIT` - https://github.com/wcampbell0x2a/no-std-io2 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nom 7.1.3` - `MIT` - https://github.com/Geal/nom - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nom 8.0.0` - `MIT` - https://github.com/rust-bakery/nom - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -889,7 +890,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `prost-derive 0.14.4` - `Apache-2.0` - https://github.com/tokio-rs/prost - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `psm 0.1.31` - `MIT OR Apache-2.0` - https://github.com/rust-lang/stacker/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `pulldown-cmark 0.12.2` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `pulldown-cmark 0.13.3` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `pulldown-cmark 0.13.5` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `pulldown-cmark-escape 0.11.0` - `MIT` - https://github.com/raphlinus/pulldown-cmark - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `pulley-interpreter 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `pulley-macros 36.0.19` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -1350,7 +1351,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `zerotrie 0.2.4` - `Unicode-3.0` - https://github.com/unicode-org/icu4x - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zerovec 0.11.6` - `Unicode-3.0` - https://github.com/unicode-org/icu4x - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zerovec-derive 0.11.3` - `Unicode-3.0` - https://github.com/unicode-org/icu4x - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `zip 9.0.0` - `MIT` - https://github.com/zip-rs/zip2 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `zip 9.0.5` - `MIT` - https://github.com/zip-rs/zip2 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zlib-rs 0.6.8` - `Zlib` - https://github.com/trifectatechfoundation/zlib-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zmij 1.0.21` - `MIT` - https://github.com/dtolnay/zmij - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `zopfli 0.8.4` - `Apache-2.0` - https://github.com/zopfli-rs/zopfli - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -15108,7 +15109,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79`
 
-Applies to: `spin 0.10.1`, `spin 0.9.9`, `zip 9.0.0`
+Applies to: `spin 0.10.1`, `spin 0.9.9`, `zip 9.0.5`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 The MIT License (MIT)
@@ -17241,7 +17242,7 @@ SOFTWARE.
 
 #### SHA-256 `66e3ee1fa7f909ad3c612d556f2a0cdabcd809ad6e66f3b0605015ac64841b70`
 
-Applies to: `nix 0.29.0`, `nix 0.30.1`
+Applies to: `nix 0.29.0`, `nix 0.30.1`, `nix 0.31.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 The MIT License (MIT)
@@ -31124,7 +31125,7 @@ SOFTWARE.
 
 #### SHA-256 `c4f10f55904bdb9f27d3fbf94c354926d6cfe8b982276e556238c258941b243b`
 
-Applies to: `pulldown-cmark 0.12.2`, `pulldown-cmark 0.13.3`, `pulldown-cmark-escape 0.11.0`
+Applies to: `pulldown-cmark 0.12.2`, `pulldown-cmark 0.13.5`, `pulldown-cmark-escape 0.11.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 The MIT License

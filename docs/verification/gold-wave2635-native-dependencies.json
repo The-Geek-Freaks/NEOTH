@@ -1,0 +1,134 @@
+{
+  "schema": "neoth.wave2635.native-dependency-integration.v1",
+  "status": "PROVISIONAL_IMPORT_NATIVE_ACCEPTANCE_PENDING",
+  "baseProducer": "4ced198ba03bca4645da99aab78e739abad42633",
+  "linuxQualification": {
+    "producer": "da3913398eee2c2f80828937fa70716e69f86916",
+    "run": "40865978949",
+    "sourceCases": 7,
+    "behaviorCases": 93,
+    "sourceBindings": 2314,
+    "freshUnchangedPolicyAudit": true,
+    "noticesVerified": true,
+    "actualSlintGuiCompiled": true,
+    "guiRuntimeAccepted": false,
+    "rootProofSha256": "4464C039C68B40FBCA314D3D0CA17AB244D3FB88A6399BD2DB90769A1340DE21"
+  },
+  "packages": [
+    {
+      "name": "zip",
+      "from": "9.0.0",
+      "to": "9.0.5"
+    },
+    {
+      "name": "russh",
+      "from": "0.63.2",
+      "to": "0.64.1"
+    },
+    {
+      "name": "pulldown-cmark",
+      "from": "0.13.3",
+      "to": "0.13.5"
+    }
+  ],
+  "candidateLockSha256": "d10d904aee9da564baa18b3d3f0f4e644fe2715fce4f1edcdbf3d633a7a97469",
+  "solverDeltaSha256": "92623be538df477f145fc7d8f4a9d5a0346229ef5472e36596234e36f108488d",
+  "otherReviewedPackageEdgeChanges": 27,
+  "candidateBindings": [
+    {
+      "entry": "neothd-Cargo.toml",
+      "path": "SRC/neothd/Cargo.toml",
+      "sha256": "15AAC037FFCFE73B3A54A08D991766FACBFC97E8AA90DAEB849D0AC7B9E67C58",
+      "bytes": 46688,
+      "gitBlob": "fb76d5bef5c3353a3fe124aeefbec5d32be9c8a3"
+    },
+    {
+      "entry": "candle-Cargo.toml",
+      "path": "SRC/vendor/candle-core/Cargo.toml",
+      "sha256": "170F4C7695E4B4EE0A5F8C279D806D21C6FA57DB2788873D1A59E6A9163AE873",
+      "bytes": 4222,
+      "gitBlob": "b60bbafdadd74307add8890e6c1eda5c2bca59dd"
+    },
+    {
+      "entry": "candle-Cargo.toml.orig",
+      "path": "SRC/vendor/candle-core/Cargo.toml.orig",
+      "sha256": "3BFA9F7CC71FA65568A30FF6791D0A0604B88E63902DCBCC2956F0A7B4FB76D9",
+      "bytes": 1716,
+      "gitBlob": "f3b88337afa7990cb90279be8bdee93a8ae4a0e4"
+    },
+    {
+      "entry": "active-revision.json",
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json",
+      "sha256": "247601E2CA23E2002471BC3FB26C38D26FF944AEAA9584E0593D4D9B3CF16EAA",
+      "bytes": 1626,
+      "gitBlob": "a57e566971d3aac27a549c101a8a350272f392fc"
+    },
+    {
+      "entry": "THIRD_PARTY_LICENSES",
+      "path": "THIRD_PARTY_LICENSES",
+      "sha256": "E5C4E6B63B8CD010E01971DAB1335C3170C9912A024E588EA05A12777B5DDF34",
+      "bytes": 2326597,
+      "gitBlob": "93b4881e71b55688548fbf6823af4734cfc7f068"
+    },
+    {
+      "entry": "candidate-Cargo.lock",
+      "path": "SRC/Cargo.lock",
+      "sha256": "D10D904AEE9DA564BAA18B3D3F0F4E644FE2715FCE4F1EDCDBF3D633A7A97469",
+      "bytes": 387150,
+      "gitBlob": "8ee468adcd78e6da65e828fc50d35a7d880567c3"
+    }
+  ],
+  "sourceAndControlChangesSinceLinuxProducer": [
+    ".github/workflows/cli-reference.yml",
+    "PLAN/ROAD_TO_1_0_GOLD.md",
+    "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
+    "SRC/neothd/src/council/daily_budget.rs",
+    "SRC/neothd/src/providers/cost_authorization.rs",
+    "SRC/neothd/src/wal/events.rs",
+    "docs/COST_PROVENANCE.md",
+    "docs/verification/gold-wave2634-budget-acquisition.json",
+    "docs/verification/gold-wave95-96-source-manifest.json",
+    "docs/verification/gold-wave95-96-test-matrix.json",
+    "packaging/tests/test_ci_cadence_contract.py"
+  ],
+  "nativeQualification": {
+    "workflow": ".github/workflows/ci.yml",
+    "workspacePlatforms": [
+      "ubuntu-24.04",
+      "windows-2022",
+      "macos-14"
+    ],
+    "lockedWorkspaceTests": true,
+    "sshPlatforms": [
+      "ubuntu-24.04",
+      "windows-2022",
+      "macos-14"
+    ],
+    "sshTransportCasesPerPlatform": 40,
+    "sshAuthorityCasesPerPlatform": 7,
+    "sshDefaultOff": true,
+    "russhBackend": "ring",
+    "compileWorkers": 1,
+    "runtimeLocal": false,
+    "transportCasesOsGated": false,
+    "rawContextAndCaseResultsRetained": true
+  },
+  "protectedPhysicalLock": {
+    "sha256": "5F274ACA1AD7148414803ADFD6034BAD7F083B915BC8177D8319332AA683CE52",
+    "indexOnlyReplacement": true,
+    "unchanged": true
+  },
+  "tests": [],
+  "newRequiredRegistrations": 0,
+  "nativeAccepted": false,
+  "finalDependencyAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false,
+  "localRuntimeExecuted": false,
+  "remaining": [
+    "Finish current focused67 and fast gates of the published candidate before full native CI",
+    "Run current-producer full locked CI with native SSH lanes",
+    "Admit original per-platform artifacts and repair any concrete failure",
+    "Current-producer release and final Gold acceptance"
+  ]
+}

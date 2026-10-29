@@ -1539,7 +1539,10 @@ class CiCadenceContractTests(unittest.TestCase):
 
     def test_feature_matrix_runs_hermetic_irc_and_nostr_adapter_contracts(self) -> None:
         feature_matrix = workflow_jobs(CI_TEXT)["feature-matrix"]
-        self.assertIn("timeout-minutes: 45", feature_matrix)
+        self.assertIn(
+            "timeout-minutes: ${{ matrix.feature == 'ssh-tunnel' && 180 || 45 }}",
+            feature_matrix,
+        )
         self.assertIn("CARGO_BUILD_JOBS: 1", feature_matrix)
         self.assertIn(
             "- { os: ubuntu-24.04, feature: channel-adapters }", feature_matrix
@@ -1587,6 +1590,34 @@ class CiCadenceContractTests(unittest.TestCase):
             "config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite",
         ):
             self.assertEqual(ssh_authority.count(f"run_ssh_authority_exact {identity}"), 1)
+
+    def test_native_ssh_lanes_require_discovery_results_and_bound_evidence(self) -> None:
+        feature_matrix = workflow_jobs(CI_TEXT)["feature-matrix"]
+        for os in ("ubuntu-24.04", "windows-2022", "macos-14"):
+            self.assertEqual(
+                feature_matrix.count(f"- {{ os: {os}, feature: ssh-tunnel }}"), 1
+            )
+        steps = workflow_steps(feature_matrix)
+        transport = steps["cargo test ssh-tunnel contract"]
+        self.assertIn("shell: bash", transport)
+        self.assertIn("cargo test -p neoth --lib --locked --features ssh-tunnel", transport)
+        self.assertIn("--list --color never", transport)
+        self.assertIn("--test-threads=1 --color never", transport)
+        self.assertIn('grep -Fxc "test $test_name ... ok"', transport)
+        self.assertIn("40 passed; 0 failed; 0 ignored;", transport)
+        self.assertIn("transport-cases.txt", transport)
+        self.assertIn("git hash-object --no-filters", transport)
+        self.assertIn("git diff --exit-code", transport)
+        for context in ("$GITHUB_SHA", "$GITHUB_REF", "$GITHUB_RUN_ID", "$GITHUB_RUN_ATTEMPT"):
+            self.assertIn(context, transport)
+        authority = steps["cargo test SSH credential authority contracts"]
+        self.assertIn("authority-discovery.log", authority)
+        self.assertIn("authority-results.log", authority)
+        self.assertIn("1 passed; 0 failed; 0 ignored;", authority)
+        evidence = steps["Retain native SSH contract evidence"]
+        self.assertIn("if: always() && matrix.feature == 'ssh-tunnel'", evidence)
+        self.assertIn("name: ssh-native-${{ matrix.os }}-${{ github.sha }}", evidence)
+        self.assertIn("if-no-files-found: error", evidence)
 
     def test_macos_native_gui_discovery_requires_exact_suite_ownership(self) -> None:
         suites = {
