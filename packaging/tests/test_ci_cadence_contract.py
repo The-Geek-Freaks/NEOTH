@@ -229,6 +229,18 @@ class CiCadenceContractTests(unittest.TestCase):
         ):
             self.assertNotIn("continue-on-error:", steps[name])
         self.assertIn("-- -D warnings", steps["Check exact Linux-quality workspace Clippy"])
+        names = list(steps)
+        workspace_lint = names.index("Check exact Linux-quality workspace Clippy")
+        for early in (
+            "Run exact cost replay and provider recovery regressions",
+            "Export generated reference",
+            "Upload generated reference",
+        ):
+            self.assertLess(names.index(early), workspace_lint)
+        self.assertLess(
+            names.index("Type-check core test targets before native validation"),
+            names.index("Run exact cost replay and provider recovery regressions"),
+        )
 
     def test_candle_candidate_requires_cost_evidence_before_export(self) -> None:
         workflow = (WORKFLOWS / "candle-zip-migration.yml").read_text(encoding="utf-8")

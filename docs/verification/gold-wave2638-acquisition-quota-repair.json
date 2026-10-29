@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.wave2638.acquisition-quota-repair.v1",
+  "status": "FIXTURE_REPAIRED_HOSTED_REQUALIFICATION_PENDING",
+  "baseProducer": "e267b4a0fed12418fff4371d179a91eb0f5431d4",
+  "roadmap": "ADOPT-20261012-A02",
+  "priorRun": "40884462161",
+  "priorResult": {
+    "selected": 67,
+    "passed": 66,
+    "failed": 1,
+    "coreTestCompilation": "success",
+    "workspaceClippy": "success",
+    "slimClippy": "success"
+  },
+  "diagnosis": "The test aborted the writer while TestAckGate held the REQUEST acknowledgement. This produces intent ACK failure, so the expected later observation append error cannot occur.",
+  "failingCase": "providers::cost_authorization::tests::budget_acquisition_write_failure_blocks_permit_and_preserves_operation_charge",
+  "changes": [
+    "Attach existing real QuotaGuard using a small isolated measured fixture directory",
+    "After intent durability but before ACK, write a 64KiB+1 quota seed and reset measurement; release ACK normally",
+    "Observation fails real pre-write quota admission before enqueue; assert observation and quota error contexts",
+    "Preserve operation token/microUSD debits and daily rollback proof; drain writer and require exactly one REQUEST frame",
+    "Move unchanged required workspace Clippy after behavioral regressions and generated CLI help; preserve same lint command/features/timeouts and all acceptance gates",
+    "Extend existing hosted cadence contract with test/export-before-lint ordering"
+  ],
+  "productionBehaviorChanged": false,
+  "testIdentitiesChanged": false,
+  "focusedRequiredCount": 67,
+  "portableRegistered": 3088,
+  "planPrefix": {
+    "bytes": 2712755,
+    "sha256": "C1B7909B9D4536CA2DACA9D3DA0EDDF7F1A2EB23B22CF690C10DE78A21159A79",
+    "rawOpenRows": 259
+  },
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false,
+  "staticReview": "Prompt-only independent lifecycle review found no blocking issue in revised real-quota admission sequence; hosted execution required",
+  "next": [
+    "Exact producer fast gates and hosted format if needed",
+    "Execute all67 with slim and workspace Clippy in the single heavy stream",
+    "Admit original artifacts before native qualification; W2637 remains candidate-only"
+  ]
+}

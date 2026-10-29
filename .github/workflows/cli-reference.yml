@@ -144,16 +144,6 @@ jobs:
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
 
-      # Refuse workspace lint failures before spending time on linked regression
-      # suites and the CLI binary. The command and acceptance requirement are unchanged.
-      - name: Check exact Linux-quality workspace Clippy
-        if: ${{ inputs.workspace_clippy }}
-        # The successful Core614 gate took 28m20s; Core309 hit 30m without
-        # compiler diagnostics. Keep the same check with enough hosted time.
-        timeout-minutes: 45
-        working-directory: SRC
-        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
-
       - name: Run exact document and migration regressions
         if: ${{ inputs.document_regressions }}
         timeout-minutes: 45
@@ -752,6 +742,16 @@ jobs:
           name: generated-cli-reference
           path: ${{ runner.temp }}/neoth-cli-reference/
           if-no-files-found: error
+
+      # Surface targeted behavior failures and derived docs before the long
+      # workspace lint. Every requested lint remains required for acceptance.
+      - name: Check exact Linux-quality workspace Clippy
+        if: ${{ inputs.workspace_clippy }}
+        # The successful Core614 gate took 28m20s; Core309 hit 30m without
+        # compiler diagnostics. Keep the same check with enough hosted time.
+        timeout-minutes: 45
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       # Retain a successful core compile even when a later gate fails. Cache
       # state is only an accelerator; every requested test and lint stays required.

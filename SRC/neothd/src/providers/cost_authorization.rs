@@ -4123,7 +4123,17 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let gate =
             crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
-        let writer = writer.with_test_ack_gate(gate.clone());
+        // Isolate measured quota bytes from WAL preallocation and daily SQLite.
+        let quota_home = dir.path().join("quota-fixture");
+        std::fs::create_dir(&quota_home).unwrap();
+        const QUOTA_CEILING: usize = 64 * 1024;
+        let quota = std::sync::Arc::new(crate::wal::writer::QuotaGuard::new(
+            quota_home.clone(),
+            u64::try_from(QUOTA_CEILING).unwrap(),
+        ));
+        let writer = writer
+            .with_quota_guard(quota.clone())
+            .with_test_ack_gate(gate.clone());
         let budget = new_operation_budget(4_000, ACQUISITION_PAID_CAP_USD).unwrap();
         let leaf = acquisition_leaf(writer.clone(), Some(budget.clone()), Some(dir.path())).await;
         let daily = leaf.ticket.daily_budget_plan.as_ref().unwrap().clone();
@@ -4138,17 +4148,20 @@ mod tests {
             },
             result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => result.unwrap(),
         }
-        join.abort();
-        assert!(join.await.unwrap_err().is_cancelled());
+        // Let the already-durable intent receive its real ACK, then reject the
+        // observation before enqueue through the existing quota admission path.
+        std::fs::write(quota_home.join("quota-full.bin"), vec![0; QUOTA_CEILING + 1]).unwrap();
+        quota.reset();
         gate.release();
         let error = match dispatch.await {
-            Ok(_) => panic!("dead observation writer must not yield a dispatch permit"),
+            Ok(_) => panic!("quota-rejected observation must not yield a dispatch permit"),
             Err(error) => error,
         };
+        let message = error.to_string();
         assert!(
-            error
-                .to_string()
-                .contains("budget observation WAL append failed")
+            message.contains("budget observation WAL append failed")
+                && message.contains("WAL disk quota breached"),
+            "unexpected observation failure: {error:#}"
         );
         assert_eq!(
             budget.state.lock().unwrap().remaining_tokens,
@@ -4163,8 +4176,10 @@ mod tests {
             .unwrap()
             .release_before_dispatch()
             .unwrap();
-        assert_eq!(wal_frames(&segment).len(), 1);
-        drop(writer);
+        drain_acquisition_writer(writer, join).await;
+        let frames = wal_frames(&segment);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
     }
 
     #[tokio::test]

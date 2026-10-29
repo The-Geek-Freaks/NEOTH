@@ -19601,3 +19601,11 @@ Hosted run 40871959983 on 4ced198ba03bca4645da99aab78e739abad42633 completed wit
 The test-only repair gives those three paid scenarios a 1.0 USD operation/daily cap, checks their frozen reservation against initial limits before dispatch, and distinguishes early errors from unexpected permits. Both cancellation and WAL write-failure cases check the retained operation monetary debit as well as tokens. Each uses a fresh daily store; the local zero-cost case retains its original 0.02 USD cap. Production authorization and rollback rules are unchanged.
 
 The original failed-run ZIP and failure assessment remain evidence. This is a static-reviewed fixture repair, not a passing runtime claim. Require fresh exact-producer fast gates and all67/Clippy acceptance before the single full native CI dispatch. No roadmap row, native/release gate or Gold acceptance is closed by this repair. Report: docs/verification/gold-wave2636-acquisition-fixture-repair.json.
+
+## W2638: Reservierungs-Test erreicht den echten Beobachtungs-Schreibfehler
+
+Run 40884462161 auf e267b4a0fed12418fff4371d179a91eb0f5431d4 besteht beide Clippy-Gates und 66/67 gezielte Laufzeittests. Die letzte Fixture brach den Writer noch vor der Intent-Bestaetigung ab und konnte deshalb den erwarteten spaeteren Fehler der Reservierungsaufzeichnung nicht erreichen.
+
+Die Korrektur nutzt den vorhandenen QuotaGuard: Nach dauerhafter Intent-Ablage wird eine kleine, getrennt gemessene Fixture-Quote ueberschritten und die Messung explizit erneuert; der Intent erhaelt trotzdem seine normale Bestaetigung. Erst der naechste Beobachtungs-Schreibversuch wird vor dem Einreihen abgelehnt. Der Test verlangt beide Fehlerkontexte, unveraenderte Vorgangsabbuchung, Tages-Rollback und nach Writer-Drain genau den Intent-Frame. Produktionslogik und alle67 Testidentitaeten bleiben unveraendert.
+
+Der unveraenderte verpflichtende Workspace-Clippy-Schritt folgt kuenftig auf gezielte Verhaltenstests und CLI-Export, damit solche Fehler frueher sichtbar werden. Kein Abnahme-Gate entfaellt. Quelle und Reihenfolge sind nur statisch geprueft; neue Hosted-, Native-, Release- und Gold-Abnahme bleiben offen. W2637 bleibt ein nicht importierter Kandidat. Bericht: docs/verification/gold-wave2638-acquisition-quota-repair.json.
