@@ -40,5 +40,32 @@
     "Exact producer fast gates and hosted format if needed",
     "Execute all67 with slim and workspace Clippy in the single heavy stream",
     "Admit original artifacts before native qualification; W2637 remains candidate-only"
-  ]
+  ],
+  "hostedFormatting": {
+    "run": "40895188829",
+    "producer": "a0575f3c07cb19f82ce03c377b3861ff5c42b0f5",
+    "artifact": 12907260703,
+    "zipSha256": "BD7BA13E86AFAD2E33790C63865FD0E2E836131D47C7453DD300783215A75024",
+    "entries": [
+      {
+        "name": "rustfmt.patch",
+        "sha256": "CF07FB9F662A6506C99BA9BE37EE2B0877400D61A2A2F066799BE0E9AC3DA5B3",
+        "bytes": 855
+      },
+      {
+        "name": "SHA256SUMS",
+        "sha256": "763F8E47C8CA4FE7FBBA09235CE3B3D356C2F4B2A11CF182C6736BC18C2B95F4",
+        "bytes": 162
+      },
+      {
+        "name": "source-head.txt",
+        "sha256": "526265A59876AC4C88AA72D3FA64014A0D2174077B143F645A74E4F99783E0DE",
+        "bytes": 41
+      }
+    ],
+    "source": "SRC/neothd/src/providers/cost_authorization.rs",
+    "beforeBlob": "a66ce23235d4ceb8c292416806a589dbf1439c6a",
+    "afterBlob": "288ebbfab7de830579eee90522fec52347cefdb6",
+    "localFormatterExecuted": false
+  }
 }

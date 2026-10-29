@@ -4150,7 +4150,11 @@ mod tests {
         }
         // Let the already-durable intent receive its real ACK, then reject the
         // observation before enqueue through the existing quota admission path.
-        std::fs::write(quota_home.join("quota-full.bin"), vec![0; QUOTA_CEILING + 1]).unwrap();
+        std::fs::write(
+            quota_home.join("quota-full.bin"),
+            vec![0; QUOTA_CEILING + 1],
+        )
+        .unwrap();
         quota.reset();
         gate.release();
         let error = match dispatch.await {
