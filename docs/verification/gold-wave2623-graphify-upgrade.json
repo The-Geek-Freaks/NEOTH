@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2623.graphify-upgrade.v1",
-  "status": "LOCK_AND_SOURCE_IMPORTED_HOSTED_COMPATIBILITY_PENDING",
+  "status": "HOSTED_SNAPSHOT_FIXTURE_REPAIRED_REQUALIFICATION_PENDING",
   "baseProducer": "45cf7e65e82efa119bd842773d2b163f84224213",
   "versions": {
     "graphifyy": "0.9.70",
@@ -54,9 +54,35 @@
   "fullCiAccepted": false,
   "goldClosed": false,
   "remaining": [
-    "Hosted installed CLI and snapshot contracts without networking",
-    "Release isolation on integrated producer",
-    "Source-bound navigation and explicit coverage",
-    "Fresh advisory status; no dismissals or ignores"
-  ]
+    "Repeat hosted isolation and all snapshot cases on fixture repair producer",
+    "Run installed Graphify CLI contract without networking",
+    "Produce source-bound navigation with explicit coverage",
+    "Qualify remaining ZIP and Russh revisions separately"
+  ],
+  "qualificationAttempt": {
+    "run": 40851410051,
+    "producer": "0539627fff470eb0b76595fc82889e96af7ed88f",
+    "conclusion": "failure",
+    "releaseIsolationPassed": true,
+    "snapshotPassed": 20,
+    "snapshotErrors": 1,
+    "snapshotTotal": 21,
+    "realCliExecuted": false,
+    "navigationExecuted": false,
+    "rootCause": "Generated extractor fake omitted root keyword required by production augmentation",
+    "repair": "Accept and assert explicit extraction/cache roots plus serial limits; reveal captured child failure output; skip map upload only if navigation never ran",
+    "independentPromptReview": "No definite defect; hosted verification remains required",
+    "localRuntimeExecuted": false
+  },
+  "advisoryRefresh": {
+    "atUtc": "2026-10-29T09:40:09Z",
+    "totalOpen": 6,
+    "graphifyOpen": 0,
+    "pillowOpen": 0,
+    "russhOpen": 4,
+    "zipOpen": 2,
+    "dismissals": 0,
+    "newIgnores": 0,
+    "proof": "work/gold-20260906/wave2623-graphify-upgrade/ADVISORY_REFRESH.json"
+  }
 }

@@ -151,6 +151,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Generate serial structural map without model calls
+        id: navigation
         shell: bash
         run: |
           set -euo pipefail
@@ -158,7 +159,7 @@ jobs:
             --source-head "$EXPECTED_HEAD" --output "$RUNNER_TEMP/neoth-navigation"
           git diff --exit-code
       - name: Retain map and explicit coverage
-        if: always()
+        if: ${{ always() && steps.navigation.outcome != 'skipped' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: graphify-navigation-${{ inputs.source_head }}

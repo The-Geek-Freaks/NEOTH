@@ -27,15 +27,21 @@ def run(
     environment = os.environ.copy()
     if env:
         environment.update(env)
-    return subprocess.run(
-        argv,
-        cwd=cwd,
-        check=check,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=environment,
-    )
+    try:
+        return subprocess.run(
+            argv,
+            cwd=cwd,
+            check=check,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+    except subprocess.CalledProcessError as error:
+        raise AssertionError(
+            f"fixture command failed: {argv!r}\n"
+            f"stdout:\n{error.stdout}\nstderr:\n{error.stderr}"
+        ) from error
 
 
 class GraphifyPathIdTests(unittest.TestCase):
@@ -203,7 +209,13 @@ from pathlib import Path
 def _get_extractor(path):
     return object() if Path(path).suffix.lower() in {'.py', '.rs'} else None
 
-def extract(paths, cache_root=None, *, parallel=True, max_workers=None):
+def extract(paths, cache_root=None, *, root=None, parallel=True, max_workers=None):
+    if root is None or cache_root is None:
+        raise RuntimeError('augmentation must bind extraction and cache roots')
+    if Path(root).resolve() != Path.cwd() or Path(cache_root).resolve() != Path.cwd():
+        raise RuntimeError('augmentation roots differ from fixture repository')
+    if parallel or max_workers != 1:
+        raise RuntimeError('augmentation must remain serial')
     return {
         'nodes': [
             {

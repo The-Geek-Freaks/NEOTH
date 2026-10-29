@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "LOCK_ADMITTED_COMPATIBILITY_PENDING",
+  "status": "W2624_STATIC_FIXTURE_REPAIR_HOSTED_REQUALIFICATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 454598,
-    "sha256": "E2AB9ADAAACFDAF171DE4A83A0AC1ED1EEDE6DDF02FA4B25CA374FB4C2B32F17"
+    "bytes": 454621,
+    "sha256": "13639D1D1462F1933CDF40EBE2F1132A18A16BFB4E549FD2F917495083C77711"
   },
   "sourceInputs": 2482,
   "requiredNativeTests": [
@@ -87810,6 +87810,38 @@
       }
     ],
     "note": "Graphify0.9.70/Pillow13 locked solver admitted; source adaptations imported. Focused59 and bothClippy accepted on712123dc; actual new Graphify qualification pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2624GraphifyFixtureRepair": {
+    "base": "0539627fff470eb0b76595fc82889e96af7ed88f",
+    "sources": [
+      {
+        "path": ".github/workflows/graphify-navigation.yml",
+        "bytes": 16672,
+        "sha256": "28E4BEE978EB7EF5DC5137D2496BFA6C30DD8600A21F05B68E36E27A02125961",
+        "blob": "649c62c5650616512e8ba0132af61d0053415077"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2692114,
+        "sha256": "970579C9029F70088F03977C630009BE064E9E74EC208F745A8C448FF3E8C60C",
+        "blob": "31903f8dc96d06b04790d0cde2f5308df461323b"
+      },
+      {
+        "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
+        "bytes": 3558,
+        "sha256": "1B8807BBA0E6A2ACEC9E9255055FA3176AA0124B365D2A2B21FAC459A83F187C",
+        "blob": "b6470457dc78ad71d76899dac2b4d6079f7df644"
+      },
+      {
+        "path": "scripts/test_build_release_self_knowledge.py",
+        "bytes": 27086,
+        "sha256": "318E50657D668A39768FBCF10A2460A54B6A0B9844079C39133E5B046C48968C",
+        "blob": "d76d8e87916a331d3c083898aa24795a4ff09705"
+      }
+    ],
+    "note": "Narrow root keyword fixture repair, failure diagnostics and skipped-navigation artifact guard. Previous20/21 snapshot result preserved; no runtime acceptance claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

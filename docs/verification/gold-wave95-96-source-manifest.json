@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-29T09:36:58.6670069Z",
-  "validationStatus": "LOCK_ADMITTED_COMPATIBILITY_PENDING",
+  "capturedUtc": "2026-10-29T09:47:26.7733195Z",
+  "validationStatus": "W2624_STATIC_FIXTURE_REPAIR_HOSTED_REQUALIFICATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/graphify-navigation.yml",
-      "bytes": 16601,
-      "sha256": "EE8D0E0B0ED2DF9A162C38194C9581EB8105BB2AAC223D6ECEED485D9513F3D1"
+      "bytes": 16672,
+      "sha256": "28E4BEE978EB7EF5DC5137D2496BFA6C30DD8600A21F05B68E36E27A02125961"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -4653,8 +4653,8 @@
     },
     {
       "path": "docs/verification/gold-wave2623-graphify-upgrade.json",
-      "bytes": 2507,
-      "sha256": "D01784B2D0A18569127A28B6EBD5936040FA674874B750F91E6905BB294C8860"
+      "bytes": 3558,
+      "sha256": "1B8807BBA0E6A2ACEC9E9255055FA3176AA0124B365D2A2B21FAC459A83F187C"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5868,8 +5868,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2690850,
-      "sha256": "D2581F641A195DC34BF5524EC3838406C0A10862059A7A75B68055F4EFFAA94E"
+      "bytes": 2692114,
+      "sha256": "970579C9029F70088F03977C630009BE064E9E74EC208F745A8C448FF3E8C60C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5923,8 +5923,8 @@
     },
     {
       "path": "scripts/test_build_release_self_knowledge.py",
-      "bytes": 26425,
-      "sha256": "FBF408B7227F50D5A0DCDECBFCAF8E9BD9BE26B957A8C6F9BA6641547F4D746A"
+      "bytes": 27086,
+      "sha256": "318E50657D668A39768FBCF10A2460A54B6A0B9844079C39133E5B046C48968C"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
