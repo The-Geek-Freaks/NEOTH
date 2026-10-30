@@ -829,6 +829,17 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
     Ok(event)
 }
 
+/// Decode retained terminal usage without repricing legacy records. This does
+/// not authenticate the payload or establish its request association: callers
+/// must supply an authenticated frame and validate its lifecycle/binding fields.
+/// V2 keeps observed counters but leaves unsaved amounts unknown. V3+ preserves
+/// the validated frozen snapshot, including any available historic price basis.
+pub(crate) fn retained_terminal_usage(
+    payload: &[u8],
+) -> anyhow::Result<Option<UsageEvent>> {
+    usage_event_from_terminal_payload_with_legacy(payload, |event| event)
+}
+
 pub(super) fn usage_event_from_terminal_payload(
     payload: &[u8],
 ) -> anyhow::Result<Option<UsageEvent>> {
@@ -2798,6 +2809,103 @@ mod tests {
             "call_type": event.call_type, "streaming": event.streaming, "prompt_tax": event.prompt_tax,
         });
         (event, payload)
+    }
+
+    #[test]
+    fn retained_terminal_v2_keeps_observed_tokens_without_current_price_projection() {
+        let (_, mut payload) = frozen_terminal_fixture();
+        payload["usage_projection_schema"] = "neoth.provider-usage.v2".into();
+        payload.as_object_mut().unwrap().remove("usage_snapshot");
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let retained = retained_terminal_usage(&bytes).unwrap().unwrap();
+        assert_eq!(retained.input_tokens, Some(100));
+        assert_eq!(retained.output_tokens, Some(50));
+        assert_eq!(retained.cache_creation_tokens, Some(0));
+        assert_eq!(retained.cache_read_tokens, Some(0));
+        assert_eq!(retained.cost_usd, None);
+        assert_eq!(retained.cache_savings_usd, None);
+        assert_eq!(retained.pricing_basis, None);
+        // The existing repair policy is intentionally separate and unchanged.
+        assert!(usage_event_from_terminal_payload(&bytes)
+            .unwrap().unwrap().cost_usd.is_some());
+    }
+
+    #[test]
+    fn retained_terminal_versions_preserve_frozen_amount_bits_basis_and_components() {
+        let (legacy_event, legacy_payload) = frozen_terminal_fixture();
+        let mut priced = priced_terminal_event(
+            "openai_api", "gpt-4o", Some(99), Some(3), Some(0), Some(0),
+        );
+        // Synthetic historical snapshot tests exact retention, not price arithmetic.
+        // Rates and amounts deliberately differ from today's lookup.
+        priced.pricing_basis = Some(crate::providers::pricing_basis::PricingBasis::from_price(
+            &priced.provider, &priced.model,
+            crate::providers::cost::PriceRow {
+                input_eur_per_mtok: 7.25,
+                output_eur_per_mtok: 13.5,
+            },
+        ));
+        priced.cost_usd = Some(1.2345678901234567);
+        priced.cache_savings_usd = Some(-0.25);
+        let priced_payload = priced_terminal_payload(&priced);
+        let mut component_event = priced.clone();
+        let item = crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::E, "user")
+            .with_prompt_origin(crate::tokens::prompt_attribution::PromptOrigin::User);
+        component_event.prompt_tax = Some(crate::tokens::budget::PromptTax {
+            components: Some(
+                crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
+                    &[item], 520,
+                ).unwrap(),
+            ),
+            ..Default::default()
+        });
+        let mut component_payload = priced_terminal_payload(&priced);
+        component_payload["usage_projection_schema"] = "neoth.provider-usage.v5".into();
+        component_payload["prompt_tax"] = serde_json::to_value(component_event.prompt_tax).unwrap();
+        component_payload["usage_snapshot"] = terminal_usage_snapshot_v3(&component_event).unwrap();
+        for (expected, payload) in [
+            (legacy_event, legacy_payload),
+            (priced, priced_payload),
+            (component_event, component_payload),
+        ] {
+            let retained = retained_terminal_usage(&serde_json::to_vec(&payload).unwrap())
+                .unwrap().unwrap();
+            assert_eq!(retained.cost_usd.map(f64::to_bits), expected.cost_usd.map(f64::to_bits));
+            assert_eq!(retained.cache_savings_usd.map(f64::to_bits),
+                expected.cache_savings_usd.map(f64::to_bits));
+            assert_eq!(retained, expected);
+        }
+    }
+
+    #[test]
+    fn retained_terminal_preserves_unknown_zero_and_existing_rejection_boundary() {
+        let (event, payload) = frozen_terminal_fixture();
+        for (cost, savings) in [
+            (None, None),
+            (Some(0.0), None),
+            (None, Some(0.0)),
+            (Some(0.0), Some(0.0)),
+        ] {
+            let mut expected = event.clone();
+            expected.cost_usd = cost;
+            expected.cache_savings_usd = savings;
+            let mut raw = payload.clone();
+            raw["usage_snapshot"] = terminal_usage_snapshot(&expected).unwrap();
+            let retained = retained_terminal_usage(&serde_json::to_vec(&raw).unwrap())
+                .unwrap().unwrap();
+            assert_eq!(retained.cost_usd, cost);
+            assert_eq!(retained.cache_savings_usd, savings);
+        }
+        assert!(retained_terminal_usage(b"{}").unwrap().is_none());
+        let mut unsupported = payload.clone();
+        unsupported["usage_projection_schema"] = "neoth.provider-usage.v999".into();
+        assert!(retained_terminal_usage(&serde_json::to_vec(&unsupported).unwrap()).is_err());
+        let mut mismatch = payload.clone();
+        mismatch["wire_model"] = "different-model".into();
+        assert!(retained_terminal_usage(&serde_json::to_vec(&mismatch).unwrap()).is_err());
+        let mut malformed = payload;
+        malformed["usage_snapshot"]["cost_usd_bits"] = "7ff0000000000000".into();
+        assert!(retained_terminal_usage(&serde_json::to_vec(&malformed).unwrap()).is_err());
     }
 
     fn decode_terminal(value: &serde_json::Value) -> anyhow::Result<Option<UsageEvent>> {

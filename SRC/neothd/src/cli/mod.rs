@@ -202,6 +202,7 @@ pub mod unlock_moment;
 pub mod update;
 pub mod updater;
 pub mod usage;
+mod usage_acquisitions;
 /// GOLD-ADAPT-ODY-28 — user-local TZ context injection into the user-role turn.
 pub mod user_tz;
 pub mod verify;

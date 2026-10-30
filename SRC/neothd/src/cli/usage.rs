@@ -19,6 +19,12 @@ use crate::providers::cost::{Currency, convert_from_usd, format_amount};
 /// CLI args for `neoth usage`.
 #[derive(Args, Debug, Clone)]
 pub struct UsageArgs {
+    /// Compare retained request, price plan, acquisitions and terminal usage per invocation.
+    #[arg(long, conflicts_with_all = ["acquisitions", "currency"])]
+    pub provenance: bool,
+    /// Inspect recorded budget acquisitions in authenticated retained WAL prefixes.
+    #[arg(long, conflicts_with = "currency")]
+    pub acquisitions: bool,
     /// How many days back to aggregate (default 1).
     #[arg(long, default_value_t = 1)]
     pub days: u32,
@@ -40,6 +46,12 @@ pub struct UsageArgs {
 
 /// Entry point for `Commands::Usage` dispatch.
 pub fn run(home: &Path, args: UsageArgs) -> Result<()> {
+    if args.provenance {
+        return super::usage_acquisitions::provenance::run(home, args);
+    }
+    if args.acquisitions {
+        return super::usage_acquisitions::run(home, args);
+    }
     let format = UsageFormat::parse(&args.format).unwrap_or(UsageFormat::Table);
     let currency = resolve_currency(home, args.currency.as_deref());
     match (args.since_unix, args.until_unix) {

@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.wave2640.provenance-reader.v1",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "baseProducer": "d54b615bd46510013ba48d8546040ff8ac9f2d44",
+  "roadmap": "ADOPT-20261012-A02",
+  "tests": [
+    "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
+    "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
+    "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
+    "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
+    "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
+    "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
+    "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
+    "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
+    "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
+    "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
+    "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
+    "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
+    "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
+    "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
+    "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
+    "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
+    "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
+    "daemon::usage_log::tests::retained_terminal_preserves_unknown_zero_and_existing_rejection_boundary",
+    "daemon::usage_log::tests::retained_terminal_v2_keeps_observed_tokens_without_current_price_projection",
+    "daemon::usage_log::tests::retained_terminal_versions_preserve_frozen_amount_bits_basis_and_components"
+  ],
+  "newTests": 20,
+  "focusedRequiredCount": 115,
+  "localRuntimeExecuted": false,
+  "hostedRuntimeAccepted": false,
+  "roadmapAccepted": false,
+  "implementation": [
+    "Additive usage --provenance shares the single existing authenticated WAL scan with acquisition decoding",
+    "Keep every request, planned price, acquired scope and terminal observation with source location and inclusive time/context labels",
+    "Observed metadata match requires one of each kind, same canonical binding/provider/model and lifecycle-bound terminal",
+    "Duplicates and conflicts remain visible; missing/lifecycle-unbound records do not become complete matches",
+    "Preserve frozen price basis, cost/savings bits and prompt attribution; legacy v2 costs remain unknown without current price lookup",
+    "Unknown tokenizer version explicit; UTF8 estimator never represented as actual model tokenizer",
+    "Shared record/input/diagnostic limits and buffered output cap; duplicate JSON keys rejected recursively only in provenance mode",
+    "Read-only terminal owner seam leaves existing replay/repair policy unchanged"
+  ],
+  "verification": [
+    "17 provenance cases and 3 readonly owner cases authored; static independent review only",
+    "Current exact67 acceptance remains separate from these unexecuted additions",
+    "Real authenticated writer/read snapshot/key-tamper case authored for hosted execution"
+  ],
+  "open": [
+    "Hosted formatting, typecheck, 115 exact cases and mandatory workspace Clippy",
+    "Import generated CLI reference with current producer binding",
+    "Product GUI/mobile usage surface and whole-roadmap native/release acceptance"
+  ]
+}

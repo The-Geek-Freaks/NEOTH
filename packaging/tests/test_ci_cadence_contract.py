@@ -321,6 +321,26 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(len(expected), 67)
         self.assertEqual(len(set(expected)), 67)
         self.assertEqual(selection["requiredTests"], sorted(expected))
+        reader = json.loads(
+            (ROOT / "docs/verification/gold-wave2637-acquisition-reader.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(reader["tests"]), 28)
+        expected.extend(reader["tests"])
+        selection = matrix["wave2637AcquisitionReaderRegressions"]
+        self.assertEqual(selection["requiredCount"], 95)
+        self.assertEqual(len(expected), 95)
+        self.assertEqual(len(set(expected)), 95)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
+        provenance = json.loads(
+            (ROOT / "docs/verification/gold-wave2640-provenance-reader.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(provenance["tests"]), 20)
+        expected.extend(provenance["tests"])
+        selection = matrix["wave2640ProvenanceRegressions"]
+        self.assertEqual(selection["requiredCount"], 115)
+        self.assertEqual(len(expected), 115)
+        self.assertEqual(len(set(expected)), 115)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):
