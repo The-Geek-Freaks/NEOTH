@@ -40,7 +40,7 @@
     "nativeAccepted": false,
     "localRuntimeExecuted": false,
     "focusedRuntime": "pending",
-    "cadenceContracts": "Two stale expectations in Preflight41044519770 repaired: report-derived62 to76 and exact bounded observer literal. Hosted recheck pending."
+    "cadenceContracts": "Passed in Preflight41045096717 on 7ad8191b with exact76 document selection and bounded macOS observer command"
   },
   "limits": [
     "No numbering.xml/styles.xml resolution, rendered ordinals/bullets, implicit list membership or Word layout validity claim",
@@ -64,8 +64,10 @@
     "costStep": "success",
     "documentStep": "success",
     "cliBuildExport": "success",
-    "workspaceClippy": "in_progress",
-    "rootBehaviorArtifactAdmission": "pending"
+    "workspaceClippy": "success",
+    "rootBehaviorArtifactAdmission": "accepted exact62+115, three original ZIPs,369 entries, current-attempt upload ID/digest bindings",
+    "proofSha256": "529FD84A406882374B3C51063AB16A94BF85153350897476FCD6F5065CD159A2",
+    "proof": "work/gold-20260906/wave2643-docx-clippy-repair/ROOT_COMBINED177_ADMISSION.json"
   },
   "generatedCliReference": {
     "producer": "a3e5b071abab8ed35473aa5fcfaaf7eae8048102",
@@ -73,7 +75,7 @@
     "artifact": 12971311255,
     "zipSha256": "68DB48E9CBF7137B2AB3C2746A2A81D6B2F8482D940FC30A6B3730DB654AF4EC",
     "documentSha256": "0A4509990F3CC597BEC1759320D92FC1911010624D5823F0BAE4727AA9204E19",
-    "scope": "Two public usage flag lines from exact-source hosted CLI build; full run admission pending"
+    "scope": "Two public usage flag lines from exact-source hosted CLI build; complete prior177 run and artifact admission successful"
   },
   "macosObservability": {
     "triggerRun": 41019849216,

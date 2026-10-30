@@ -19652,3 +19652,9 @@ Die macOS-Compile-Diagnose wird um ausschliesslich bereinigte Crate-Namen und Te
 Bericht: docs/verification/gold-wave2642-docx-numbering.json. Der lokale BSOD-Hold bleibt vollstaendig erhalten; Root integriert ausschliesslich auf main.
 
 W2642 Formatnachtrag: Preflight41044023117 auf c800ee54 meldete ausschliesslich Rust-Formatabweichungen. Root hat den originalen API-/ZIP-digestgebundenen Hosted-rustfmt-Patch fuer genau5 eigene Rust-Dateien uebernommen und alle5 Git-Postimages geprueft. Code Quality auf c800ee54 ist erfolgreich. Erneuter Preflight auf dem formatierten Producer und alle191 fokussierten Laufzeitfaelle bleiben offen; lokal wurde rustfmt nicht gestartet.
+
+### W2644 — Abnahme177 und Vorbereitung der Nummerierungspruefung191 (2026-10-30)
+
+Run41039038367 auf a3e5b071 ist vollstaendig erfolgreich: Dokument62 und Kosten115, Slim-Clippy, Workspace-Clippy und CLI-Build/Export. Root hat177 exakte erfolgreiche Testidentitaeten,3 Original-ZIP-Archive mit369 Eintraegen,38 Kosten- und26 Dokument-Quellbindungen sowie die Artefakt-IDs und Digests aus dem aktuellen Upload-Job verifiziert. Alle vorherigen67 Kostenfaelle bleiben enthalten. Bericht: work/gold-20260906/wave2643-docx-clippy-repair/ROOT_COMBINED177_ADMISSION.json. Diese Abnahme gilt fuer den angegebenen Producer und fuer die Abschnitts-/Provenienzarbeit; die14 neuen Nummerierungsfaelle sind davon ausdruecklich nicht abgedeckt.
+
+Der aktuelle Nummerierungsstand hat beide Schnellpruefungen bestanden: Preflight41045096717 und Code Quality41045096419 auf7ad8191b. Der naechste einzelne schwere Lauf prueft Dokument76 plusKosten115 auf dem finalen aktualisierten Main-Producer. Vollstaendige native/macOS-, Release- und Gesamt-Gold-Abnahme bleiben offen. Der historische Backlog wird nicht umgedeutet oder gekuerzt.

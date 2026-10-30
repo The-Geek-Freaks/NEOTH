@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2642_CADENCE_EXPECTATIONS_REPAIRED_HOSTED_PENDING",
+  "status": "W2644_PRIOR177_ACCEPTED_NUMBERING191_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 459816,
-    "sha256": "DFC056E67153252658BF99BF7FBB7CFF8FFD5982D692E1B513812B9607D524A1"
+    "bytes": 459810,
+    "sha256": "67C0E667A2A35F31FFAF887E61F0159CFBF1AB7A51B34EFBA0A9B6169CB68D0F"
   },
   "sourceInputs": 2510,
   "requiredNativeTests": [
@@ -89520,6 +89520,32 @@
       }
     ],
     "note": "Repair stale document62 count/report union to exact76 and retain exact macOS compile-command assertion with updated observer literal. No feature/test removed; hosted recheck pending; no local Python.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2644Prior177Acceptance": {
+    "base": "7ad8191b07318c994b6feb379076ed454f48e0ca",
+    "sources": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2723519,
+        "sha256": "09950C3D7E63A314C9FCC89D65E73BF94D4B2DCBAC9911370AD482F512672293",
+        "blob": "26259835e9fcd87011afc84819eb269ea500c8fa"
+      },
+      {
+        "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
+        "bytes": 8019,
+        "sha256": "3E1A5A01BC77E3B96EAF8E2DD9A022AEFE0C404173E0CADB47B7B11869C7A87D",
+        "blob": "67c218b3221733fa85e945439b8d58611e410999"
+      },
+      {
+        "path": "docs/verification/gold-wave2642-docx-numbering.json",
+        "bytes": 5643,
+        "sha256": "EAD477B9FC8C9010DBF512D94CC2E7437BD578394B98F44B8882D1E0B53CA3FB",
+        "blob": "ffc0a31c89561f924e3a15ac832ebcf88f622e7e"
+      }
+    ],
+    "note": "Prior a3 combined177 accepted from exact original artifacts and current-attempt upload bindings; v3 numbering still requires final-producer document76+cost115. No prior proof promoted to current/native/Gold acceptance; local runtime held.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

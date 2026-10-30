@@ -117,9 +117,12 @@ and inconsistent ranges or completeness are rejected. The existing source
 transaction and search output retain the projection with the document provenance.
 This does not change logical identity, consent, file-move or purge authority.
 
-W2641 adds seven regression cases. On producer a3e5b071, the hosted document62
-and cost115 steps, CLI build and slim Clippy have passed; full-run artifact
-admission awaits the workspace Clippy conclusion of run 41039038367.
+W2641's seven new cases are included in the accepted document62 selection.
+Run 41039038367 on producer a3e5b071 passed all 62 document and 115 cost/provenance
+cases, both Clippy gates and the CLI build. Root verified the original artifacts,
+case identities and producer source hashes. This proof covers the v2 section
+projection; the newer v3 numbering extension below still awaits its own
+document76/cost115 runtime qualification.
 
 
 ## Physical DOCX numbering properties
