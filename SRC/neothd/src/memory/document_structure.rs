@@ -26,7 +26,11 @@ pub struct DocumentStructure {
     omissions_limited: bool,
     tables: Vec<Table>,
     omissions: Vec<Omission>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "decode_section_properties")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decode_section_properties"
+    )]
     section_properties: Option<SectionProperties>,
 }
 
@@ -66,7 +70,6 @@ struct Omission {
     source_range: [u64; 2],
 }
 
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SectionProperties {
@@ -103,37 +106,61 @@ where
 
 impl SectionProperties {
     fn validate(&self, entry_bytes: u64, scan_complete: bool) -> Result<()> {
-        ensure!(self.ranges.len() <= 256 && self.omissions.len() <= 64
-            && self.omitted_observed <= 200_000, "section property limit exceeded");
-        ensure!(self.complete == (scan_complete && self.omitted_observed == 0
-            && self.omissions.is_empty() && !self.omissions_limited),
-            "inconsistent section completeness");
+        ensure!(
+            self.ranges.len() <= 256
+                && self.omissions.len() <= 64
+                && self.omitted_observed <= 200_000,
+            "section property limit exceeded"
+        );
+        ensure!(
+            self.complete
+                == (scan_complete
+                    && self.omitted_observed == 0
+                    && self.omissions.is_empty()
+                    && !self.omissions_limited),
+            "inconsistent section completeness"
+        );
         let mut previous_end = 0;
         for range in &self.ranges {
-            ensure!(matches!(range.context.as_str(), "body" | "paragraph_properties"),
-                "unsupported section property context");
+            ensure!(
+                matches!(range.context.as_str(), "body" | "paragraph_properties"),
+                "unsupported section property context"
+            );
             ordered_range(range.source_range, [0, entry_bytes], &mut previous_end)?;
         }
         let mut omissions_end = 0;
         let mut detailed_omissions = 0;
         for omission in &self.omissions {
-            ensure!(!omission.reason.is_empty() && omission.reason.len() <= 64
-                && omission.reason.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
-                "invalid section omission code");
+            ensure!(
+                !omission.reason.is_empty()
+                    && omission.reason.len() <= 64
+                    && omission
+                        .reason
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "invalid section omission code"
+            );
             if omission.reason == "metadata_limit" {
-                ensure!(omission.source_range == [0, entry_bytes] && self.ranges.is_empty(),
-                    "invalid section metadata omission");
+                ensure!(
+                    omission.source_range == [0, entry_bytes] && self.ranges.is_empty(),
+                    "invalid section metadata omission"
+                );
             } else {
                 ordered_range(omission.source_range, [0, entry_bytes], &mut omissions_end)?;
-                ensure!(self.ranges.iter().all(|range|
-                    omission.source_range[1] <= range.source_range[0]
-                    || omission.source_range[0] >= range.source_range[1]),
-                    "omitted section overlaps emitted section");
+                ensure!(
+                    self.ranges
+                        .iter()
+                        .all(|range| omission.source_range[1] <= range.source_range[0]
+                            || omission.source_range[0] >= range.source_range[1]),
+                    "omitted section overlaps emitted section"
+                );
                 detailed_omissions += 1;
             }
         }
-        ensure!(detailed_omissions <= self.omitted_observed,
-            "section omission counter understates recorded omissions");
+        ensure!(
+            detailed_omissions <= self.omitted_observed,
+            "section omission counter understates recorded omissions"
+        );
         Ok(())
     }
 }
@@ -202,9 +229,12 @@ impl DocumentStructure {
             && self.parser_version == "docx-table-section-properties/v2"
             && self.scope == "physical-table-and-section-property-source-ranges"
             && self.section_properties.is_some();
-        ensure!((v1 || v2)
-            && self.coordinate_system == "zip-entry-utf8-byte-offset/v1"
-            && self.entry == "word/document.xml", "unsupported document structure contract");
+        ensure!(
+            (v1 || v2)
+                && self.coordinate_system == "zip-entry-utf8-byte-offset/v1"
+                && self.entry == "word/document.xml",
+            "unsupported document structure contract"
+        );
         if let Some(sections) = &self.section_properties {
             sections.validate(self.entry_bytes, self.scan_complete)?;
         }
@@ -230,7 +260,13 @@ impl DocumentStructure {
             && self.omitted_tables_observed == 0
             && !self.omissions_limited;
         ensure!(
-            self.complete == (self.scan_complete && no_omissions && self.section_properties.as_ref().is_none_or(|sections| sections.complete)),
+            self.complete
+                == (self.scan_complete
+                    && no_omissions
+                    && self
+                        .section_properties
+                        .as_ref()
+                        .is_none_or(|sections| sections.complete)),
             "inconsistent document structure completeness"
         );
         ensure!(
@@ -239,7 +275,12 @@ impl DocumentStructure {
         );
         if self.entry_bytes > MAX_SCAN_BYTES {
             ensure!(
-                self.tables.is_empty() && !self.scan_complete && self.section_properties.as_ref().is_none_or(|sections| sections.ranges.is_empty()),
+                self.tables.is_empty()
+                    && !self.scan_complete
+                    && self
+                        .section_properties
+                        .as_ref()
+                        .is_none_or(|sections| sections.ranges.is_empty()),
                 "unscanned member contains projected tables"
             );
         }
@@ -324,15 +365,25 @@ impl DocumentStructure {
                             .all(|table| table.source_range[1] <= start),
                         "unscanned tail overlaps emitted table"
                     );
-                    ensure!(self.section_properties.as_ref().is_none_or(|sections|
-                        sections.ranges.iter().all(|range| range.source_range[1] <= start)),
-                        "unscanned tail overlaps emitted section");
+                    ensure!(
+                        self.section_properties
+                            .as_ref()
+                            .is_none_or(|sections| sections
+                                .ranges
+                                .iter()
+                                .all(|range| range.source_range[1] <= start)),
+                        "unscanned tail overlaps emitted section"
+                    );
                 }
                 "entry" => ensure!(
                     omission.reason == "metadata_limit"
                         && start == 0
                         && end == self.entry_bytes
-                        && self.tables.is_empty() && self.section_properties.as_ref().is_none_or(|sections| sections.ranges.is_empty()),
+                        && self.tables.is_empty()
+                        && self
+                            .section_properties
+                            .as_ref()
+                            .is_none_or(|sections| sections.ranges.is_empty()),
                     "invalid complete-entry omission"
                 ),
                 _ => anyhow::bail!("unsupported document structure omission scope"),
@@ -565,10 +616,18 @@ mod tests {
         for value in [test_structure_value(&"a".repeat(64), 123), v2_structure()] {
             let structure = DocumentStructure::from_value(&value).unwrap();
             assert_eq!(serde_json::to_value(&structure).unwrap(), value);
-            assert_eq!(DocumentStructure::from_json_bytes(structure.to_json().unwrap().as_bytes()).unwrap(), structure);
+            assert_eq!(
+                DocumentStructure::from_json_bytes(structure.to_json().unwrap().as_bytes())
+                    .unwrap(),
+                structure
+            );
         }
         for version in [1, 2] {
-            let mut value = if version == 1 { test_structure_value(&"a".repeat(64), 123) } else { v2_structure() };
+            let mut value = if version == 1 {
+                test_structure_value(&"a".repeat(64), 123)
+            } else {
+                v2_structure()
+            };
             value["section_properties"] = serde_json::Value::Null;
             assert!(DocumentStructure::from_value(&value).is_err());
         }
@@ -586,9 +645,18 @@ mod tests {
             ("/parser_version", serde_json::json!("docx-table-ranges/v1")),
             ("/section_properties/complete", serde_json::json!(false)),
             ("/section_properties/omitted_observed", serde_json::json!(1)),
-            ("/section_properties/ranges/0/context", serde_json::json!("rendered_page")),
-            ("/section_properties/ranges/0/source_range", serde_json::json!([91, 101])),
-            ("/section_properties/ranges/0/source_range", serde_json::json!([99, 91])),
+            (
+                "/section_properties/ranges/0/context",
+                serde_json::json!("rendered_page"),
+            ),
+            (
+                "/section_properties/ranges/0/source_range",
+                serde_json::json!([91, 101]),
+            ),
+            (
+                "/section_properties/ranges/0/source_range",
+                serde_json::json!([99, 91]),
+            ),
         ] {
             let mut value = v2_structure();
             *value.pointer_mut(pointer).unwrap() = replacement;
@@ -609,5 +677,4 @@ mod tests {
         ]);
         assert!(DocumentStructure::from_value(&value).is_err());
     }
-
 }

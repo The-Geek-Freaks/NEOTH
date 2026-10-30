@@ -1,6 +1,6 @@
 //! Physical section-property containers; no rendered section or page model.
-use serde::Serialize;
 use super::Frame;
+use serde::Serialize;
 
 const MAX_RANGES: usize = 256;
 const MAX_OMISSIONS: usize = 64;
@@ -59,20 +59,19 @@ impl Sections {
                 self.reject("nested_section_properties");
                 return;
             }
-            let body = stack.len() == 3
-                && stack[0].is(b"document") && stack[1].is(b"body");
+            let body = stack.len() == 3 && stack[0].is(b"document") && stack[1].is(b"body");
             let paragraph = stack.len() == 5
-                && stack[0].is(b"document") && stack[1].is(b"body")
-                && stack[2].is(b"p") && stack[3].is(b"pPr");
+                && stack[0].is(b"document")
+                && stack[1].is(b"body")
+                && stack[2].is(b"p")
+                && stack[3].is(b"pPr");
             self.building = Some(Building {
                 depth: stack.len(),
                 context: if body { "body" } else { "paragraph_properties" },
                 start,
                 reason: (!(body || paragraph)).then_some("unsupported_section_context"),
             });
-        } else if self.building.is_some()
-            && (!frame.word || frame.is(b"sectPrChange"))
-        {
+        } else if self.building.is_some() && (!frame.word || frame.is(b"sectPrChange")) {
             self.reject("unsupported_section_semantics");
         }
     }
@@ -86,7 +85,10 @@ impl Sections {
     fn omit(&mut self, reason: &'static str, range: [usize; 2], count: usize) {
         self.out.omitted_observed += count;
         if self.out.omissions.len() < MAX_OMISSIONS {
-            self.out.omissions.push(Omission { reason, source_range: range });
+            self.out.omissions.push(Omission {
+                reason,
+                source_range: range,
+            });
         } else {
             self.out.omissions_limited = true;
         }
@@ -97,20 +99,27 @@ impl Sections {
             return;
         }
         let building = self.building.take().expect("matching section depth");
-        let reason = building.reason.or_else(|| {
-            (self.out.ranges.len() >= MAX_RANGES).then_some("section_range_limit")
-        });
+        let reason = building
+            .reason
+            .or_else(|| (self.out.ranges.len() >= MAX_RANGES).then_some("section_range_limit"));
         let range = [building.start, end];
         if let Some(reason) = reason {
             self.omit(reason, range, 1);
         } else {
-            self.out.ranges.push(Range { context: building.context, source_range: range });
+            self.out.ranges.push(Range {
+                context: building.context,
+                source_range: range,
+            });
         }
     }
 
     pub(super) fn finish(mut self, scan_complete: bool, entry_bytes: usize) -> Projection {
         if let Some(building) = self.building.take() {
-            self.omit("incomplete_section_properties", [building.start, entry_bytes], 1);
+            self.omit(
+                "incomplete_section_properties",
+                [building.start, entry_bytes],
+                1,
+            );
         }
         self.out.complete = scan_complete && self.out.omitted_observed == 0;
         self.out

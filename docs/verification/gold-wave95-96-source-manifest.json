@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T08:33:31.5871382Z",
-  "validationStatus": "W2641_SOURCE_INTEGRATED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-30T08:38:52.4880915Z",
+  "validationStatus": "W2641_FORMATTED_HOSTED_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -8718,13 +8718,13 @@
     },
     {
       "path": "SRC/neothd/src/media/docx_sections.rs",
-      "bytes": 4128,
-      "sha256": "348615664D278DEE8FAE6723D1E3193A6DD9C09E627EE55F49E798BB563D92D8"
+      "bytes": 4279,
+      "sha256": "04E1C71759CD8E2FC849779E29732F3DDA8A6CF45092B4AE8840C255FA2D13F5"
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "bytes": 41089,
-      "sha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1"
+      "bytes": 41887,
+      "sha256": "32382ED62B98EE67F403B8BDCE22E15D6BAF7593BD6619DA136F38A921B8D24D"
     },
     {
       "path": "SRC/neothd/src/media/frame_decoder.rs",
@@ -8843,8 +8843,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "bytes": 67697,
-      "sha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A"
+      "bytes": 67754,
+      "sha256": "B6D5FF6BFD59627BA5821414E628088C77214B0CA1EDD662610F48FC8470627B"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical_request.rs",
@@ -8878,8 +8878,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
-      "bytes": 26541,
-      "sha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0"
+      "bytes": 27846,
+      "sha256": "D87DC0137425815CCD088297E3895C6CBCFAF400F534F28A3A38CFB8C880E6B7"
     },
     {
       "path": "SRC/neothd/src/memory/drift.rs",

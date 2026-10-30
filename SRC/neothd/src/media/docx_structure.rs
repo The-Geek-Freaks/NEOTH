@@ -952,7 +952,9 @@ mod tests {
     fn docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections() {
         let intermediate = "<w:sectPr><w:pgSz w:w=\"100\"/></w:sectPr>";
         let final_props = "<w:sectPr/>";
-        let body = format!("<w:p><w:pPr>{intermediate}</w:pPr><w:r><w:t>Grüße</w:t></w:r></w:p>{final_props}");
+        let body = format!(
+            "<w:p><w:pPr>{intermediate}</w:pPr><w:r><w:t>Grüße</w:t></w:r></w:p>{final_props}"
+        );
         for prefix in ["", "\u{feff}"] {
             let xml = format!("{prefix}{}", wrap(&body));
             let out = view(&xml);
@@ -970,7 +972,12 @@ mod tests {
         }
         let out = view(&wrap(&paragraph("plain")));
         assert_eq!(out["section_properties"]["complete"], true);
-        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
+        assert!(
+            out["section_properties"]["ranges"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -990,7 +997,10 @@ mod tests {
             assert_eq!(out["complete"], false, "{invalid}");
             assert_eq!(sections["omitted_observed"], 1, "{invalid}");
             assert_eq!(sections["ranges"].as_array().unwrap().len(), 1);
-            assert_eq!(slice(&xml, &sections["ranges"][0]["source_range"]), "<w:sectPr/>");
+            assert_eq!(
+                slice(&xml, &sections["ranges"][0]["source_range"]),
+                "<w:sectPr/>"
+            );
             crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
         }
     }
@@ -999,42 +1009,91 @@ mod tests {
     fn docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container() {
         let xml = wrap(&"<w:sectPr/>".repeat(257));
         let out = view(&xml);
-        assert_eq!(out["section_properties"]["ranges"].as_array().unwrap().len(), 256);
+        assert_eq!(
+            out["section_properties"]["ranges"]
+                .as_array()
+                .unwrap()
+                .len(),
+            256
+        );
         assert_eq!(out["section_properties"]["omitted_observed"], 1);
         assert_eq!(out["complete"], false);
         let xml = wrap(&"<w:p><w:sectPr/></w:p>".repeat(65));
         let out = view(&xml);
-        assert_eq!(out["section_properties"]["omissions"].as_array().unwrap().len(), 64);
+        assert_eq!(
+            out["section_properties"]["omissions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            64
+        );
         assert_eq!(out["section_properties"]["omitted_observed"], 65);
         assert_eq!(out["section_properties"]["omissions_limited"], true);
-        let xml = format!("<w:document xmlns:w=\"{}\"><w:body><w:sectPr>", std::str::from_utf8(WORD).unwrap());
+        let xml = format!(
+            "<w:document xmlns:w=\"{}\"><w:body><w:sectPr>",
+            std::str::from_utf8(WORD).unwrap()
+        );
         let out = view(&xml);
         assert_eq!(out["scan_complete"], false);
         assert_eq!(out["section_properties"]["complete"], false);
         assert_eq!(out["section_properties"]["omitted_observed"], 1);
-        assert_eq!(out["section_properties"]["omissions"][0]["source_range"][1], xml.len());
-        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
+        assert_eq!(
+            out["section_properties"]["omissions"][0]["source_range"][1],
+            xml.len()
+        );
+        assert!(
+            out["section_properties"]["ranges"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
     }
 
     #[test]
     fn docx_sections_share_the_actual_serialized_metadata_limit_with_tables() {
         let xml = wrap(&"<w:sectPr/>".repeat(100));
-        let out = project_with_limits(&xml, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        let out = project_with_limits(
+            &xml,
+            SOURCE,
+            123,
+            Limits {
+                metadata_bytes: 1_024,
+                ..LIMITS
+            },
+        );
         assert_eq!(out["scan_complete"], true);
         assert_eq!(out["complete"], false);
         assert_eq!(out["section_properties"]["complete"], false);
         assert_eq!(out["section_properties"]["omitted_observed"], 100);
-        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
-        assert_eq!(out["section_properties"]["omissions"][0]["reason"], "metadata_limit");
+        assert!(
+            out["section_properties"]["ranges"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            out["section_properties"]["omissions"][0]["reason"],
+            "metadata_limit"
+        );
         let table_only = wrap(&table(&paragraph("x").repeat(100)));
-        let table_out = project_with_limits(&table_only, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        let table_out = project_with_limits(
+            &table_only,
+            SOURCE,
+            123,
+            Limits {
+                metadata_bytes: 1_024,
+                ..LIMITS
+            },
+        );
         assert_eq!(table_out["complete"], false);
         assert_eq!(table_out["section_properties"]["omitted_observed"], 0);
-        assert_eq!(table_out["section_properties"]["omissions"][0]["reason"], "metadata_limit");
+        assert_eq!(
+            table_out["section_properties"]["omissions"][0]["reason"],
+            "metadata_limit"
+        );
         crate::memory::document_structure::DocumentStructure::from_value(&table_out).unwrap();
         assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
         crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
     }
-
 }

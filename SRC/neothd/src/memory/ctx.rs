@@ -1712,7 +1712,8 @@ mod tests {
             "complete": true, "omitted_observed": 0, "omissions_limited": false,
             "ranges": [{"context": "body", "source_range": [91, 99]}], "omissions": []
         });
-        provenance.structure = Some(super::super::document_structure::DocumentStructure::from_value(&value).unwrap());
+        provenance.structure =
+            Some(super::super::document_structure::DocumentStructure::from_value(&value).unwrap());
         index_document(&mut conn, &request).unwrap();
         conn.execute_batch("CREATE TRIGGER reject_section_replacement AFTER INSERT ON sources BEGIN SELECT RAISE(ABORT, 'section replacement rejected'); END;").unwrap();
         let replacement = structured_document("replacement only", "doc");
@@ -1722,9 +1723,11 @@ mod tests {
         for query in ["test", "arba", "kubernates"] {
             let hits = search(&conn, query, 10).unwrap();
             assert_eq!(hits.len(), 1);
-            assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+            assert_eq!(
+                hits[0].source_document_provenance,
+                request.document_provenance
+            );
         }
         assert!(search(&conn, "replacement", 10).unwrap().is_empty());
     }
-
 }
