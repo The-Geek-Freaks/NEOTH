@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2647_GC_V51_NATIVE_PENDING",
+  "status": "W2647_HOSTED_FORMAT_APPLIED_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 460733,
-    "sha256": "1C38A4AFF390216E177C10F148A914B44C0AAB35957A5035E8FA17CD77590B6E"
+    "bytes": 460748,
+    "sha256": "B27206143F89B039EF24F181CC14B5AC75CA80377FDC9E0397BBF55AAE4246C7"
   },
   "sourceInputs": 2515,
   "requiredNativeTests": [
@@ -19027,49 +19027,49 @@
     {
       "test": "memory::gc::tests::ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::size_cap_skips_oldest_managed_source_and_reports_actual_removals",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::corrupt_vocabulary_rolls_back_both_gc_paths",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::both_gc_paths_protect_current_and_event_references_without_source_markers",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::gc::tests::ignored_source_delete_rolls_back_entire_gc_batch",
       "sourcePath": "SRC/neothd/src/memory/gc.rs",
-      "sourceSha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1",
+      "sourceSha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
       "junitClass": "neoth"
     }
   ],
@@ -90227,6 +90227,20 @@
       }
     ],
     "note": "GC preserves logical ownership/references, subtracts canonical vocabulary transactionally, requires one deleted source row, and migrates50to51 to repair historical vocabulary drift. Eight new cases; prior200 retained. Final-producer native qualification must prove208 named cases plus migration chains. Local hold preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2647HostedFormat": {
+    "base": "59389fe749aaf7279e5ca3752eb747d2cff7d1b2",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/memory/gc.rs",
+        "bytes": 34117,
+        "sha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD",
+        "blob": "7519a58a4bfea8cb63949a2786bbabb656affae0"
+      }
+    ],
+    "note": "Exact original hosted rustfmt patch admitted for memory/gc.rs with full-index pre/postimage bindings. Counts unchanged: 3174 portable; final native qualification must prove prior200 plus eight GC cases. Ancestor200 is cases-only evidence with one failed workspace-Clippy lint now repaired. No local formatter/runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

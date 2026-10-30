@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T14:37:38.2275315Z",
-  "validationStatus": "W2647_GC_V51_NATIVE_PENDING",
+  "capturedUtc": "2026-10-30T14:41:21.6943557Z",
+  "validationStatus": "W2647_HOSTED_FORMAT_APPLIED_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -8933,8 +8933,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/gc.rs",
-      "bytes": 33660,
-      "sha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1"
+      "bytes": 34117,
+      "sha256": "04793FFE00E23680090CADA68EC471718179C3050EE6FD60C521F879EF125BAD"
     },
     {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
