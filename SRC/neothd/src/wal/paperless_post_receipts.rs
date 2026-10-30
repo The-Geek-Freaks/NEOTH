@@ -13,6 +13,22 @@ use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 pub(crate) const PAPERLESS_POST_INTENT_SCHEMA_VERSION: u8 = 1;
 pub(crate) const MAX_OPEN_PAPERLESS_INTENTS: usize = 128;
 
+/// Shared mailbox-unit identity. Preserve the v1 bytes for existing WAL claims.
+#[cfg(any(test, feature = "imap_fetch"))]
+pub(crate) fn mail_unit_sha256(host: &str, port: u16, username: &str, mail_key: &str) -> String {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    digest_parts(
+        b"neoth.paperless.mail-unit.v1\0",
+        &[
+            host.as_bytes(),
+            &port.to_le_bytes(),
+            username.as_bytes(),
+            b"INBOX",
+            mail_key.as_bytes(),
+        ],
+    )
+}
+
 fn digest_parts(domain: &[u8], parts: &[&[u8]]) -> String {
     let mut hash = Sha256::new();
     hash.update(domain);
@@ -55,19 +71,9 @@ impl PaperlessPostIntentDescriptor {
         title: &str,
         destination: &str,
     ) -> Self {
-        let host = host.trim_end_matches('.').to_ascii_lowercase();
         Self {
             schema_version: PAPERLESS_POST_INTENT_SCHEMA_VERSION,
-            unit_sha256: digest_parts(
-                b"neoth.paperless.mail-unit.v1\0",
-                &[
-                    host.as_bytes(),
-                    &port.to_le_bytes(),
-                    username.as_bytes(),
-                    b"INBOX",
-                    mail_key.as_bytes(),
-                ],
-            ),
+            unit_sha256: mail_unit_sha256(host, port, username, mail_key),
             body_sha256: hex::encode(Sha256::digest(body.as_bytes())),
             title_sha256: digest_parts(b"neoth.paperless.title.v1\0", &[title.as_bytes()]),
             destination_sha256: digest_parts(

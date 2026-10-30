@@ -1,0 +1,56 @@
+{
+  "schema": "neoth.wave2653.email-vault.v1",
+  "base": "a16deaeda30d0de47b40646cd71d17efbe5d4132",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "cause": "Legacy cron note names replace punctuation, truncate80characters and collide under case-insensitive filesystems; retries also overwrite edited notes",
+  "tests": [
+    "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
+    "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
+    "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
+    "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
+    "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
+    "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
+    "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
+    "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
+    "paperless::tests::sync_overwrites_stale_existing_file"
+  ],
+  "newTests": 8,
+  "existingReplacementContractAdded": 1,
+  "priorPaperlessCasesRetained": 26,
+  "focusedRequired": 35,
+  "portableRegistered": 3210,
+  "behavior": [
+    "Use unchanged existing WAL mailbox-unit SHA256 with full email- prefix for cron notes",
+    "Deterministic input-bound rendition; durable create-new; exact bounded read plus file/parent sync for retry",
+    "Partial or edited notes conflict; old lossy filenames are neither adopted nor duplicated",
+    "Conflicted local sink prevents this invocation from reaching Paperless or marking the unit processed",
+    "Generic OCR replacement remains unchanged; no new queue, WAL subtype or accounting owner"
+  ],
+  "review": {
+    "agent": "/root/readonly_usage_review",
+    "mode": "Prompt-only supplied source",
+    "runtimeExecuted": false,
+    "result": "No concrete blocker apparent; retry sync concern addressed"
+  },
+  "remaining": [
+    "Shared legacy seen ledger lacks account and UIDVALIDITY scope; no automatic migration or replay",
+    "Changed destination or rendition recovery needs its existing approval and ownership boundaries",
+    "Crash-created partial notes require explicit recovery; no automatic overwrite",
+    "Current producer hosted and platform qualification remain pending"
+  ],
+  "validation": {
+    "goldAccepted": false,
+    "hostedRuntimeAccepted": false,
+    "wholeA04Accepted": false,
+    "localRuntimeExecuted": false
+  },
+  "nativePredecessor": {
+    "run": 41074447282,
+    "currentSourceCovered": false,
+    "producer": "6d7a83a1d05728edfb8a75e59036f062b1cf5fe6",
+    "windows": "success",
+    "macos": "in_progress",
+    "linux": "success"
+  }
+}

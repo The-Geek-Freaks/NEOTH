@@ -1,6 +1,6 @@
 {
   "schema": "neoth.email-paperless-recovery.v1",
-  "status": "W2575 retains all25 cases and adds1 realHTTP/WAL no-POST outcome distinction;26cases source-bound; fresh hosted execution pending",
+  "status": "W2653 preserves all26 prior cases; adds8 email Vault regressions and1 existing OCR replacement contract;35cases source-bound, hosted pending",
   "feature": "imap_fetch",
   "requiredTests": [
     {
@@ -69,35 +69,35 @@
     {
       "test": "wal::paperless_post_receipts::tests::paperless_descriptor_separates_unit_identity_from_request_drift_and_private_text",
       "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
-      "sourceSha256": "41AF3AD21D7571DF65D2260B0700314E2919B674C7DC3B7967D4F0FBFBB33AB7",
+      "sourceSha256": "F9561C07A7D0F8F7E31A3B9696776B03AD748958D865638FEE96934A08B465A7",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::paperless_post_receipts::tests::paperless_descriptor_rejects_noncanonical_or_unknown_schema",
       "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
-      "sourceSha256": "41AF3AD21D7571DF65D2260B0700314E2919B674C7DC3B7967D4F0FBFBB33AB7",
+      "sourceSha256": "F9561C07A7D0F8F7E31A3B9696776B03AD748958D865638FEE96934A08B465A7",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::paperless_post_receipts::tests::paperless_completion_cannot_release_capacity_for_a_different_open_binding",
       "sourcePath": "SRC/neothd/src/wal/paperless_post_receipts.rs",
-      "sourceSha256": "41AF3AD21D7571DF65D2260B0700314E2919B674C7DC3B7967D4F0FBFBB33AB7",
+      "sourceSha256": "F9561C07A7D0F8F7E31A3B9696776B03AD748958D865638FEE96934A08B465A7",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "B88166467A7204CA64D72CBC7AAA5500005F73615C0943159655DE5EAC6C6E7A",
+      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "B88166467A7204CA64D72CBC7AAA5500005F73615C0943159655DE5EAC6C6E7A",
+      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -174,7 +174,7 @@
     {
       "test": "wal::events::tests::extended_event_escape_hatch_registered",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "C1749314E1F25E1112C8D314BDBB65D2456AAD5998C4339C52885BF85F8D009C",
+      "sourceSha256": "98F8662B0953FF3FD6A66F2D0C28DC0B3AD52CCA8F13CD2D5ED706CD8CD07B14",
       "newCase": false,
       "requiresImapFeature": false
     },
@@ -184,17 +184,84 @@
       "sourceSha256": "3D9F39BC4FD3DD3C8C8F1C6FCF98AAFF045CEE09AB03DDAF408D6DFE81C5003A",
       "newCase": true,
       "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::tests::sync_overwrites_stale_existing_file",
+      "sourcePath": "SRC/neothd/src/paperless/mod.rs",
+      "sourceSha256": "2CAA3D1E5295C62C532A8EB504DC8D613B1D16B00B7BBA44245E3B51F76A168E",
+      "newCase": false,
+      "requiresImapFeature": false
     }
   ],
   "sourcePaths": [
-    "SRC/neothd/src/wal/writer.rs",
+    "SRC/neothd/src/cli/serve.rs",
+    "SRC/neothd/src/daemon/email_ingest_cron.rs",
+    "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+    "SRC/neothd/src/email/imap_fetch.rs",
+    "SRC/neothd/src/paperless/email_note.rs",
+    "SRC/neothd/src/paperless/email_note/tests.rs",
+    "SRC/neothd/src/paperless/mod.rs",
+    "SRC/neothd/src/util/atomic_write.rs",
     "SRC/neothd/src/wal/events.rs",
     "SRC/neothd/src/wal/mod.rs",
-    "SRC/neothd/src/daemon/email_ingest_cron.rs",
-    "SRC/neothd/src/cli/serve.rs",
-    "SRC/neothd/src/email/imap_fetch.rs",
     "SRC/neothd/src/wal/paperless_post_receipts.rs",
-    "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs"
+    "SRC/neothd/src/wal/writer.rs"
   ],
   "upstream": {
     "commit": "7575d6078227ebdb4cf443f263d53ebc7575aa37",

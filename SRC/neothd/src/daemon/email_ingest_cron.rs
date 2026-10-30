@@ -25,11 +25,11 @@
 //!    The document never reaches Paperless NGX or Obsidian until the operator
 //!    releases it via `neoth paperless quarantine show/list`.
 //!
-//! 5. **Obsidian note** — `paperless::sync_ocr_to_obsidian` writes a markdown
-//!    note to `<vault>/<subdir>/Paperless/<uid>.md` via the existing atomic-write
-//!    helper. Requires `obsidian_vault` in `freedom.yaml`. This idempotent local
-//!    sink runs before the external upload so a failed vault write cannot cause
-//!    duplicate Paperless documents on the retry.
+//! 5. **Obsidian note** — the cron-only writer uses an account-bound full unit
+//!    digest under `<vault>/<subdir>/Paperless/email-<digest>.md`. It creates
+//!    without replacement and recognizes only exact synced rendition bytes.
+//!    Conflicting or legacy notes remain pending and are never overwritten or
+//!    silently duplicated. This local gate runs before the external upload.
 //!
 //! 6. **Paperless NGX upload** — clean documents POST to
 //!    `<paperless_url>/api/documents/post_document/` using the `paperless_token`
@@ -314,6 +314,21 @@ fn paperless_mail_key(
     Ok(format!("uidvalidity:{uid_validity}:uid:{}", email.uid))
 }
 
+#[cfg(any(test, feature = "imap_fetch"))]
+fn mail_vault_doc_id(
+    host: &str,
+    port: u16,
+    username: &str,
+    email: &crate::email::inbound::InboundEmail,
+    uid_validity: u32,
+) -> Result<String> {
+    let mail_key = paperless_mail_key(email, uid_validity)?;
+    let unit = crate::wal::paperless_post_receipts::mail_unit_sha256(
+        host, port, username, &mail_key,
+    );
+    Ok(format!("email-{unit}"))
+}
+
 #[cfg(feature = "imap_fetch")]
 pub async fn run_email_ingest_tick(
     neoth_home: &Path,
@@ -429,6 +444,8 @@ pub async fn run_email_ingest_tick(
     let mut paperless_admission_blocked = 0usize;
     let mut paperless_unknown = 0usize;
     let mut vault_written = 0usize;
+    let mut vault_already_present = 0usize;
+    let mut vault_conflicts = 0usize;
 
     for email in &emails {
         let uid = email.dedup_key();
@@ -517,21 +534,42 @@ pub async fn run_email_ingest_tick(
         let has_configured_sink = vault.is_some() || paperless_creds.is_some();
         let mut all_configured_sinks_succeeded = true;
 
-        // 5. Obsidian note via existing ingest path (SC-16 sanitizer + vault
+        // 5. Obsidian note via existing ingest gate (SC-16 sanitizer + vault
         // write). This local, idempotent sink runs before Paperless so a local
         // failure cannot be followed by a successful non-idempotent upload.
         if let Some(ref vault_path) = vault {
-            let doc_id = sanitize_doc_id(uid);
+            let legacy_doc_id = sanitize_doc_id(uid);
+            let doc_id = mail_vault_doc_id(
+                &imap_cfg.host,
+                imap_cfg.port,
+                &username,
+                email,
+                uid_validity,
+            )?;
             match ingest_ocr_text(clean_body, OcrSource::TesseractDirect, &doc_id) {
                 Ok(payload) => {
-                    match crate::paperless::sync_ocr_to_obsidian(&payload, vault_path, &subdir) {
-                        Ok(outcome) => {
-                            info!(
-                                email_key_len,
-                                bytes = outcome.bytes_written,
-                                "email_ingest_cron: vault note written"
-                            );
+                    use crate::paperless::email_note::EmailNoteOutcome;
+                    match crate::paperless::email_note::sync_email_to_obsidian(
+                        &payload,
+                        clean_body,
+                        &legacy_doc_id,
+                        vault_path,
+                        &subdir,
+                    ) {
+                        Ok(EmailNoteOutcome::Created) => {
+                            info!(email_key_len, "email_ingest_cron: vault note created");
                             vault_written += 1;
+                        }
+                        Ok(EmailNoteOutcome::AlreadyPresent) => {
+                            vault_already_present += 1;
+                        }
+                        Ok(EmailNoteOutcome::Conflict | EmailNoteOutcome::LegacyAmbiguous) => {
+                            warn!(
+                                email_key_len,
+                                "email_ingest_cron: vault identity or rendition conflict; existing note preserved"
+                            );
+                            vault_conflicts += 1;
+                            all_configured_sinks_succeeded = false;
                         }
                         Err(_) => {
                             warn!(email_key_len, "email_ingest_cron: vault write failed");
@@ -652,6 +690,8 @@ pub async fn run_email_ingest_tick(
         paperless_admission_blocked,
         paperless_unknown,
         vault_written,
+        vault_already_present,
+        vault_conflicts,
         "email_ingest_cron: tick complete"
     );
 
@@ -673,7 +713,7 @@ pub async fn run_email_ingest_tick(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Convert a Message-ID / IMAP UID into a filesystem-safe `doc_id`.
+/// Recover the legacy lossy filename only to detect ambiguous existing notes.
 ///
 /// Keeps alphanumeric + hyphen + underscore + dot + @; replaces everything
 /// else with `_`; truncates to 80 chars.
@@ -739,6 +779,95 @@ fn mark_processed_email(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vault_identity_email(uid: &str, message_id: Option<&str>) -> crate::email::inbound::InboundEmail {
+        crate::email::inbound::InboundEmail {
+            uid: uid.into(),
+            from: "sender@example.com".into(),
+            from_domain: Some("example.com".into()),
+            subject: "Invoice".into(),
+            body: "Invoice body".into(),
+            attachment_filenames: vec![],
+            message_id: message_id.map(str::to_owned),
+            auth_results: None,
+        }
+    }
+
+    #[test]
+    fn mail_vault_identity_keeps_account_epoch_and_historical_wal_binding() {
+        let email = vault_identity_email("7", Some("<stable@example.com>"));
+        let id = mail_vault_doc_id("IMAP.Example.com.", 993, "alice", &email, 11).unwrap();
+        assert_eq!(
+            id,
+            "email-451bfa88664044070f2bb0e6bcd9bac1d0a696187dfb8e0148cbf686e5a2fba6"
+        );
+        let moved = vault_identity_email("99", Some("<stable@example.com>"));
+        assert_eq!(
+            id,
+            mail_vault_doc_id("imap.example.com", 993, "alice", &moved, 12).unwrap()
+        );
+        for (host, port, user) in [
+            ("other.example.com", 993, "alice"),
+            ("imap.example.com", 994, "alice"),
+            ("imap.example.com", 993, "bob"),
+        ] {
+            assert_ne!(id, mail_vault_doc_id(host, port, user, &email, 11).unwrap());
+        }
+        let descriptor = crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
+            "imap.example.com", 993, "alice", "message-id:<stable@example.com>",
+            "body", "title", "http://paperless.invalid/api/documents/post_document/",
+        );
+        assert_eq!(id, format!("email-{}", descriptor.unit_sha256));
+        let no_message_id = vault_identity_email("7", None);
+        assert_ne!(
+            mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 11).unwrap(),
+            mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 12).unwrap()
+        );
+        assert!(mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 0).is_err());
+        let empty_message_id = vault_identity_email("7", Some(""));
+        assert_eq!(
+            mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 11).unwrap(),
+            mail_vault_doc_id("imap.example.com", 993, "alice", &empty_message_id, 11).unwrap()
+        );
+        assert_ne!(
+            mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 11).unwrap(),
+            mail_vault_doc_id("imap.example.com", 993, "alice", &vault_identity_email("7", Some("7")), 11).unwrap()
+        );
+    }
+
+    #[test]
+    fn mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding() {
+        let pairs = [
+            ("<invoice:a@example.com>".to_owned(), "<invoice/a@example.com>".to_owned()),
+            (format!("{}a", "x".repeat(80)), format!("{}b", "x".repeat(80))),
+            ("<Invoice@example.com>".to_owned(), "<invoice@example.com>".to_owned()),
+        ];
+        for (left, right) in pairs {
+            assert_eq!(
+                sanitize_doc_id(&left).to_ascii_lowercase(),
+                sanitize_doc_id(&right).to_ascii_lowercase()
+            );
+            let vault = tempfile::tempdir().unwrap();
+            let mut ids = Vec::new();
+            for (ordinal, message_id) in [&left, &right].into_iter().enumerate() {
+                let email = vault_identity_email(&ordinal.to_string(), Some(message_id));
+                let id = mail_vault_doc_id("imap.example.com", 993, "alice", &email, 11).unwrap();
+                let body = format!("Invoice number {ordinal}");
+                let payload = ingest_ocr_text(&body, OcrSource::TesseractDirect, &id).unwrap();
+                assert_eq!(
+                    crate::paperless::email_note::sync_email_to_obsidian(
+                        &payload, &body, &sanitize_doc_id(message_id), vault.path(), "mail",
+                    ).unwrap(),
+                    crate::paperless::email_note::EmailNoteOutcome::Created
+                );
+                let note = vault.path().join("mail").join("Paperless").join(format!("{id}.md"));
+                assert!(std::fs::read_to_string(note).unwrap().contains(&body));
+                ids.push(id);
+            }
+            assert_ne!(ids[0].to_ascii_lowercase(), ids[1].to_ascii_lowercase());
+            assert_eq!(std::fs::read_dir(vault.path().join("mail").join("Paperless")).unwrap().count(), 2);
+        }
+    }
 
     #[test]
     fn paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback() {
