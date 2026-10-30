@@ -22,7 +22,10 @@ pub(crate) enum EmailNoteOutcome {
 }
 
 fn invalid_path() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, "invalid email note identity or path")
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "invalid email note identity or path",
+    )
 }
 
 fn is_link(metadata: &fs::Metadata) -> bool {
@@ -42,7 +45,10 @@ fn is_link(metadata: &fs::Metadata) -> bool {
 
 fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<PathBuf> {
     let relative = Path::new(subdir);
-    if relative.components().any(|part| !matches!(part, Component::Normal(_))) {
+    if relative
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
         return Err(invalid_path());
     }
     // Resolve the configured root once; descendants must be ordinary directories.
@@ -50,7 +56,10 @@ fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<PathBuf> {
     if !directory.is_dir() {
         return Err(invalid_path());
     }
-    for part in relative.components().chain(Path::new("Paperless").components()) {
+    for part in relative
+        .components()
+        .chain(Path::new("Paperless").components())
+    {
         directory.push(part.as_os_str());
         match fs::create_dir(&directory) {
             Ok(()) => {}
@@ -145,10 +154,15 @@ pub(crate) fn sync_email_to_obsidian(
     vault_root: &Path,
     subdir: &str,
 ) -> io::Result<EmailNoteOutcome> {
-    let valid_unit = payload.document_id.strip_prefix("email-").is_some_and(|digest| {
-        digest.len() == 64
-            && digest.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    });
+    let valid_unit = payload
+        .document_id
+        .strip_prefix("email-")
+        .is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        });
     if !valid_unit || !super::is_safe_doc_id(legacy_doc_id) {
         return Err(invalid_path());
     }

@@ -323,9 +323,8 @@ fn mail_vault_doc_id(
     uid_validity: u32,
 ) -> Result<String> {
     let mail_key = paperless_mail_key(email, uid_validity)?;
-    let unit = crate::wal::paperless_post_receipts::mail_unit_sha256(
-        host, port, username, &mail_key,
-    );
+    let unit =
+        crate::wal::paperless_post_receipts::mail_unit_sha256(host, port, username, &mail_key);
     Ok(format!("email-{unit}"))
 }
 
@@ -780,7 +779,10 @@ fn mark_processed_email(
 mod tests {
     use super::*;
 
-    fn vault_identity_email(uid: &str, message_id: Option<&str>) -> crate::email::inbound::InboundEmail {
+    fn vault_identity_email(
+        uid: &str,
+        message_id: Option<&str>,
+    ) -> crate::email::inbound::InboundEmail {
         crate::email::inbound::InboundEmail {
             uid: uid.into(),
             from: "sender@example.com".into(),
@@ -813,10 +815,16 @@ mod tests {
         ] {
             assert_ne!(id, mail_vault_doc_id(host, port, user, &email, 11).unwrap());
         }
-        let descriptor = crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
-            "imap.example.com", 993, "alice", "message-id:<stable@example.com>",
-            "body", "title", "http://paperless.invalid/api/documents/post_document/",
-        );
+        let descriptor =
+            crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor::from_mail(
+                "imap.example.com",
+                993,
+                "alice",
+                "message-id:<stable@example.com>",
+                "body",
+                "title",
+                "http://paperless.invalid/api/documents/post_document/",
+            );
         assert_eq!(id, format!("email-{}", descriptor.unit_sha256));
         let no_message_id = vault_identity_email("7", None);
         assert_ne!(
@@ -831,16 +839,32 @@ mod tests {
         );
         assert_ne!(
             mail_vault_doc_id("imap.example.com", 993, "alice", &no_message_id, 11).unwrap(),
-            mail_vault_doc_id("imap.example.com", 993, "alice", &vault_identity_email("7", Some("7")), 11).unwrap()
+            mail_vault_doc_id(
+                "imap.example.com",
+                993,
+                "alice",
+                &vault_identity_email("7", Some("7")),
+                11
+            )
+            .unwrap()
         );
     }
 
     #[test]
     fn mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding() {
         let pairs = [
-            ("<invoice:a@example.com>".to_owned(), "<invoice/a@example.com>".to_owned()),
-            (format!("{}a", "x".repeat(80)), format!("{}b", "x".repeat(80))),
-            ("<Invoice@example.com>".to_owned(), "<invoice@example.com>".to_owned()),
+            (
+                "<invoice:a@example.com>".to_owned(),
+                "<invoice/a@example.com>".to_owned(),
+            ),
+            (
+                format!("{}a", "x".repeat(80)),
+                format!("{}b", "x".repeat(80)),
+            ),
+            (
+                "<Invoice@example.com>".to_owned(),
+                "<invoice@example.com>".to_owned(),
+            ),
         ];
         for (left, right) in pairs {
             assert_eq!(
@@ -856,16 +880,30 @@ mod tests {
                 let payload = ingest_ocr_text(&body, OcrSource::TesseractDirect, &id).unwrap();
                 assert_eq!(
                     crate::paperless::email_note::sync_email_to_obsidian(
-                        &payload, &body, &sanitize_doc_id(message_id), vault.path(), "mail",
-                    ).unwrap(),
+                        &payload,
+                        &body,
+                        &sanitize_doc_id(message_id),
+                        vault.path(),
+                        "mail",
+                    )
+                    .unwrap(),
                     crate::paperless::email_note::EmailNoteOutcome::Created
                 );
-                let note = vault.path().join("mail").join("Paperless").join(format!("{id}.md"));
+                let note = vault
+                    .path()
+                    .join("mail")
+                    .join("Paperless")
+                    .join(format!("{id}.md"));
                 assert!(std::fs::read_to_string(note).unwrap().contains(&body));
                 ids.push(id);
             }
             assert_ne!(ids[0].to_ascii_lowercase(), ids[1].to_ascii_lowercase());
-            assert_eq!(std::fs::read_dir(vault.path().join("mail").join("Paperless")).unwrap().count(), 2);
+            assert_eq!(
+                std::fs::read_dir(vault.path().join("mail").join("Paperless"))
+                    .unwrap()
+                    .count(),
+                2
+            );
         }
     }
 

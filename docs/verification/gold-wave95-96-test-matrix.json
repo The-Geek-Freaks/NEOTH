@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2653_EMAIL_VAULT_SOURCE_INTEGRATED_HOSTED_PENDING",
+  "status": "W2653_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 462170,
-    "sha256": "37ACA0D288D062FBFC25D96EB5381A1E6100E4A2055FEF1746F9E86113C66DAD"
+    "bytes": 462164,
+    "sha256": "2CEAD9AD695AA9E0C522EA7CF36F7E3298B0280D3DAAC6378FB62CD19FD46BFC"
   },
   "sourceInputs": 2523,
   "requiredNativeTests": [
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "sourceSha256": "A1C3AF296E6CC43BCE73F9DCCC9BD963F90575CD67921F30918AB3FBC3A241EF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "sourceSha256": "A1C3AF296E6CC43BCE73F9DCCC9BD963F90575CD67921F30918AB3FBC3A241EF",
       "junitClass": "neoth"
     },
     {
@@ -19237,49 +19237,49 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "sourceSha256": "A1C3AF296E6CC43BCE73F9DCCC9BD963F90575CD67921F30918AB3FBC3A241EF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "FB70E62D6887AE9BE1B8836D8D7C7A0D115C5C720F3182601E3590B78B0CD579",
+      "sourceSha256": "A1C3AF296E6CC43BCE73F9DCCC9BD963F90575CD67921F30918AB3FBC3A241EF",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "B9723E7F22D2D2058F468811E6E9364BF67E1F813526A960EA3E0FC25D59C313",
+      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
       "junitClass": "neoth"
     },
     {
@@ -91248,6 +91248,38 @@
       }
     ],
     "note": "Account-bound deterministic create-only mail notes;35case Paperless selection;legacy seen migration remains open;local runtime prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2653EmailVaultHostedFormat": {
+    "base": "7a113428642337f88d69365e5c2a39cb8a4d1876",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 12932,
+        "sha256": "8692D737A2C1DFD13E6501999C610550A2A52AFEAA5EFF7825227B40841A798D",
+        "blob": "eac19aa52f921df5cc5b4f8050965622b6b4e7ae"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 45372,
+        "sha256": "A1C3AF296E6CC43BCE73F9DCCC9BD963F90575CD67921F30918AB3FBC3A241EF",
+        "blob": "961795ec984ea9af46b91df678c0d5363d1490e1"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note.rs",
+        "bytes": 6908,
+        "sha256": "56187DB6C60B2803FFFF8C30F210B5C78FD7493D6E70A76F3FB5FCF93DF58607",
+        "blob": "de45299b05f2381c518ab44f5db32a8d5a3b45bc"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+        "bytes": 6009,
+        "sha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+        "blob": "4641963bcd19c148ecbde20c7291bc019067bc43"
+      }
+    ],
+    "note": "Original digest-bound Preflight41095835963 format receipt;3owned Rust paths exact postimages;35case catalog rebound;no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

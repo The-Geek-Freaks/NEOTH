@@ -7,7 +7,10 @@ fn payload(input: &str, digit: char) -> PaperlessOcrPayload {
 }
 
 fn path(vault: &Path, item: &PaperlessOcrPayload) -> PathBuf {
-    vault.join("mail").join("Paperless").join(format!("{}.md", item.document_id))
+    vault
+        .join("mail")
+        .join("Paperless")
+        .join(format!("{}.md", item.document_id))
 }
 
 #[test]
@@ -40,13 +43,15 @@ fn email_note_edited_partial_and_input_drift_are_conflicts() {
         let vault = tempfile::tempdir().unwrap();
         let item = payload("Original invoice", 'b');
         assert_eq!(
-            sync_email_to_obsidian(&item, "Original invoice", "legacy", vault.path(), "mail").unwrap(),
+            sync_email_to_obsidian(&item, "Original invoice", "legacy", vault.path(), "mail")
+                .unwrap(),
             EmailNoteOutcome::Created
         );
         let target = path(vault.path(), &item);
         fs::write(&target, replacement).unwrap();
         assert_eq!(
-            sync_email_to_obsidian(&item, "Original invoice", "legacy", vault.path(), "mail").unwrap(),
+            sync_email_to_obsidian(&item, "Original invoice", "legacy", vault.path(), "mail")
+                .unwrap(),
             EmailNoteOutcome::Conflict
         );
         assert_eq!(fs::read_to_string(target).unwrap(), replacement);
@@ -54,11 +59,25 @@ fn email_note_edited_partial_and_input_drift_are_conflicts() {
     let vault = tempfile::tempdir().unwrap();
     let original = payload("Original invoice", 'c');
     let changed = payload("Corrected invoice", 'c');
-    sync_email_to_obsidian(&original, "Original invoice", "legacy", vault.path(), "mail").unwrap();
+    sync_email_to_obsidian(
+        &original,
+        "Original invoice",
+        "legacy",
+        vault.path(),
+        "mail",
+    )
+    .unwrap();
     let target = path(vault.path(), &original);
     let before = fs::read(&target).unwrap();
     assert_eq!(
-        sync_email_to_obsidian(&changed, "Corrected invoice", "legacy", vault.path(), "mail").unwrap(),
+        sync_email_to_obsidian(
+            &changed,
+            "Corrected invoice",
+            "legacy",
+            vault.path(),
+            "mail"
+        )
+        .unwrap(),
         EmailNoteOutcome::Conflict
     );
     // Same rendered payload also cannot hide a changed pre-OCR input digest.
@@ -92,14 +111,18 @@ fn email_note_invalid_identity_or_subdir_has_no_outside_effect() {
     let vault = parent.path().join("vault");
     fs::create_dir(&vault).unwrap();
     let item = payload("Invoice body", 'e');
-    assert!(
-        sync_email_to_obsidian(&item, "Invoice body", "legacy", &vault, "../outside").is_err()
-    );
+    assert!(sync_email_to_obsidian(&item, "Invoice body", "legacy", &vault, "../outside").is_err());
     assert!(!parent.path().join("outside").exists());
-    for id in ["email-short", "email-../outside", "email-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"] {
+    for id in [
+        "email-short",
+        "email-../outside",
+        "email-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ] {
         let mut invalid = item.clone();
         invalid.document_id = id.into();
-        assert!(sync_email_to_obsidian(&invalid, "Invoice body", "legacy", &vault, "mail").is_err());
+        assert!(
+            sync_email_to_obsidian(&invalid, "Invoice body", "legacy", &vault, "mail").is_err()
+        );
     }
     assert_eq!(fs::read_dir(vault).unwrap().count(), 0);
 }
@@ -117,7 +140,8 @@ fn email_note_conflict_does_not_erase_or_block_an_independent_unit() {
         EmailNoteOutcome::Conflict
     );
     assert_eq!(
-        sync_email_to_obsidian(&second, "Second invoice", "legacy-b", vault.path(), "mail").unwrap(),
+        sync_email_to_obsidian(&second, "Second invoice", "legacy-b", vault.path(), "mail")
+            .unwrap(),
         EmailNoteOutcome::Created
     );
     assert_eq!(fs::read_to_string(first_path).unwrap(), "operator edit");
