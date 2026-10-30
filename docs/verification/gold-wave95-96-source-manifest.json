@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T10:09:37.9201243Z",
-  "validationStatus": "W2643_STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-30T10:52:15.4889326Z",
+  "validationStatus": "W2642_SOURCE_INTEGRATED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 58589,
-      "sha256": "717383CCF8899B8B9036F795601DDCFBA41279D1EFD51947E6B1588F68CB2EAF"
+      "bytes": 59798,
+      "sha256": "90F10640F5B6EFB0A780AD4B459A7CF12486D8A8E0AA05A940907F95C11D63A6"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 53125,
-      "sha256": "29979B4474ACCC2B9D6060C594D5B0A055EC93CF5703D494E1AB2B3371851B84"
+      "bytes": 53503,
+      "sha256": "7C05E598B489CED95F00D7971E4DFA141B268323F3FB768C68040687BFC9935D"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -713,8 +713,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 269102,
-      "sha256": "40A949B6EB6F21B955B987309CE6D4726BBBD0503DF299658A108F6BCADA00B3"
+      "bytes": 269307,
+      "sha256": "0A4509990F3CC597BEC1759320D92FC1911010624D5823F0BAE4727AA9204E19"
     },
     {
       "path": "docs/cli-reference.md",
@@ -753,8 +753,8 @@
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
-      "bytes": 5297,
-      "sha256": "47841D88F5FAD4B503E2597540EAF3A113489E582CED4D0A52463464CE3E34B7"
+      "bytes": 7811,
+      "sha256": "146C5EAACEC946DDE0678C144B684BEDC2B5BF936D8E78692E9021B2A44F72C6"
     },
     {
       "path": "docs/getting-started.md",
@@ -4707,6 +4707,11 @@
       "sha256": "B40BDAA0E9E507C1F4C15DD056A162582E5DC56F8552E195FE2A7A1A4609BB59"
     },
     {
+      "path": "docs/verification/gold-wave2642-docx-numbering.json",
+      "bytes": 4878,
+      "sha256": "C3E61A4AA3BEAAB7A8FDD292BBB72C4D262BC8C1687486D14023766A614095ED"
+    },
+    {
       "path": "docs/verification/gold-wave2643-docx-clippy-repair.json",
       "bytes": 1622,
       "sha256": "2633AEB221D1E9BB2B359897D52204DEADC49163B15105CAF6829EDD2E401582"
@@ -5953,8 +5958,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2719582,
-      "sha256": "34A0D8859F86196603F59AAB5FC9F7BF4451336B6E68F7438DF890A6BE2FA73C"
+      "bytes": 2721959,
+      "sha256": "B13C7ACDB66FB9FB00EA11C837207F76F19219D07663F9EF2E01927EB9F0B62D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8722,14 +8727,19 @@
       "sha256": "587433001D63174EC8A90C412B07DB5046BF69576116C35A0650CB9EEC03BE99"
     },
     {
+      "path": "SRC/neothd/src/media/docx_lists.rs",
+      "bytes": 17568,
+      "sha256": "BA291D0B60DED036FAE7A85392A25E3ABF1CDCBB5D2249BCFD6B5029A52F3309"
+    },
+    {
       "path": "SRC/neothd/src/media/docx_sections.rs",
       "bytes": 4277,
       "sha256": "4B281BBAD628A143D57F5820B658029602DD08437F90DC8E32795585B38B559E"
     },
     {
       "path": "SRC/neothd/src/media/docx_structure.rs",
-      "bytes": 41887,
-      "sha256": "32382ED62B98EE67F403B8BDCE22E15D6BAF7593BD6619DA136F38A921B8D24D"
+      "bytes": 53353,
+      "sha256": "421856AFE4DBB3E6BE67E1F75C7624B981A968F5BE4E054E3BF8F733251D463F"
     },
     {
       "path": "SRC/neothd/src/media/frame_decoder.rs",
@@ -8848,8 +8858,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "bytes": 67754,
-      "sha256": "B6D5FF6BFD59627BA5821414E628088C77214B0CA1EDD662610F48FC8470627B"
+      "bytes": 71104,
+      "sha256": "701B03CFEE2E380F267D2EDAA85CB0520ECD68E267EC1BBC96591B4583E688F6"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical_request.rs",
@@ -8877,14 +8887,19 @@
       "sha256": "99519DDBF331F075549F6447A5379C28836B60E07C5CB830DD044DC157EC2D74"
     },
     {
+      "path": "SRC/neothd/src/memory/document_numbering.rs",
+      "bytes": 4506,
+      "sha256": "E3B83B80984BB0631B3B6E8070E4A41D65D627306A7BA201E25824C9FE8785EA"
+    },
+    {
       "path": "SRC/neothd/src/memory/document_provenance.rs",
       "bytes": 15224,
       "sha256": "9C080FDD5730C7A81D3F0D1B27B47A662D376B2E5E485457393E831699A0561A"
     },
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
-      "bytes": 27846,
-      "sha256": "D87DC0137425815CCD088297E3895C6CBCFAF400F534F28A3A38CFB8C880E6B7"
+      "bytes": 33640,
+      "sha256": "F72E869351060DCC259D99A371058F13114DE585E0670A973838817E9714828B"
     },
     {
       "path": "SRC/neothd/src/memory/drift.rs",

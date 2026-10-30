@@ -1,6 +1,8 @@
-//! Bounded physical DOCX table and section-property ranges, never a layout model.
+//! Bounded physical DOCX table, section and numbering ranges, never a layout model.
 #[path = "docx_sections.rs"]
 mod sections;
+#[path = "docx_lists.rs"]
+mod lists;
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -81,12 +83,14 @@ struct Projection {
     tables: Vec<Table>,
     omissions: Vec<Omission>,
     section_properties: Option<sections::Projection>,
+    numbering_properties: Option<lists::Projection>,
 }
 
 struct Frame {
     local: Vec<u8>,
     word: bool,
     properties: bool,
+    start: usize,
 }
 
 impl Frame {
@@ -113,6 +117,7 @@ struct State {
     declaration_seen: bool,
     limits: Limits,
     sections: sections::Sections,
+    lists: lists::Projector,
 }
 
 impl State {
@@ -293,12 +298,14 @@ impl State {
             local: local.to_vec(),
             word,
             properties,
+            start,
         });
         Ok(())
     }
 
     fn end(&mut self, end: usize) -> Result<(), &'static str> {
         self.sections.end(self.stack.len(), end);
+        self.lists.end(self.stack.len(), end);
         let frame = self.stack.pop().ok_or("invalid_xml_hierarchy")?;
         let Some(table) = &mut self.table else {
             return Ok(());
@@ -363,9 +370,9 @@ fn project_with_limits(
                 sha256: source_sha256.to_owned(),
                 bytes: source_bytes,
             },
-            schema: "neoth.document-structure.v2",
-            parser_version: "docx-table-section-properties/v2",
-            scope: "physical-table-and-section-property-source-ranges",
+            schema: "neoth.document-structure.v3",
+            parser_version: "docx-physical-numbering/v3",
+            scope: "physical-table-section-and-numbering-property-source-ranges",
             coordinate_system: "zip-entry-utf8-byte-offset/v1",
             entry: "word/document.xml",
             entry_sha256: hex::encode(Sha256::digest(xml.as_bytes())),
@@ -377,6 +384,7 @@ fn project_with_limits(
             tables: Vec::new(),
             omissions: Vec::new(),
             section_properties: None,
+            numbering_properties: None,
         },
         stack: Vec::new(),
         table: None,
@@ -387,6 +395,7 @@ fn project_with_limits(
         body_seen: false,
         declaration_seen: false,
         sections: sections::Sections::new(),
+        lists: lists::Projector::default(),
         limits,
     };
     if xml.len() > limits.entry_bytes {
@@ -398,6 +407,13 @@ fn project_with_limits(
         .finish(state.out.scan_complete, xml.len());
     state.out.complete &= sections.complete;
     state.out.section_properties = Some(sections);
+    let mut numbering = std::mem::take(&mut state.lists)
+        .finish(state.out.scan_complete, xml.len());
+    if let Some(tail) = state.out.omissions.iter().find(|item| item.scope == "entry_tail") {
+        numbering.discard_from(tail.source_range[0]);
+    }
+    state.out.complete &= numbering.complete;
+    state.out.numbering_properties = Some(numbering);
     // The fixed metadata header plus bounded diagnostics fits within the production
     // cap even when every table is omitted. This measures the actual JSON encoding.
     if serde_json::to_vec(&state.out)
@@ -409,6 +425,9 @@ fn project_with_limits(
         state.out.tables.clear();
         if let Some(sections) = &mut state.out.section_properties {
             sections.discard_for_metadata_limit(xml.len());
+        }
+        if let Some(numbering) = &mut state.out.numbering_properties {
+            numbering.discard_for_metadata_limit(xml.len());
         }
         state.out.complete = false;
         // Keep the summary first so trimming detailed records cannot erase why
@@ -471,6 +490,10 @@ fn scan(xml: &str, state: &mut State) {
             Event::Start(element) | Event::Empty(element) => {
                 let mut attributes_valid = true;
                 let mut foreign_attributes = false;
+                let mut numbering_value = lists::Val::Absent;
+                let mut numbering_attributes_supported = true;
+                let numbering_element = word
+                    && matches!(element.local_name().as_ref(), b"numPr" | b"numId" | b"ilvl");
                 for (index, attribute) in element.attributes().enumerate() {
                     let Ok(attribute) = attribute else {
                         attributes_valid = false;
@@ -497,7 +520,35 @@ fn scan(xml: &str, state: &mut State) {
                     if attribute.key.as_ref() != b"xmlns"
                         && !attribute.key.as_ref().starts_with(b"xmlns:")
                     {
-                        let (namespace, _) = reader.resolver().resolve_attribute(attribute.key);
+                        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                        if numbering_element {
+                            let word_attribute = matches!(&namespace, ResolveResult::Bound(ns)
+                                if ns.as_ref() == WORD || ns.as_ref() == STRICT_WORD);
+                            if word_attribute && local.as_ref() == b"val"
+                                && matches!(element.local_name().as_ref(), b"numId" | b"ilvl")
+                            {
+                                if !matches!(numbering_value, lists::Val::Absent) {
+                                    numbering_attributes_supported = false;
+                                    numbering_value = lists::Val::Invalid;
+                                } else {
+                                    numbering_value = quick_xml::escape::unescape(value)
+                                        .ok()
+                                        .and_then(|value| {
+                                            if !value.is_empty()
+                                                && value.bytes().all(|byte| byte.is_ascii_digit())
+                                            {
+                                                value.parse::<u32>().ok()
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .map(lists::Val::Number)
+                                        .unwrap_or(lists::Val::Invalid);
+                                }
+                            } else {
+                                numbering_attributes_supported = false;
+                            }
+                        }
                         match namespace {
                             ResolveResult::Unknown(_) => {
                                 attributes_valid = false;
@@ -521,6 +572,7 @@ fn scan(xml: &str, state: &mut State) {
                         .begin(element.local_name().as_ref(), word, start)
                         .and_then(|()| {
                             state.sections.begin(&state.stack, start);
+                            state.lists.begin(&state.stack, start, numbering_value, numbering_attributes_supported);
                             if foreign_attributes {
                                 state.sections.reject("foreign_attribute_semantics");
                                 state.reject_table("foreign_attribute_semantics");
@@ -559,6 +611,7 @@ fn scan(xml: &str, state: &mut State) {
                 } else {
                     if !text.iter().all(u8::is_ascii_whitespace) {
                         state.sections.reject("unsupported_section_text");
+                        state.lists.reject_property_content("unsupported_numbering_text");
                     }
                     if state.table.is_some()
                         && !state.stack.last().is_some_and(|frame| frame.is(b"t"))
@@ -578,6 +631,7 @@ fn scan(xml: &str, state: &mut State) {
                     Err("invalid_xml_text")
                 } else {
                     state.sections.reject("unsupported_section_cdata");
+                    state.lists.reject_property_content("unsupported_numbering_cdata");
                     state.reject_table("unsupported_cdata");
                     Ok(())
                 }
@@ -595,6 +649,7 @@ fn scan(xml: &str, state: &mut State) {
                     Err("text_outside_root")
                 } else {
                     state.sections.reject("unsupported_section_entity");
+                    state.lists.reject_property_content("unsupported_numbering_entity");
                     if !state.stack.last().is_some_and(|frame| frame.is(b"t")) {
                         state.reject_table("unsupported_text_position");
                     }
@@ -907,7 +962,7 @@ mod tests {
             SOURCE,
             123,
             Limits {
-                metadata_bytes: 1_024,
+                metadata_bytes: 1_536,
                 ..LIMITS
             },
         );
@@ -922,7 +977,7 @@ mod tests {
                 .iter()
                 .any(|value| value["reason"] == "metadata_limit")
         );
-        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
+        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_536);
         assert_eq!(out["source_document"]["sha256"], SOURCE);
         let unsupported = table("<w:tcPr><w:vMerge/></w:tcPr><w:p/>");
         let xml = wrap(&format!(
@@ -935,7 +990,7 @@ mod tests {
             SOURCE,
             123,
             Limits {
-                metadata_bytes: 1_024,
+                metadata_bytes: 1_536,
                 ..LIMITS
             },
         );
@@ -945,7 +1000,7 @@ mod tests {
         assert_eq!(out["omissions_limited"], true);
         assert!(out["tables"].as_array().unwrap().is_empty());
         assert_eq!(out["omissions"][0]["reason"], "metadata_limit");
-        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
+        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_536);
     }
 
     #[test]
@@ -958,7 +1013,7 @@ mod tests {
         for prefix in ["", "\u{feff}"] {
             let xml = format!("{prefix}{}", wrap(&body));
             let out = view(&xml);
-            assert_eq!(out["schema"], "neoth.document-structure.v2");
+            assert_eq!(out["schema"], "neoth.document-structure.v3");
             assert_eq!(out["complete"], true);
             let sections = &out["section_properties"];
             assert_eq!(sections["complete"], true);
@@ -1058,7 +1113,7 @@ mod tests {
             SOURCE,
             123,
             Limits {
-                metadata_bytes: 1_024,
+                metadata_bytes: 1_536,
                 ..LIMITS
             },
         );
@@ -1082,7 +1137,7 @@ mod tests {
             SOURCE,
             123,
             Limits {
-                metadata_bytes: 1_024,
+                metadata_bytes: 1_536,
                 ..LIMITS
             },
         );
@@ -1093,7 +1148,148 @@ mod tests {
             "metadata_limit"
         );
         crate::memory::document_structure::DocumentStructure::from_value(&table_out).unwrap();
-        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
+        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_536);
         crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
     }
+
+    fn numbered(properties: &str) -> String {
+        format!("<w:p><w:pPr><w:numPr>{properties}</w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p>")
+    }
+    fn checked_numbering(xml: &str) -> Value {
+        let value = view(xml);
+        crate::memory::document_structure::DocumentStructure::from_value(&value).unwrap();
+        value
+    }
+    #[test]
+    fn docx_numbering_binds_exact_physical_ranges_without_inventing_labels() {
+        let properties = "<w:ilvl w:val=\"2\"/><w:numId w:val=\"17\"/>";
+        let first = numbered(properties);
+        let removal = numbered("<w:numId w:val=\"0\"/>");
+        let xml = wrap(&format!("{first}{}", table(&removal)));
+        let value = checked_numbering(&xml);
+        assert_eq!(value["schema"], "neoth.document-structure.v3");
+        assert_eq!(value["complete"], true);
+        let records = value["numbering_properties"]["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(slice(&xml, &records[0]["paragraph_source_range"]), first);
+        assert_eq!(slice(&xml, &records[0]["numbering_properties_source_range"]), format!("<w:numPr>{properties}</w:numPr>"));
+        assert_eq!(records[0]["num_id"], 17);
+        assert_eq!(records[0]["level"], 2);
+        assert_eq!(records[0]["kind"], "numbering_reference");
+        assert_eq!(records[1]["kind"], "numbering_removed");
+        assert!(records[1]["level"].is_null());
+        assert!(records[0].get("rendered_label").is_none());
+        assert!(records[0].get("resolved_definition").is_none());
+    }
+    #[test]
+    fn docx_numbering_resolves_alias_default_strict_namespaces_and_attribute_entities() {
+        for namespace in [WORD, STRICT_WORD] {
+            let namespace = std::str::from_utf8(namespace).unwrap();
+            let body = numbered("<w:numId w:val=\"&#49;7\"/>");
+            for (root, xmlns, body) in [
+                ("q:", format!("xmlns:q=\"{namespace}\""), body.replace("w:", "q:")),
+                ("", format!("xmlns=\"{namespace}\" xmlns:n=\"{namespace}\""), body.replace("w:val", "n:val").replace("w:", "")),
+            ] {
+                let xml = format!("\u{feff}<{root}document {xmlns}><{root}body>{body}</{root}body></{root}document>");
+                let value = checked_numbering(&xml);
+                assert_eq!(value["numbering_properties"]["complete"], true);
+                let record = &value["numbering_properties"]["records"][0];
+                assert_eq!(record["num_id"], 17);
+                assert!(record["level"].is_null());
+                assert_eq!(slice(&xml, &record["paragraph_source_range"]), body);
+            }
+        }
+    }
+    #[test]
+    fn docx_numbering_rejects_ambiguous_values_attributes_and_property_content_whole() {
+        let alias = std::str::from_utf8(WORD).unwrap();
+        let duplicate_alias = format!("<w:numId xmlns:x=\"{alias}\" w:val=\"2\" x:val=\"2\"/>");
+        for properties in [
+            "", "<w:numId/>", "<w:numId w:val=\"\"/>",
+            "<w:numId w:val=\"-1\"/>", "<w:numId w:val=\"4294967296\"/>",
+            "<w:numId val=\"2\"/>", "<w:numId w:val=\"2\" w:other=\"1\"/>",
+            "<w:numId w:val=\"2\"/><w:numId w:val=\"2\"/>",
+            "<w:ilvl w:val=\"9\"/><w:numId w:val=\"2\"/>",
+            "<w:ilvl w:val=\"0\"/><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/>",
+            "<w:numId w:val=\"2\"><w:other/></w:numId>",
+            "<w:numId w:val=\"2\"/><w:numberingChange/>",
+            "<w:numId w:val=\"2\"/><w:ins/>",
+            "<w:numId w:val=\"2\"/>unexpected",
+            "<w:numId w:val=\"2\"/><![CDATA[unexpected]]>",
+            "<w:numId w:val=\"2\"/>&amp;",
+            "<w:numId w:val=\"2\"/><x:other xmlns:x=\"urn:foreign\"/>",
+            &duplicate_alias,
+        ] {
+            let bad = numbered(properties);
+            let good = numbered("<w:numId w:val=\"3\"/>");
+            let xml = wrap(&format!("{bad}{good}"));
+            let value = checked_numbering(&xml);
+            let numbering = &value["numbering_properties"];
+            assert_eq!(numbering["complete"], false, "{properties}");
+            assert_eq!(numbering["omitted_observed"], 1, "{properties}");
+            assert_eq!(numbering["records"].as_array().unwrap().len(), 1, "{properties}");
+            assert_eq!(numbering["records"][0]["num_id"], 3);
+            assert_eq!(slice(&xml, &numbering["omissions"][0]["source_range"]), bad);
+        }
+        let bad = "<w:p><w:pPr><w:numPr w:val=\"2\"><w:numId w:val=\"2\"/></w:numPr></w:pPr></w:p>";
+        let value = checked_numbering(&wrap(bad));
+        assert_eq!(value["numbering_properties"]["omitted_observed"], 1);
+    }
+    #[test]
+    fn docx_numbering_nested_order_and_later_properties_omit_one_outer_paragraph() {
+        let props = "<w:pPr><w:numPr><w:numId w:val=\"1\"/></w:numPr></w:pPr>";
+        let nested = numbered("<w:numId w:val=\"2\"/>");
+        for inner in [format!("{nested}{props}"), format!("{props}{nested}"), format!("{props}{props}")] {
+            let bad = format!("<w:p>{inner}</w:p>");
+            let xml = wrap(&format!("{bad}{}", numbered("<w:numId w:val=\"3\"/>")));
+            let value = checked_numbering(&xml);
+            let numbering = &value["numbering_properties"];
+            assert_eq!(numbering["omitted_observed"], 1);
+            assert_eq!(numbering["omissions"].as_array().unwrap().len(), 1);
+            assert_eq!(slice(&xml, &numbering["omissions"][0]["source_range"]), bad);
+            assert_eq!(numbering["records"].as_array().unwrap().len(), 1);
+            assert_eq!(numbering["records"][0]["num_id"], 3);
+        }
+        let outside = "<w:numPr><w:numId w:val=\"1\"/></w:numPr>";
+        let value = checked_numbering(&wrap(outside));
+        assert_eq!(value["numbering_properties"]["omitted_observed"], 1);
+        assert!(value["numbering_properties"]["records"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn docx_numbering_incomplete_table_rewinds_previously_emitted_paragraphs() {
+        let good = numbered("<w:numId w:val=\"1\"/>");
+        let within = numbered("<w:numId w:val=\"2\"/>");
+        let xml = wrap(&format!("{good}<w:tbl><w:tr><w:tc>{within}{within}</w:tr>"));
+        let value = checked_numbering(&xml);
+        assert_eq!(value["scan_complete"], false);
+        let numbering = &value["numbering_properties"];
+        assert_eq!(numbering["records"].as_array().unwrap().len(), 1);
+        assert_eq!(numbering["records"][0]["num_id"], 1);
+        assert_eq!(numbering["omitted_observed"], 2);
+        assert!(numbering["omissions"].as_array().unwrap().iter().all(|item| item["reason"] == "incomplete_entry_tail"));
+        let xml = wrap("<w:p><w:pPr><w:numPr><w:numId w:val=\"1\"/></w:numPr></w:pPr>");
+        let value = checked_numbering(&xml);
+        assert_eq!(value["numbering_properties"]["omitted_observed"], 1);
+        assert!(value["numbering_properties"]["records"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn docx_numbering_bounds_records_details_and_shared_serialized_metadata() {
+        let xml = wrap(&numbered("<w:numId w:val=\"1\"/>").repeat(257));
+        let value = checked_numbering(&xml);
+        assert_eq!(value["numbering_properties"]["records"].as_array().unwrap().len(), 256);
+        assert_eq!(value["numbering_properties"]["omitted_observed"], 1);
+        assert_eq!(value["numbering_properties"]["omissions_limited"], false);
+        let compact = project_with_limits(&xml, SOURCE, 123, Limits {metadata_bytes: 1_536, ..LIMITS});
+        crate::memory::document_structure::DocumentStructure::from_value(&compact).unwrap();
+        assert!(serde_json::to_vec(&compact).unwrap().len() <= 1_536);
+        assert!(compact["numbering_properties"]["records"].as_array().unwrap().is_empty());
+        assert_eq!(compact["numbering_properties"]["omitted_observed"], 257);
+        assert_eq!(compact["numbering_properties"]["omissions"][0]["reason"], "metadata_limit");
+        let xml = wrap(&numbered("<w:numId/>").repeat(65));
+        let value = checked_numbering(&xml);
+        assert_eq!(value["numbering_properties"]["omitted_observed"], 65);
+        assert_eq!(value["numbering_properties"]["omissions"].as_array().unwrap().len(), 64);
+        assert_eq!(value["numbering_properties"]["omissions_limited"], true);
+    }
+
 }

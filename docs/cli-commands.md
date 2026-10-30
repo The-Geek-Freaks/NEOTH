@@ -5075,6 +5075,8 @@ Verify and print the latest correlated updater state per concrete lane and task 
 
 QM-9 Phase 1: render the persisted usage log as a human-readable or JSON rollup. Aggregates the last 24h by default; `--days N` widens the window; `--since-unix … --until-unix …` pins an explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`
 
+- `--provenance` — Compare retained request, price plan, acquisitions and terminal usage per invocation
+- `--acquisitions` — Inspect recorded budget acquisitions in authenticated retained WAL prefixes
 - `--days <DAYS>` — How many days back to aggregate (default 1)
 - `--format <FORMAT>` — Output format: `table` (default) or `json`
 - `--since-unix <SINCE_UNIX>` — Optional explicit start unix timestamp (overrides --days)

@@ -1,5 +1,8 @@
 //! Validated source-level DOCX ranges. These remain extractor assertions:
 //! the index has neither the original ZIP member nor a chunk-to-XML mapping.
+#[path = "document_numbering.rs"]
+mod numbering;
+use numbering::{NumberingProperties, decode_numbering_properties};
 use std::io::{self, Write};
 
 use anyhow::{Result, ensure};
@@ -32,6 +35,12 @@ pub struct DocumentStructure {
         deserialize_with = "decode_section_properties"
     )]
     section_properties: Option<SectionProperties>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decode_numbering_properties"
+    )]
+    numbering_properties: Option<NumberingProperties>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -224,19 +233,29 @@ impl DocumentStructure {
         let v1 = self.schema == "neoth.document-structure.v1"
             && self.parser_version == "docx-table-ranges/v1"
             && self.scope == "physical-table-source-ranges"
-            && self.section_properties.is_none();
+            && self.section_properties.is_none()
+            && self.numbering_properties.is_none();
         let v2 = self.schema == "neoth.document-structure.v2"
             && self.parser_version == "docx-table-section-properties/v2"
             && self.scope == "physical-table-and-section-property-source-ranges"
-            && self.section_properties.is_some();
+            && self.section_properties.is_some()
+            && self.numbering_properties.is_none();
+        let v3 = self.schema == "neoth.document-structure.v3"
+            && self.parser_version == "docx-physical-numbering/v3"
+            && self.scope == "physical-table-section-and-numbering-property-source-ranges"
+            && self.section_properties.is_some()
+            && self.numbering_properties.is_some();
         ensure!(
-            (v1 || v2)
+            (v1 || v2 || v3)
                 && self.coordinate_system == "zip-entry-utf8-byte-offset/v1"
                 && self.entry == "word/document.xml",
             "unsupported document structure contract"
         );
         if let Some(sections) = &self.section_properties {
             sections.validate(self.entry_bytes, self.scan_complete)?;
+        }
+        if let Some(numbering) = &self.numbering_properties {
+            numbering.validate(self.entry_bytes, self.scan_complete)?;
         }
         ensure!(
             lower_sha256(&self.entry_sha256) && lower_sha256(&self.source_document.sha256),
@@ -266,7 +285,8 @@ impl DocumentStructure {
                     && self
                         .section_properties
                         .as_ref()
-                        .is_none_or(|sections| sections.complete)),
+                        .is_none_or(|sections| sections.complete)
+                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.complete)),
             "inconsistent document structure completeness"
         );
         ensure!(
@@ -280,7 +300,8 @@ impl DocumentStructure {
                     && self
                         .section_properties
                         .as_ref()
-                        .is_none_or(|sections| sections.ranges.is_empty()),
+                        .is_none_or(|sections| sections.ranges.is_empty())
+                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.records.is_empty()),
                 "unscanned member contains projected tables"
             );
         }
@@ -374,6 +395,11 @@ impl DocumentStructure {
                                 .all(|range| range.source_range[1] <= start)),
                         "unscanned tail overlaps emitted section"
                     );
+                    ensure!(
+                        self.numbering_properties.as_ref().is_none_or(|numbering| numbering
+                            .records.iter().all(|record| record.paragraph_source_range[1] <= start)),
+                        "unscanned tail overlaps emitted numbered paragraph"
+                    );
                 }
                 "entry" => ensure!(
                     omission.reason == "metadata_limit"
@@ -383,7 +409,8 @@ impl DocumentStructure {
                         && self
                             .section_properties
                             .as_ref()
-                            .is_none_or(|sections| sections.ranges.is_empty()),
+                            .is_none_or(|sections| sections.ranges.is_empty())
+                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.records.is_empty()),
                     "invalid complete-entry omission"
                 ),
                 _ => anyhow::bail!("unsupported document structure omission scope"),
@@ -677,4 +704,79 @@ mod tests {
         ]);
         assert!(DocumentStructure::from_value(&value).is_err());
     }
+
+    fn numbering_structure_v3() -> serde_json::Value {
+        let mut value = v2_structure();
+        value["schema"] = serde_json::json!("neoth.document-structure.v3");
+        value["parser_version"] = serde_json::json!("docx-physical-numbering/v3");
+        value["scope"] = serde_json::json!("physical-table-section-and-numbering-property-source-ranges");
+        value["numbering_properties"] = serde_json::json!({
+            "complete": true,
+            "records": [{
+                "paragraph_source_range": [11,80],
+                "numbering_properties_source_range": [12,20],
+                "num_id": 2, "level": null, "kind": "numbering_reference"
+            }],
+            "omitted_observed": 0, "omissions_limited": false, "omissions": []
+        });
+        value
+    }
+    #[test]
+    fn numbering_structure_versions_roundtrip_and_enforce_field_presence() {
+        let hash = "a".repeat(64);
+        for value in [test_structure_value(&hash,123), v2_structure(), numbering_structure_v3()] {
+            let decoded = DocumentStructure::from_value(&value).unwrap();
+            assert_eq!(serde_json::to_value(&decoded).unwrap(), value);
+            assert_eq!(
+                DocumentStructure::from_json_bytes(decoded.to_json().unwrap().as_bytes()).unwrap(),
+                decoded
+            );
+        }
+        for mut value in [test_structure_value(&hash,123), v2_structure()] {
+            value["numbering_properties"] = numbering_structure_v3()["numbering_properties"].clone();
+            assert!(DocumentStructure::from_value(&value).is_err());
+        }
+        let mut missing = numbering_structure_v3();
+        missing.as_object_mut().unwrap().remove("numbering_properties");
+        assert!(DocumentStructure::from_value(&missing).is_err());
+        for mut value in [test_structure_value(&hash,123), v2_structure(), numbering_structure_v3()] {
+            value["numbering_properties"] = serde_json::Value::Null;
+            assert!(DocumentStructure::from_value(&value).is_err());
+        }
+    }
+    #[test]
+    fn numbering_structure_rejects_invalid_records_metadata_and_bindings() {
+        for (pointer, replacement) in [
+            ("/numbering_properties/records/0/kind", serde_json::json!("numbering_removed")),
+            ("/numbering_properties/records/0/num_id", serde_json::json!(0)),
+            ("/numbering_properties/records/0/level", serde_json::json!(9)),
+            ("/numbering_properties/records/0/numbering_properties_source_range", serde_json::json!([10,20])),
+            ("/numbering_properties/records/0/numbering_properties_source_range", serde_json::json!([11,20])),
+            ("/schema", serde_json::json!("neoth.document-structure.v99")),
+            ("/parser_version", serde_json::json!("unknown-parser")),
+            ("/scope", serde_json::json!("unknown-scope")),
+            ("/numbering_properties/complete", serde_json::json!(false)),
+            ("/numbering_properties/omitted_observed", serde_json::json!(1)),
+        ] {
+            let mut value = numbering_structure_v3();
+            *value.pointer_mut(pointer).unwrap() = replacement;
+            assert!(DocumentStructure::from_value(&value).is_err(), "{pointer}");
+        }
+        let mut duplicate = numbering_structure_v3();
+        let record = duplicate["numbering_properties"]["records"][0].clone();
+        duplicate["numbering_properties"]["records"].as_array_mut().unwrap().push(record);
+        assert!(DocumentStructure::from_value(&duplicate).is_err());
+        let mut overlap = numbering_structure_v3();
+        overlap["complete"] = serde_json::json!(false);
+        overlap["numbering_properties"]["complete"] = serde_json::json!(false);
+        overlap["numbering_properties"]["omitted_observed"] = serde_json::json!(1);
+        overlap["numbering_properties"]["omissions"] = serde_json::json!([{
+            "reason": "unsupported_numbering_context", "source_range": [70,90]
+        }]);
+        assert!(DocumentStructure::from_value(&overlap).is_err());
+        let decoded = DocumentStructure::from_value(&numbering_structure_v3()).unwrap();
+        assert!(decoded.validate_against(&"b".repeat(64),123).is_err());
+        assert!(decoded.validate_against(&"a".repeat(64),124).is_err());
+    }
+
 }

@@ -1,0 +1,92 @@
+{
+  "schema": "neoth.wave2642.docx-numbering.v1",
+  "base": "a3e5b071abab8ed35473aa5fcfaaf7eae8048102",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "roadmap": "ADOPT-20261012-A03",
+  "behavior": [
+    "Physical explicit numPr reference/removal ranges bound to unchanged XML-member and container hashes",
+    "Outermost paragraph ownership and delayed publication exclude nested, duplicate, foreign and revised properties whole",
+    "Bounded256records64details, incomplete table-tail retraction and shared256KiB serialized metadata limit",
+    "Structurev3 with exact v1/v2 backward compatibility; same source transaction/search/replacement/purge owner"
+  ],
+  "tests": [
+    "media::docx_structure::lists::tests::nested_paragraph_before_or_after_properties_omits_outer_paragraph",
+    "media::docx_structure::lists::tests::later_sibling_invalidates_pending_paragraph_without_leaking_state",
+    "media::docx_structure::lists::tests::record_limit_and_metadata_discard_count_all_omitted_paragraphs",
+    "media::docx_structure::lists::tests::nested_numbering_before_or_after_outer_properties_omits_one_whole_paragraph",
+    "media::docx_structure::lists::tests::incomplete_entry_tail_discards_overlapping_records_and_orders_omissions",
+    "media::docx_structure::tests::docx_numbering_binds_exact_physical_ranges_without_inventing_labels",
+    "media::docx_structure::tests::docx_numbering_resolves_alias_default_strict_namespaces_and_attribute_entities",
+    "media::docx_structure::tests::docx_numbering_rejects_ambiguous_values_attributes_and_property_content_whole",
+    "media::docx_structure::tests::docx_numbering_nested_order_and_later_properties_omit_one_outer_paragraph",
+    "media::docx_structure::tests::docx_numbering_incomplete_table_rewinds_previously_emitted_paragraphs",
+    "media::docx_structure::tests::docx_numbering_bounds_records_details_and_shared_serialized_metadata",
+    "memory::document_structure::tests::numbering_structure_versions_roundtrip_and_enforce_field_presence",
+    "memory::document_structure::tests::numbering_structure_rejects_invalid_records_metadata_and_bindings",
+    "memory::ctx::tests::numbering_structure_v3_reopen_replacement_rollback_and_purge_use_existing_owner"
+  ],
+  "priorDocumentCasesRetained": 62,
+  "focusedRequired": 76,
+  "review": {
+    "method": "Prompt-only review of supplied scanner/validator code and transition invariants",
+    "outcome": "No remaining concrete blocker in reviewed scope",
+    "agent": "/root/readonly_usage_review",
+    "runtime": false
+  },
+  "validation": {
+    "wholeA03Accepted": false,
+    "goldAccepted": false,
+    "hostedFormat": "pending",
+    "nativeAccepted": false,
+    "localRuntimeExecuted": false,
+    "focusedRuntime": "pending"
+  },
+  "limits": [
+    "No numbering.xml/styles.xml resolution, rendered ordinals/bullets, implicit list membership or Word layout validity claim",
+    "Only bounded digit-only unsigned numeric attributes and explicit levels0..8 admitted; other forms omitted",
+    "Headings/code blocks/non-DOCX and remaining staging work retain separate acceptance"
+  ],
+  "syntheticMetadataBudget": {
+    "new": 1536,
+    "production": 262144,
+    "old": 1024,
+    "reason": "New fixed v3 numbering summary; existing actual-size assertions retained"
+  },
+  "sourcesConsulted": [
+    "https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.numberingid?view=openxml-3.0.1",
+    "https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/895f4d8b-0bff-4f5b-a8fe-36595d6ca794"
+  ],
+  "goldCheckboxesClosed": 0,
+  "predecessorQualification": {
+    "producer": "a3e5b071abab8ed35473aa5fcfaaf7eae8048102",
+    "run": 41039038367,
+    "costStep": "success",
+    "documentStep": "success",
+    "cliBuildExport": "success",
+    "workspaceClippy": "in_progress",
+    "rootBehaviorArtifactAdmission": "pending"
+  },
+  "generatedCliReference": {
+    "producer": "a3e5b071abab8ed35473aa5fcfaaf7eae8048102",
+    "run": 41039038367,
+    "artifact": 12971311255,
+    "zipSha256": "68DB48E9CBF7137B2AB3C2746A2A81D6B2F8482D940FC30A6B3730DB654AF4EC",
+    "documentSha256": "0A4509990F3CC597BEC1759320D92FC1911010624D5823F0BAE4727AA9204E19",
+    "scope": "Two public usage flag lines from exact-source hosted CLI build; full run admission pending"
+  },
+  "macosObservability": {
+    "triggerRun": 41019849216,
+    "triggerProducer": "d54b615bd46510013ba48d8546040ff8ac9f2d44",
+    "change": "Bounded ucomm role plus sanitized crate-name/test flags; up to64rustc and16other compiler-role rows per minute with explicit truncation; support split/equal crate-name syntax",
+    "unchanged": [
+      "150-minute compile timeout",
+      "240-minute job timeout",
+      "runner",
+      "one build job",
+      "all compilation and test commands",
+      "test scope"
+    ],
+    "hostedAccepted": false,
+    "performanceFixClaim": false
+  }
+}

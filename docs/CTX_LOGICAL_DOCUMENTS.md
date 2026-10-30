@@ -117,5 +117,47 @@ and inconsistent ranges or completeness are rejected. The existing source
 transaction and search output retain the projection with the document provenance.
 This does not change logical identity, consent, file-move or purge authority.
 
-W2641 is source-integrated with seven new regression cases; hosted formatting and
-the combined document62/cost115 runtime qualification remain pending.
+W2641 adds seven regression cases. On producer a3e5b071, the hosted document62
+and cost115 steps, CLI build and slim Clippy have passed; full-run artifact
+admission awaits the workspace Clippy conclusion of run 41039038367.
+
+
+## Physical DOCX numbering properties
+
+Structure v3 adds numbering_properties alongside the existing table and
+section-property projections. It records only explicit numPr containers in
+direct body paragraphs or paragraphs in flat table cells. Each record binds
+the complete paragraph and property-container byte ranges to the same original
+word/document.xml member and document digests.
+
+num_id greater than zero is an unresolved numbering_reference. num_id zero
+is numbering_removed; it does not refer to a numbering definition. An absent
+ilvl remains null. Present levels are limited to the Word-supported range 0-8.
+Numeric attributes use a bounded unsigned decimal digit representation after
+XML entity decoding; other forms are omitted. The projection does not resolve
+numbering.xml or styles.xml, infer inherited numbering, generate bullets or
+ordinals, or assert that the document has valid Word layout.
+
+Duplicate, nested, revised, foreign or unsupported properties cause the whole
+outer paragraph to be omitted. Publication waits until that paragraph closes,
+so later conflicting properties cannot leave a partial accepted record.
+Numbering in nested paragraphs counts once against the containing outer
+paragraph, independent of which properties occur first. Unsupported containers
+outside paragraphs are omitted as complete observed containers.
+
+At most 256 records and 64 omission details are retained. Counts include records
+omitted by limits. An interrupted table scan also retracts prior numbering
+records inside its unaccepted XML tail. The shared 256 KiB serialized metadata
+limit covers tables, sections and numbering together; its summary may contain
+zero omitted numbering paragraphs if another projection caused the limit.
+
+Historical structure v1 and v2 continue to read and serialize without a
+numbering_properties field. Version 3 requires that field and both its exact
+parser/scope contract and the section_properties field. Explicit null, invalid
+ranges, overlapping accepted/omitted paragraphs and inconsistent counts are
+rejected. The existing source transaction remains the sole persistence owner:
+reopen/search preserve the projection, failed replacement rolls back, successful
+replacement clears stale metadata, and purge removes it with the source.
+
+This adds explicit physical numbering provenance. Rendered list semantics,
+headings, code-block structure and full A03 acceptance require their own evidence.

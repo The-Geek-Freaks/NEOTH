@@ -1730,4 +1730,65 @@ mod tests {
         }
         assert!(search(&conn, "replacement", 10).unwrap().is_empty());
     }
+
+    #[test]
+    fn numbering_structure_v3_reopen_replacement_rollback_and_purge_use_existing_owner() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let mut request = structured_document("running quickly testing barbaz kubernetes", "doc");
+        let provenance = request.document_provenance.as_mut().unwrap();
+        let mut value = serde_json::to_value(provenance.structure.as_ref().unwrap()).unwrap();
+        value["schema"] = serde_json::json!("neoth.document-structure.v3");
+        value["parser_version"] = serde_json::json!("docx-physical-numbering/v3");
+        value["scope"] = serde_json::json!("physical-table-section-and-numbering-property-source-ranges");
+        value["section_properties"] = serde_json::json!({
+            "complete": true, "omitted_observed": 0, "omissions_limited": false,
+            "ranges": [], "omissions": []
+        });
+        value["numbering_properties"] = serde_json::json!({
+            "complete": true, "omitted_observed": 0, "omissions_limited": false,
+            "records": [{
+                "paragraph_source_range": [11,80],
+                "numbering_properties_source_range": [12,20],
+                "num_id": 7, "level": null, "kind": "numbering_reference"
+            }], "omissions": []
+        });
+        provenance.structure =
+            Some(super::super::document_structure::DocumentStructure::from_value(&value).unwrap());
+        index_document(&mut conn, &request).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_numbering_replacement AFTER INSERT ON sources BEGIN SELECT RAISE(ABORT, 'numbering replacement rejected'); END;").unwrap();
+        assert!(index_document(&mut conn, &proven_document("replacement only", "doc")).is_err());
+        drop(conn);
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        for (query, mode) in [
+            ("test", SearchMode::Bm25),
+            ("arba", SearchMode::Trigram),
+            ("kubernates", SearchMode::Fuzzy),
+        ] {
+            let hits = search(&conn, query, 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].mode, mode);
+            assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+        }
+        assert!(search(&conn, "replacement", 10).unwrap().is_empty());
+        conn.execute_batch("DROP TRIGGER reject_numbering_replacement").unwrap();
+        index_document(&mut conn, &proven_document("replacement only", "doc")).unwrap();
+        assert!(search(&conn, "replacement", 10).unwrap()[0]
+            .source_document_provenance.as_ref().unwrap().structure.is_none());
+        let cleared: bool = conn.query_row(
+            "SELECT document_structure_json IS NULL FROM sources WHERE label='doc'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(cleared);
+        index_document(&mut conn, &request).unwrap();
+        assert_eq!(purge(&mut conn, PurgeScope::Source("doc")).unwrap(), 1);
+        assert!(search(&conn, "test", 10).unwrap().is_empty());
+        let remaining: i64 = conn.query_row(
+            "SELECT count(*) FROM sources WHERE document_structure_json IS NOT NULL",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(remaining, 0);
+    }
+
 }
