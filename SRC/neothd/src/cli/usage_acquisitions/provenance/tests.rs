@@ -649,10 +649,21 @@ fn provenance_reconciliation_preserves_unknown_zero_and_timeout_counters() {
         rows[3].2["cache_creation_tokens"] = Value::Null;
         rows[3].2["cache_read_tokens"] = Value::Null;
         rows[3].2["ok"] = json!(false);
-        rows[3].2["terminal_kind"] = json!("stream_error");
+        rows[3].2["error_kind"] = json!("stream_error");
+        rows[3].2.as_object_mut().unwrap().remove("terminal_kind");
         rows[3].0 = EVENT_TYPE_PROVIDER_ERROR;
+        let terminal = decode::terminal(EVENT_TYPE_PROVIDER_ERROR, &bytes(&rows[3].2))
+            .expect("stream-error fixture must decode as a retained error terminal");
+        assert!(!terminal.event.ok);
+        assert_eq!(terminal.event.outcome.as_deref(), Some("stream_error"));
         let report = collect(&rows);
-        let value = report.groups[0].component_reconciliation.as_ref().unwrap();
+        assert!(report.semantic_decode_complete);
+        assert!(report.diagnostics.is_empty());
+        assert_eq!(report.groups.len(), 1);
+        let group = &report.groups[0];
+        assert_eq!(group.association, Association::ObservedMetadataMatch);
+        assert_eq!(group.terminals.len(), 1);
+        let value = group.component_reconciliation.as_ref().unwrap();
         assert_eq!(value.observed_input_tokens, tokens);
         assert_eq!(value.unallocated_input_tokens, tokens);
         assert_eq!(

@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.wave2648.reconciliation-fixture-repair.v1",
+  "status": "TEST_FIXTURE_REPAIRED_HOSTED_PENDING",
+  "baseProducer": "2375e1e81922aa1cbc2bf2e5e3bf05fc1ec8e527",
+  "roadmap": "ADOPT-20261012-A02",
+  "failedRun": 41056604735,
+  "failedJob": 124065605752,
+  "failedCase": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
+  "cause": "Provider-error fixture supplied terminal_kind instead of required error_kind; retained decoder correctly rejected malformed terminal and reconciliation remained absent.",
+  "repair": "Use error_kind=stream_error and remove terminal_kind; assert decoded error outcome and complete unique lifecycle association before checking unchanged optional counter reconciliation.",
+  "unchanged": [
+    "Production retained decoder and event-kind checks",
+    "Provider emission",
+    "Missing-terminal unknown case",
+    "None, zero, 100, u32::MAX reconciliation",
+    "All121 cost and79 document identities"
+  ],
+  "priorFailedRun": {
+    "documentPassed": 79,
+    "costPassed": 120,
+    "costFailed": 1,
+    "costVisited": 121,
+    "slimClippy": "success",
+    "typecheck": "success",
+    "cliExport": "skipped",
+    "workspaceClippy": "skipped",
+    "combinedAccepted": false
+  },
+  "previous191": {
+    "run": 41047632809,
+    "producer": "a20a7d944d1fcdbd147deee09a89783a3dc9a44c",
+    "totalPassed": 191,
+    "rootProof": "work/gold-20260906/wave2644-document76-cost115/ROOT_COMBINED191_ADMISSION.json",
+    "sha256": "A092715B8C57F9A22D0255AEE45FD7224625F3237164511E4E8737907057BBA9"
+  },
+  "review": {
+    "agent": "/root/provenance_decoder",
+    "method": "Prompt-only exact decoder, producer frame and fixture",
+    "outcome": "Narrow test-only repair matches existing contract; retain separate missing-terminal case"
+  },
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hostedRuntimeAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "goldCheckboxesClosed": 0
+}
