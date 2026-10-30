@@ -21,8 +21,8 @@ use super::document_provenance::DocumentProvenance;
 pub mod logical;
 mod logical_request;
 
-/// Max bytes per chunk. Synthesis tech-pin: 4 KiB. Larger sections are
-/// split at paragraph boundaries before that cap.
+/// Max bytes per chunk. Synthesis tech-pin: 4 KiB. Larger prose sections are
+/// split at paragraph boundaries; explicit code retains every byte.
 const CHUNK_BYTE_CAP: usize = 4 * 1024;
 /// Count the actual stored structure JSON once per returned chunk, including
 /// repeated hits from one source. Overflow is an error, never partial success.
@@ -186,7 +186,7 @@ fn index_document_in_transaction(
     let source_id = tx.last_insert_rowid();
 
     // Chunk + insert into both FTS tables.
-    let chunks = split_chunks(&req.content);
+    let chunks = split_chunks(&req.content, &req.content_type);
     let mut total_bytes = 0usize;
     for (idx, chunk) in chunks.iter().enumerate() {
         total_bytes += chunk.body.len();
@@ -254,10 +254,19 @@ struct Chunk {
     body: String,
 }
 
-/// Split content into chunks at markdown heading boundaries with a hard
-/// `CHUNK_BYTE_CAP` ceiling. Oversize chunks split at paragraph (`\n\n`)
-/// breaks; anything still too large gets sliced at character boundaries.
-fn split_chunks(content: &str) -> Vec<Chunk> {
+/// Split explicit code only at UTF-8 boundaries, retaining all source bytes.
+/// Other content uses markdown headings and paragraph breaks before the same
+/// `CHUNK_BYTE_CAP` ceiling.
+fn split_chunks(content: &str, content_type: &str) -> Vec<Chunk> {
+    if content_type == "code" {
+        if content.trim().is_empty() {
+            return Vec::new();
+        }
+        return hard_slice(content, CHUNK_BYTE_CAP)
+            .into_iter()
+            .map(|body| Chunk { title: None, body })
+            .collect();
+    }
     let mut out = Vec::new();
     let mut current_title: Option<String> = None;
     let mut buffer = String::new();
@@ -1582,10 +1591,116 @@ mod tests {
     #[test]
     fn split_chunks_respects_headings_and_cap() {
         let body = "# Heading 1\n\nbody one\n\n# Heading 2\n\nbody two";
-        let chunks = split_chunks(body);
+        let chunks = split_chunks(body, "prose");
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].title.as_deref(), Some("Heading 1"));
         assert_eq!(chunks[1].title.as_deref(), Some("Heading 2"));
+    }
+
+    #[test]
+    fn explicit_code_chunks_preserve_hash_lines_and_source_bytes() {
+        for content in [
+            "#!/usr/bin/env python3\r\n# cobaltidentifier\r\nprint(1)\r\n \t",
+            "#[derive(Debug)]\nstruct Example;\n",
+            "# lone comment",
+            "  # indented comment\n\n\t# second comment\n",
+        ] {
+            let chunks = split_chunks(content, "code");
+            assert_eq!(chunks.len(), 1);
+            assert!(chunks[0].title.is_none());
+            assert_eq!(chunks[0].body, content);
+        }
+        let headings = "# Heading\nbody";
+        for content_type in ["prose", "log", "CODE", "custom"] {
+            let chunks = split_chunks(headings, content_type);
+            assert_eq!(chunks.len(), 1);
+            assert_eq!(chunks[0].title.as_deref(), Some("Heading"));
+            assert_eq!(chunks[0].body, "body");
+        }
+    }
+
+    #[test]
+    fn explicit_code_chunks_preserve_unicode_caps_and_whitespace() {
+        let content = format!(
+            "#!/bin/sh\r\n# cobaltidentifier\r\n{}\r\n\r\n \t",
+            "é🦀漢\n\n".repeat(CHUNK_BYTE_CAP)
+        );
+        let chunks = split_chunks(&content, "code");
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|chunk| {
+            chunk.title.is_none() && !chunk.body.is_empty() && chunk.body.len() <= CHUNK_BYTE_CAP
+        }));
+        let joined: String = chunks.iter().map(|chunk| chunk.body.as_str()).collect();
+        assert_eq!(joined, content);
+        for empty in ["", " \t\r\n", "\u{2003}\n"] {
+            assert!(split_chunks(empty, "code").is_empty());
+        }
+    }
+
+    #[test]
+    fn explicit_code_index_reopen_and_failed_replacement_retain_both_indexes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("code.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let content = "#!/usr/bin/env python3\r\n# cobaltidentifier\r\nprint(1)\r\n \t";
+        let mut request = proven_document(content, "code");
+        request.content_type = "code".to_string();
+        let original = index_document(&mut conn, &request).unwrap();
+        assert_eq!(original.bytes, content.len());
+        assert_eq!(original.chunk_count, 1);
+        let other = index_document(&mut conn, &idx("unrelatedkeep", "other")).unwrap();
+        drop(conn);
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let assert_retained = |conn: &Connection| {
+            for table in ["chunks", "chunks_trigram"] {
+                let retained: (String, String, String) = conn
+                    .query_row(
+                        &format!(
+                            "SELECT title, content, content_type FROM {table} WHERE source_id = ?1"
+                        ),
+                        params![original.source_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    retained,
+                    (String::new(), content.to_string(), "code".to_string())
+                );
+                let count: i64 = conn
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                assert_eq!(count, 2);
+            }
+            let hits = search(conn, "cobaltidentifier", 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].source_id, original.source_id);
+            assert_eq!(hits[0].content, content);
+            assert!(hits[0].title.is_empty());
+            assert_eq!(hits[0].content_type, "code");
+            assert_eq!(
+                hits[0].source_document_provenance,
+                request.document_provenance
+            );
+            assert_eq!(
+                search(conn, "unrelatedkeep", 10).unwrap()[0].source_id,
+                other.source_id
+            );
+        };
+        assert_retained(&conn);
+        conn.execute_batch(
+            "CREATE TRIGGER reject_code_replacement AFTER INSERT ON sources
+             BEGIN SELECT RAISE(ABORT, 'injected code replacement failure'); END;",
+        )
+        .unwrap();
+        let mut replacement = proven_document("# changedcomment\nprint(2)\n", "code");
+        replacement.content_type = "code".to_string();
+        assert!(index_document(&mut conn, &replacement).is_err());
+        drop(conn);
+        let conn = crate::memory::store::open(&path).unwrap();
+        assert_retained(&conn);
+        assert!(search(&conn, "changedcomment", 10).unwrap().is_empty());
     }
 
     // ── GOLD-ADAPT-SPEAKR-03 tests ────────────────────────────────────────

@@ -1,0 +1,47 @@
+{
+  "schema": "neoth.wave2645.code-index-preservation.v1",
+  "base": "a20a7d944d1fcdbd147deee09a89783a3dc9a44c",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "roadmap": "ADOPT-20261012-A03",
+  "bug": "Explicit code content was processed as Markdown headings: shebangs, hash-prefixed comments and attributes could disappear from stored chunk bodies.",
+  "behavior": [
+    "Exact documented code tag uses existing UTF-8-safe 4096-byte slicing without heading interpretation or whitespace rewriting",
+    "Reassembled non-whitespace code chunk bodies equal the entire original input byte-for-byte",
+    "Empty/whitespace-only code retains zero-chunk behavior; prose/log/custom tags are unchanged",
+    "Same source transaction, both FTS indexes, provenance, search and rollback owner"
+  ],
+  "tests": [
+    "memory::ctx::tests::explicit_code_chunks_preserve_hash_lines_and_source_bytes",
+    "memory::ctx::tests::explicit_code_chunks_preserve_unicode_caps_and_whitespace",
+    "memory::ctx::tests::explicit_code_index_reopen_and_failed_replacement_retain_both_indexes"
+  ],
+  "priorDocumentCasesRetained": 76,
+  "focusedRequired": 79,
+  "portableRegistered": 3160,
+  "review": {
+    "agent": "/root/readonly_usage_review",
+    "method": "Prompt-only supplied design and test behavior",
+    "result": "No concrete defect or material coverage gap apparent",
+    "runtimeExecuted": false
+  },
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hosted": "pending",
+    "nativeAccepted": false,
+    "wholeA03Accepted": false,
+    "goldAccepted": false
+  },
+  "predecessor": {
+    "run": 41047632809,
+    "producer": "a20a7d944d1fcdbd147deee09a89783a3dc9a44c",
+    "selection": 191,
+    "status": "IN_PROGRESS",
+    "scope": "Numbering76 plus cost115; does not cover this new code change"
+  },
+  "limits": [
+    "Existing indexed code requires reindexing from its original source; dropped historical bytes cannot be reconstructed from hashes",
+    "No code-block source-range projection, Markdown-fence parser, syntax parsing or automatic language inference",
+    "No schema or dependency change; no second persistence owner"
+  ],
+  "goldCheckboxesClosed": 0
+}

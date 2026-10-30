@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T11:18:52.6110479Z",
-  "validationStatus": "W2644_PRIOR177_ACCEPTED_NUMBERING191_PENDING",
+  "capturedUtc": "2026-10-30T11:41:00.2156190Z",
+  "validationStatus": "W2645_CODE_INDEX_PRESERVATION_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 53503,
-      "sha256": "7C05E598B489CED95F00D7971E4DFA141B268323F3FB768C68040687BFC9935D"
+      "bytes": 53588,
+      "sha256": "A02FD9F68E851320763ECA162C4A6D4B6AFAB87423E279465E17A7B663542A16"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -753,8 +753,8 @@
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
-      "bytes": 8019,
-      "sha256": "3E1A5A01BC77E3B96EAF8E2DD9A022AEFE0C404173E0CADB47B7B11869C7A87D"
+      "bytes": 8979,
+      "sha256": "BE216ED91DE521064A86AB4BBD52CD9A9E2041588F81189754CABA9F1B39DC4D"
     },
     {
       "path": "docs/getting-started.md",
@@ -4717,6 +4717,11 @@
       "sha256": "2633AEB221D1E9BB2B359897D52204DEADC49163B15105CAF6829EDD2E401582"
     },
     {
+      "path": "docs/verification/gold-wave2645-code-index-preservation.json",
+      "bytes": 2164,
+      "sha256": "6ABEF239E32C46099704CAD657D50B27923ED45FB2BB3FEE8969F779D2F74D05"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5723,8 +5728,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 85392,
-      "sha256": "67138541407E235D188B46D35E014157674FB4D0B90D1026CD0DC66616277645"
+      "bytes": 85450,
+      "sha256": "B67509047D48C626D4DA367968179B5F939EF5B8E54EDD48AACD45C014D65010"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -5958,8 +5963,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2723519,
-      "sha256": "09950C3D7E63A314C9FCC89D65E73BF94D4B2DCBAC9911370AD482F512672293"
+      "bytes": 2725131,
+      "sha256": "6A4CF67B3CC6C28B3DCC47534C2297E4C88B94D9C3A245EF8B511B56CE8E9733"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8858,8 +8863,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "bytes": 71376,
-      "sha256": "9FC795EA8B9FA9F13AFB5A5DD22BA72A3DFAAE4D6CF45AD512EBBE394C0D1794"
+      "bytes": 76321,
+      "sha256": "7563252797F9EA2EFFFE02046CEE321E5B659EE4F5317E077CEA105E761C3F40"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical_request.rs",

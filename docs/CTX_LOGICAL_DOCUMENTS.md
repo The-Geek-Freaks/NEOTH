@@ -164,3 +164,19 @@ replacement clears stale metadata, and purge removes it with the source.
 
 This adds explicit physical numbering provenance. Rendered list semantics,
 headings, code-block structure and full A03 acceptance require their own evidence.
+
+## Explicit code indexing
+
+Index requests with content_type set exactly to code retain the supplied text
+without Markdown heading interpretation. Shebangs, hash-prefixed comments and
+attributes remain in chunk bodies. Code is split only at UTF-8 boundaries with
+the existing 4 KiB cap; concatenating the stored bodies in insertion order
+recovers the complete non-whitespace input, including CRLF, blank lines and
+trailing whitespace. Empty or whitespace-only input still produces no chunks.
+
+The source transaction, both search indexes, provenance and replacement rollback
+remain shared with other content types. Prose, log and arbitrary tags retain
+their previous behavior. Previously indexed code must be reindexed from its
+original source to recover text removed by the old heading interpretation.
+This does not add Markdown-fence parsing, code-block source ranges or a new
+document structure schema. The three new regression cases await hosted execution.
