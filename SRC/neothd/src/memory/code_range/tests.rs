@@ -449,7 +449,10 @@ fn logical_code_ranges_follow_rename_revision_rollback_and_purge_owners() {
         .unwrap()
         .code_provenance
         .unwrap();
-    assert_eq!(peer_proof.source.text_sha256, first_proof.source.text_sha256);
+    assert_eq!(
+        peer_proof.source.text_sha256,
+        first_proof.source.text_sha256
+    );
 
     let rename = json!({
         "action": "metadata_rename", "logical_document_id": "code-document",

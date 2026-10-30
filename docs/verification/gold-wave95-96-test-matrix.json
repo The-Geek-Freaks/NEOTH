@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2652_LOGICAL_OWNER_COVERAGE_HOSTED_PENDING",
+  "status": "W2652_LOGICAL_OWNER_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 461463,
-    "sha256": "9FA29DED56AC17322D25AD5B56E22C37675F6391B0284571E5A1D9AD3AEF69AC"
+    "bytes": 461478,
+    "sha256": "6FA15A0FE98600A51B9EDDA805B6274EC4C6F66A0D04405F73059429F76BC6D3"
   },
   "sourceInputs": 2519,
   "requiredNativeTests": [
@@ -19129,79 +19129,79 @@
     {
       "test": "memory::code_range::tests::code_range_gc_paths_remove_mapping_rows",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_mapping_insert_failure_rolls_back_replacement",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_purge_modes_remove_mapping_rows",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_replacement_removes_old_mappings",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_empty_and_limit_states_are_explicit_after_reopen",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_preserve_unicode_crlf_and_whitespace_bytes",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_retain_supplied_document_provenance_independently",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     },
     {
@@ -19231,7 +19231,7 @@
     {
       "test": "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+      "sourceSha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
       "junitClass": "neoth"
     }
   ],
@@ -91112,6 +91112,20 @@
       }
     ],
     "note": "Exact A03 clause map and logical-code owner fixture;107 document/lifecycle plus130 cost cases;3201 portable registered;local runtime hold.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2652LogicalOwnerHostedFormat": {
+    "base": "1bd313d9804c05c8203c07d28984d74fba4fdd10",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/memory/code_range/tests.rs",
+        "bytes": 20130,
+        "sha256": "E8226A9F85CF8580D8287CFDAE0AC5CAE34B7B618A28124137E28AD3B5CDB9D9",
+        "blob": "ec6018504845493c2d75e7ff917b85a2b7c04b26"
+      }
+    ],
+    "note": "Exact original formatter artifact12993973027 from Preflight41092053057; cryptographic custody and full Git pre/postimages verified; no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
