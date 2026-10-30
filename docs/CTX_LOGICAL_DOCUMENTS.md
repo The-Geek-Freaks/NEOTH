@@ -93,3 +93,29 @@ not add a watcher, provider request, automatic file move or approval bypass.
 JSONL emits one object per successful command. An absent status is explicit:
 {"logical_document_id":"manual-1","found":false}. Invalid requests and malformed
 status identifiers fail before opening or migrating the store.
+
+
+## Physical DOCX section-property ranges
+
+The DOCX extractor's structure v2 additionally retains the complete XML byte range
+of each supported Word section-property container. Intermediate containers under
+body/p/pPr are labeled paragraph_properties; containers directly under body are
+labeled body. The ranges address the exact uncompressed word/document.xml member
+and share the existing source/container digests. They are property-element ranges,
+not rendered pages, section-content extents, heading hierarchy, inherited layout,
+or proof of valid Word layout. No implicit section is fabricated.
+
+Nested, revised, foreign and unsupported-context containers are omitted whole.
+The report retains bounded omission details and total omitted-container counts;
+overflow or an interrupted scan cannot produce a complete structure. A metadata
+limit summary can exist with zero omitted section containers when tables caused
+the shared limit. Its complete flag still remains false.
+
+Structure v1 stays readable and serializes without a section_properties field.
+Version2 requires that field and its exact parser/scope contract; explicit null
+and inconsistent ranges or completeness are rejected. The existing source
+transaction and search output retain the projection with the document provenance.
+This does not change logical identity, consent, file-move or purge authority.
+
+W2641 is source-integrated with seven new regression cases; hosted formatting and
+the combined document62/cost115 runtime qualification remain pending.

@@ -1696,4 +1696,35 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn section_structure_v2_survives_reopen_and_transactional_failed_replacement() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("views.db");
+        let mut conn = crate::memory::store::open(&path).unwrap();
+        let mut request = structured_document("running quickly testing barbaz kubernetes", "doc");
+        let provenance = request.document_provenance.as_mut().unwrap();
+        let mut value = serde_json::to_value(provenance.structure.as_ref().unwrap()).unwrap();
+        value["schema"] = serde_json::json!("neoth.document-structure.v2");
+        value["parser_version"] = serde_json::json!("docx-table-section-properties/v2");
+        value["scope"] = serde_json::json!("physical-table-and-section-property-source-ranges");
+        value["section_properties"] = serde_json::json!({
+            "complete": true, "omitted_observed": 0, "omissions_limited": false,
+            "ranges": [{"context": "body", "source_range": [91, 99]}], "omissions": []
+        });
+        provenance.structure = Some(super::super::document_structure::DocumentStructure::from_value(&value).unwrap());
+        index_document(&mut conn, &request).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_section_replacement AFTER INSERT ON sources BEGIN SELECT RAISE(ABORT, 'section replacement rejected'); END;").unwrap();
+        let replacement = structured_document("replacement only", "doc");
+        assert!(index_document(&mut conn, &replacement).is_err());
+        drop(conn);
+        let conn = crate::memory::store::open(&path).unwrap();
+        for query in ["test", "arba", "kubernates"] {
+            let hits = search(&conn, query, 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].source_document_provenance, request.document_provenance);
+        }
+        assert!(search(&conn, "replacement", 10).unwrap().is_empty());
+    }
+
 }

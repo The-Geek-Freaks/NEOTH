@@ -19621,3 +19621,12 @@ W2637/W2639/W2640 umfassen zusammen 48 neue Testregistrierungen: 28 fuer die get
 Parallelitaetsgrenze: Der weiterhin laufende native CI 41019849216 bleibt unveraendert an d54b615b gebunden. Der neue Main-Stand darf automatische Schnellpruefungen erhalten; ein weiterer schwerer Lauf wird erst nach Abschluss dieses nativen Laufs gestartet. Dessen Ergebnis wird niemals als Nachweis fuer W2640 ausgegeben.
 
 Vorgaenger-Abnahme: Der gezielte Lauf 40896447644 auf d54b615b ist von Root anhand der Originalartefakte abgenommen: 67/67 exakte Faelle, darin die urspruenglichen 33/33 und vorherigen 59/59, beide Clippy-Schritte und identische erzeugte CLI-Referenz. Dieser Nachweis gilt fuer den Vorgaenger; die 48 neuen Faelle sind noch nicht ausgefuehrt.
+
+
+### W2641 — DOCX-Abschnittseigenschaften im bestehenden Struktur-Owner (2026-10-30)
+
+Der vorhandene begrenzte DOCX-Scan erfasst jetzt physische sectPr-Container unter body oder body/p/pPr mit exakten XML-Quellranges. Die neue Struktur-v2 bindet sie an dieselben Container-/Memberdigests; historische v1-Daten bleiben unveraendert lesbar. Es werden weder implizite Abschnitte noch Seitenlayout, Abschnittsinhaltsbereiche oder Ueberschriften erfunden. Verschachtelte, revidierte, fremde und unpassend platzierte Container werden vollstaendig ausgelassen; Detail-/Bereichslimits und der gemeinsame Metadaten-Cap bleiben sichtbar.
+
+Die vorhandene transaktionale Quellenpersistenz und Suche tragen die Projektion. Sieben neue Faelle pruefen Bytebereiche/BOM, Auslassungen, Limits/Abbruch, v1/v2-Kompatibilitaet sowie Reopen/Suche und Rollback. Der naechste einzelne gehostete Lauf buendelt Dokument62 (alle bisherigen55 plus7) und Kosten115 auf demselben Producer, nachdem Native41019849216 abgeschlossen ist. Unabhaengige Prompt-Quellpruefung abgeschlossen; lokale Compiler/Parser/Tests wurden nicht ausgefuehrt. Gehostete Format-/Kompilierungs-/Laufzeitabnahme bleibt offen. A03 und alle historischen Gold-Haken bleiben offen, soweit nicht separat nachgewiesen.
+
+Bericht: docs/verification/gold-wave2641-docx-section-properties.json. Bedienungsgrenze: docs/CTX_LOGICAL_DOCUMENTS.md. Neu abgenommene Live-Audio-Belege des vorherigen Producers d54b615b:204/204 exakte Fallausfuehrungen auf Linux/Windows/macOS,14 Quellbindungen; work/gold-20260906/wave2638-full-native/LIVE_AUDIO_ADMISSION.json. Dies ist keine native Abnahme der neuen W2640/W2641-Quelle und kein physischer Mikrofon-/Lautsprecherbeleg.

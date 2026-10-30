@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.wave2641.docx-section-properties.v1",
+  "base": "ae8ab2c9687dc08740590ebeeb657f208b9d9c51",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "roadmap": "ADOPT-20261012-A03",
+  "behavior": [
+    "Physical namespace-resolved DOCX sectPr property ranges under body or body/p/pPr; no synthesized sections or rendered layout",
+    "One existing bounded XML scan; whole-container omissions and bounded counts; combined256KiB metadata ceiling",
+    "Version2 contract with version1 read/write compatibility; existing transactional source persistence and search owner"
+  ],
+  "tests": [
+    "media::docx_structure::tests::docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections",
+    "media::docx_structure::tests::docx_sections_omit_nested_revised_foreign_and_wrong_context_containers_whole",
+    "media::docx_structure::tests::docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container",
+    "media::docx_structure::tests::docx_sections_share_the_actual_serialized_metadata_limit_with_tables",
+    "memory::ctx::tests::section_structure_v2_survives_reopen_and_transactional_failed_replacement",
+    "memory::document_structure::tests::section_structure_rejects_unknown_contexts_ranges_and_false_completeness",
+    "memory::document_structure::tests::section_structure_v2_roundtrips_without_reinterpreting_historical_v1"
+  ],
+  "priorDocumentCasesRetained": 55,
+  "focusedRequired": 62,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/media/docx_structure.rs",
+      "candidateSha256": "01F4FBD85508263C3DB2EE898B6D8E845B549CE45B3CBA75338327A3194A4025"
+    },
+    {
+      "path": "SRC/neothd/src/media/docx_sections.rs",
+      "candidateSha256": "348615664D278DEE8FAE6723D1E3193A6DD9C09E627EE55F49E798BB563D92D8"
+    },
+    {
+      "path": "SRC/neothd/src/memory/document_structure.rs",
+      "candidateSha256": "FC5F7C6A08EB1716A64F3B6171E96CCBDD0042634705EDD742E92FEF87A1A8B0"
+    },
+    {
+      "path": "SRC/neothd/src/memory/ctx.rs",
+      "candidateSha256": "673F7467C1DFF6791EE4920DB795382636FCDA7421F59647D67E1463AE6EA57A"
+    }
+  ],
+  "review": {
+    "reviewer": "/root/readonly_usage_review",
+    "runtime": false,
+    "result": "No remaining concrete blocker from supplied actual details",
+    "method": "Prompt-only transition and schema review"
+  },
+  "validation": {
+    "fullNativeProducer": "d54b615bd46510013ba48d8546040ff8ac9f2d44",
+    "hostedFormat": "pending",
+    "wholeA03Accepted": false,
+    "focusedRuntime": "pending",
+    "localRuntimeExecuted": false
+  },
+  "limitations": [
+    "Physical property containers are not section content extents, heading hierarchy, inherited layout or proof of a valid Word document",
+    "List/code/headings and non-DOCX structure, staging lifecycle, watcher/mobile and final acceptance remain open"
+  ],
+  "sourcesConsulted": [
+    "https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.sectionproperties?view=openxml-3.0.1"
+  ],
+  "goldCheckboxesClosed": 0
+}

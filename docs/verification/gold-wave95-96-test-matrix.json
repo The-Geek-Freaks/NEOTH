@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2640_SOURCE_INTEGRATED_HOSTED_PENDING",
+  "status": "W2641_SOURCE_INTEGRATED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 458713,
-    "sha256": "CDA3351F0B73ADE92AA79A17ADFAE8DEBF3AEB133C2190D4B2FBCFBA8F7B8049"
+    "bytes": 459080,
+    "sha256": "BC3E40AF976A26B66B4AC60CEF2FCCD40D34915E2F6C1FED912170AE45648D30"
   },
-  "sourceInputs": 2504,
+  "sourceInputs": 2506,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -17773,37 +17773,37 @@
     {
       "test": "memory::ctx::tests::document_provenance_survives_reopen_and_all_search_fallbacks_without_merging_labels",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::invalid_document_provenance_and_aborted_replacement_preserve_source_and_both_indexes",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::replacing_document_with_unbound_text_clears_provenance_without_reusing_old_receipt",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::search_rejects_partial_or_corrupt_document_provenance_instead_of_hiding_it",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::purge_source_reports_only_committed_removals_and_preserves_other_documents",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
@@ -17851,31 +17851,31 @@
     {
       "test": "memory::ctx::tests::vocabulary_replacement_and_source_purge_preserve_per_chunk_counts",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::vocabulary_category_purge_retains_only_surviving_chunk_terms",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::vocabulary_corruption_aborts_replacement_and_purges_atomically",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::vocabulary_cleanup_rolls_back_when_later_source_delete_fails",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::vocabulary_increment_rejects_invalid_or_overflowed_counts_atomically",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
@@ -17917,85 +17917,85 @@
     {
       "test": "media::docx_structure::tests::docx_ranges_bind_exact_member_bytes_and_preserve_cells_and_paragraphs",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_omit_merged_revised_and_offset_tables_whole",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_keep_omission_totals_after_diagnostic_cap",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "media::docx_structure::tests::docx_ranges_cap_actual_serialized_metadata_including_source_binding",
       "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
-      "sourceSha256": "07C0291A7C5300E748D179A45E8F4C8299D0DF6903F835073E9E5EBF3F4EA1F3",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::document_structure_survives_reopen_and_all_search_modes_as_source_ranges",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::repeated_source_structure_counts_against_the_search_payload_budget",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::structure_replacement_failure_and_purge_follow_the_existing_source_transaction",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
       "test": "memory::ctx::tests::v48_store_reopens_with_nullable_structure_and_preserved_existing_provenance",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
-      "sourceSha256": "FFF391D6F726E8B059AB14C9FEB2A6BCBBC0DC00EB88EAA7638805E5DDCE00D8",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
       "junitClass": "neoth"
     },
     {
@@ -18013,31 +18013,31 @@
     {
       "test": "memory::document_structure::tests::structure_admits_bounded_incomplete_members_and_zero_length_eof_tail",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_checks_actual_json_and_global_collection_limits",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_enforces_row_cell_and_paragraph_caps_across_parent_collections",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_rejects_unknown_fields_bad_coordinates_and_inconsistent_completeness",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_roundtrip_retains_source_ranges_and_rejects_other_source_binding",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "C879696A02F7CFD619C2DFE8202FD6E58B2ECA138CF5F68BD28B737EAD0F2BC8",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     },
     {
@@ -18842,6 +18842,48 @@
       "test": "daemon::usage_log::tests::retained_terminal_preserves_unknown_zero_and_existing_rejection_boundary",
       "sourcePath": "SRC/neothd/src/daemon/usage_log.rs",
       "sourceSha256": "EC38B4A11EC619E148AE72FE7214C58394E1A5CEA1C7E94D8CC7C4860F8B17C2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::docx_structure::tests::docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections",
+      "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::docx_structure::tests::docx_sections_omit_nested_revised_foreign_and_wrong_context_containers_whole",
+      "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::docx_structure::tests::docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container",
+      "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::docx_structure::tests::docx_sections_share_the_actual_serialized_metadata_limit_with_tables",
+      "sourcePath": "SRC/neothd/src/media/docx_structure.rs",
+      "sourceSha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::ctx::tests::section_structure_v2_survives_reopen_and_transactional_failed_replacement",
+      "sourcePath": "SRC/neothd/src/memory/ctx.rs",
+      "sourceSha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::document_structure::tests::section_structure_rejects_unknown_contexts_ranges_and_false_completeness",
+      "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::document_structure::tests::section_structure_v2_roundtrips_without_reinterpreting_historical_v1",
+      "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
+      "sourceSha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
       "junitClass": "neoth"
     }
   ],
@@ -85835,7 +85877,7 @@
   },
   "wave2604DocumentRegressions": {
     "schema": "neoth.wave2604.document-regression-selection.v1",
-    "requiredCount": 55,
+    "requiredCount": 62,
     "requiredTests": [
       "cli::ctx::logical_tests::logical_cli_actions_allow_defaults_and_reject_explicit_conflicts",
       "cli::ctx::logical_tests::logical_cli_file_request_status_epoch_and_replay_share_one_owner",
@@ -85855,6 +85897,10 @@
       "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
       "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
       "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
+      "media::docx_structure::tests::docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections",
+      "media::docx_structure::tests::docx_sections_omit_nested_revised_foreign_and_wrong_context_containers_whole",
+      "media::docx_structure::tests::docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container",
+      "media::docx_structure::tests::docx_sections_share_the_actual_serialized_metadata_limit_with_tables",
       "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
       "memory::ctx::logical::tests::logical_conflicting_event_label_and_legacy_replacement_preserve_every_projection",
       "memory::ctx::logical::tests::logical_purge_epoch_write_failure_and_exhaustion_roll_back_all_deleted_rows",
@@ -85873,11 +85919,14 @@
       "memory::ctx::tests::corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit",
       "memory::ctx::tests::document_structure_survives_reopen_and_all_search_modes_as_source_ranges",
       "memory::ctx::tests::repeated_source_structure_counts_against_the_search_payload_budget",
+      "memory::ctx::tests::section_structure_v2_survives_reopen_and_transactional_failed_replacement",
       "memory::ctx::tests::structure_replacement_failure_and_purge_follow_the_existing_source_transaction",
       "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
       "memory::ctx::tests::v48_store_reopens_with_nullable_structure_and_preserved_existing_provenance",
       "memory::document_provenance::tests::document_metadata_retains_only_source_bound_docx_structure",
       "memory::document_provenance::tests::legacy_provenance_json_defaults_to_no_structure_without_fabricating_ranges",
+      "memory::document_structure::tests::section_structure_rejects_unknown_contexts_ranges_and_false_completeness",
+      "memory::document_structure::tests::section_structure_v2_roundtrips_without_reinterpreting_historical_v1",
       "memory::document_structure::tests::structure_admits_bounded_incomplete_members_and_zero_length_eof_tail",
       "memory::document_structure::tests::structure_checks_actual_json_and_global_collection_limits",
       "memory::document_structure::tests::structure_enforces_row_cell_and_paragraph_caps_across_parent_collections",
@@ -85895,7 +85944,7 @@
     ],
     "workflow": ".github/workflows/cli-reference.yml",
     "input": "document_regressions",
-    "scope": "All prior33document cases,21newlogicalcases,andexistingv47source-shapecontract; focused prerequisite only"
+    "scope": "All prior55document cases plus7DOCX section-property/source-persistence cases; focused prerequisite only"
   },
   "wave2604LogicalDocumentLifecycle": {
     "base": "eda3ef0c37d405adab662942977ef2bf0323e6e6",
@@ -89109,6 +89158,68 @@
       }
     ],
     "note": "Acquisition and provenance readers, readonly frozen terminal decoder; 115 exact cases retain prior67; local runtime held; native run41019849216 remains prior producer proof only.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2641DocumentSectionIntegration": {
+    "base": "ae8ab2c9687dc08740590ebeeb657f208b9d9c51",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 53125,
+        "sha256": "29979B4474ACCC2B9D6060C594D5B0A055EC93CF5703D494E1AB2B3371851B84",
+        "blob": "219385e92f4de711ed5330629b46450001835dfb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2718081,
+        "sha256": "9222EB30CE64A9F63ECD9B92092A90393CB2701CCF0D1D6C31E9DAEFD14A6B12",
+        "blob": "b879ad73ce7d8addf1d6e55a4e55c12aaead4310"
+      },
+      {
+        "path": "SRC/neothd/src/media/docx_sections.rs",
+        "bytes": 4128,
+        "sha256": "348615664D278DEE8FAE6723D1E3193A6DD9C09E627EE55F49E798BB563D92D8",
+        "blob": "b398178d31a91bbac400a5522307e09c77a4c827"
+      },
+      {
+        "path": "SRC/neothd/src/media/docx_structure.rs",
+        "bytes": 41089,
+        "sha256": "4187032EA97B9E38B7F6BD83152AAD1909DB6EAE84EB32D428893ED4AD91F3C1",
+        "blob": "6b72c583f7f354b92ac5c356cb3ff604c1676005"
+      },
+      {
+        "path": "SRC/neothd/src/memory/ctx.rs",
+        "bytes": 67697,
+        "sha256": "0465C51315EE9F6FC2AD8FA6C90BE75CB31C9E19A1067E0B708600809ACA507A",
+        "blob": "6954d246176a7c466dbb234a5d678975f4da4218"
+      },
+      {
+        "path": "SRC/neothd/src/memory/document_structure.rs",
+        "bytes": 26541,
+        "sha256": "3B8511C3148D2957363A67F59EF9ACB1FFAC1071C1021912DD29986CCFE45DF0",
+        "blob": "4a7755c1bce29d6222f884322991a05a97e524b4"
+      },
+      {
+        "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
+        "bytes": 5297,
+        "sha256": "47841D88F5FAD4B503E2597540EAF3A113489E582CED4D0A52463464CE3E34B7",
+        "blob": "ef5e8e81ae90c2850ab05293117a6234bc16e03d"
+      },
+      {
+        "path": "docs/verification/gold-wave2641-docx-section-properties.json",
+        "bytes": 3018,
+        "sha256": "B40BDAA0E9E507C1F4C15DD056A162582E5DC56F8552E195FE2A7A1A4609BB59",
+        "blob": "f5aded1e41c41af4e79056a56aa0acb7bb659dbf"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 83809,
+        "sha256": "F44B8F224F95AB925E7E2CF3D974D9CF6B41A0F25E1A89AD9F3A72D66E5C393D",
+        "blob": "37f7d7241dadcc8b36869d10ccc554f8fdf9d494"
+      }
+    ],
+    "note": "DOCX physical section-property v2 with v1 compatibility and existing source transaction; document62 retains prior55; next single hosted run also retains cost115; local runtime held; native41019849216 binds prior d54 only.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

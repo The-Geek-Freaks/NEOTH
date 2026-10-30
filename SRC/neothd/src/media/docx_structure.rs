@@ -1,4 +1,6 @@
-//! Bounded physical DOCX table ranges; never a rendered-text or layout model.
+//! Bounded physical DOCX table and section-property ranges, never a layout model.
+#[path = "docx_sections.rs"]
+mod sections;
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -78,6 +80,7 @@ struct Projection {
     omissions_limited: bool,
     tables: Vec<Table>,
     omissions: Vec<Omission>,
+    section_properties: Option<sections::Projection>,
 }
 
 struct Frame {
@@ -109,6 +112,7 @@ struct State {
     body_seen: bool,
     declaration_seen: bool,
     limits: Limits,
+    sections: sections::Sections,
 }
 
 impl State {
@@ -294,6 +298,7 @@ impl State {
     }
 
     fn end(&mut self, end: usize) -> Result<(), &'static str> {
+        self.sections.end(self.stack.len(), end);
         let frame = self.stack.pop().ok_or("invalid_xml_hierarchy")?;
         let Some(table) = &mut self.table else {
             return Ok(());
@@ -358,9 +363,9 @@ fn project_with_limits(
                 sha256: source_sha256.to_owned(),
                 bytes: source_bytes,
             },
-            schema: "neoth.document-structure.v1",
-            parser_version: "docx-table-ranges/v1",
-            scope: "physical-table-source-ranges",
+            schema: "neoth.document-structure.v2",
+            parser_version: "docx-table-section-properties/v2",
+            scope: "physical-table-and-section-property-source-ranges",
             coordinate_system: "zip-entry-utf8-byte-offset/v1",
             entry: "word/document.xml",
             entry_sha256: hex::encode(Sha256::digest(xml.as_bytes())),
@@ -371,6 +376,7 @@ fn project_with_limits(
             omissions_limited: false,
             tables: Vec::new(),
             omissions: Vec::new(),
+            section_properties: None,
         },
         stack: Vec::new(),
         table: None,
@@ -380,6 +386,7 @@ fn project_with_limits(
         root_seen: false,
         body_seen: false,
         declaration_seen: false,
+        sections: sections::Sections::new(),
         limits,
     };
     if xml.len() > limits.entry_bytes {
@@ -387,6 +394,10 @@ fn project_with_limits(
     } else {
         scan(xml, &mut state);
     }
+    let sections = std::mem::replace(&mut state.sections, sections::Sections::new())
+        .finish(state.out.scan_complete, xml.len());
+    state.out.complete &= sections.complete;
+    state.out.section_properties = Some(sections);
     // The fixed metadata header plus bounded diagnostics fits within the production
     // cap even when every table is omitted. This measures the actual JSON encoding.
     if serde_json::to_vec(&state.out)
@@ -396,6 +407,9 @@ fn project_with_limits(
     {
         state.out.omitted_tables_observed += state.out.tables.len();
         state.out.tables.clear();
+        if let Some(sections) = &mut state.out.section_properties {
+            sections.discard_for_metadata_limit(xml.len());
+        }
         state.out.complete = false;
         // Keep the summary first so trimming detailed records cannot erase why
         // otherwise valid tables disappeared. Production always allows 64 records.
@@ -506,7 +520,9 @@ fn scan(xml: &str, state: &mut State) {
                     state
                         .begin(element.local_name().as_ref(), word, start)
                         .and_then(|()| {
+                            state.sections.begin(&state.stack, start);
                             if foreign_attributes {
+                                state.sections.reject("foreign_attribute_semantics");
                                 state.reject_table("foreign_attribute_semantics");
                             }
                             if empty { state.end(end) } else { Ok(()) }
@@ -541,6 +557,9 @@ fn scan(xml: &str, state: &mut State) {
                 } else if state.stack.is_empty() && !text.iter().all(u8::is_ascii_whitespace) {
                     Err("text_outside_root")
                 } else {
+                    if !text.iter().all(u8::is_ascii_whitespace) {
+                        state.sections.reject("unsupported_section_text");
+                    }
                     if state.table.is_some()
                         && !state.stack.last().is_some_and(|frame| frame.is(b"t"))
                         && !text.iter().all(u8::is_ascii_whitespace)
@@ -558,6 +577,7 @@ fn scan(xml: &str, state: &mut State) {
                 {
                     Err("invalid_xml_text")
                 } else {
+                    state.sections.reject("unsupported_section_cdata");
                     state.reject_table("unsupported_cdata");
                     Ok(())
                 }
@@ -574,6 +594,7 @@ fn scan(xml: &str, state: &mut State) {
                 } else if state.stack.is_empty() {
                     Err("text_outside_root")
                 } else {
+                    state.sections.reject("unsupported_section_entity");
                     if !state.stack.last().is_some_and(|frame| frame.is(b"t")) {
                         state.reject_table("unsupported_text_position");
                     }
@@ -926,4 +947,94 @@ mod tests {
         assert_eq!(out["omissions"][0]["reason"], "metadata_limit");
         assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
     }
+
+    #[test]
+    fn docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections() {
+        let intermediate = "<w:sectPr><w:pgSz w:w=\"100\"/></w:sectPr>";
+        let final_props = "<w:sectPr/>";
+        let body = format!("<w:p><w:pPr>{intermediate}</w:pPr><w:r><w:t>Grüße</w:t></w:r></w:p>{final_props}");
+        for prefix in ["", "\u{feff}"] {
+            let xml = format!("{prefix}{}", wrap(&body));
+            let out = view(&xml);
+            assert_eq!(out["schema"], "neoth.document-structure.v2");
+            assert_eq!(out["complete"], true);
+            let sections = &out["section_properties"];
+            assert_eq!(sections["complete"], true);
+            let ranges = sections["ranges"].as_array().unwrap();
+            assert_eq!(ranges.len(), 2);
+            assert_eq!(ranges[0]["context"], "paragraph_properties");
+            assert_eq!(ranges[1]["context"], "body");
+            assert_eq!(slice(&xml, &ranges[0]["source_range"]), intermediate);
+            assert_eq!(slice(&xml, &ranges[1]["source_range"]), final_props);
+            crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
+        }
+        let out = view(&wrap(&paragraph("plain")));
+        assert_eq!(out["section_properties"]["complete"], true);
+        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn docx_sections_omit_nested_revised_foreign_and_wrong_context_containers_whole() {
+        for invalid in [
+            "<w:sectPr><w:sectPr/></w:sectPr>",
+            "<w:sectPr><w:sectPrChange/></w:sectPr>",
+            "<w:sectPr xmlns:x=\"urn:foreign\"><x:setting/></w:sectPr>",
+            "<w:sectPr xmlns:x=\"urn:foreign\" x:setting=\"1\"/>",
+            "<w:p><w:sectPr/></w:p>",
+            "<w:sectPr>unmodeled text</w:sectPr>",
+        ] {
+            let xml = wrap(&format!("{invalid}<w:sectPr/>"));
+            let out = view(&xml);
+            let sections = &out["section_properties"];
+            assert_eq!(out["scan_complete"], true, "{invalid}");
+            assert_eq!(out["complete"], false, "{invalid}");
+            assert_eq!(sections["omitted_observed"], 1, "{invalid}");
+            assert_eq!(sections["ranges"].as_array().unwrap().len(), 1);
+            assert_eq!(slice(&xml, &sections["ranges"][0]["source_range"]), "<w:sectPr/>");
+            crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
+        }
+    }
+
+    #[test]
+    fn docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container() {
+        let xml = wrap(&"<w:sectPr/>".repeat(257));
+        let out = view(&xml);
+        assert_eq!(out["section_properties"]["ranges"].as_array().unwrap().len(), 256);
+        assert_eq!(out["section_properties"]["omitted_observed"], 1);
+        assert_eq!(out["complete"], false);
+        let xml = wrap(&"<w:p><w:sectPr/></w:p>".repeat(65));
+        let out = view(&xml);
+        assert_eq!(out["section_properties"]["omissions"].as_array().unwrap().len(), 64);
+        assert_eq!(out["section_properties"]["omitted_observed"], 65);
+        assert_eq!(out["section_properties"]["omissions_limited"], true);
+        let xml = format!("<w:document xmlns:w=\"{}\"><w:body><w:sectPr>", std::str::from_utf8(WORD).unwrap());
+        let out = view(&xml);
+        assert_eq!(out["scan_complete"], false);
+        assert_eq!(out["section_properties"]["complete"], false);
+        assert_eq!(out["section_properties"]["omitted_observed"], 1);
+        assert_eq!(out["section_properties"]["omissions"][0]["source_range"][1], xml.len());
+        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
+        crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
+    }
+
+    #[test]
+    fn docx_sections_share_the_actual_serialized_metadata_limit_with_tables() {
+        let xml = wrap(&"<w:sectPr/>".repeat(100));
+        let out = project_with_limits(&xml, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        assert_eq!(out["scan_complete"], true);
+        assert_eq!(out["complete"], false);
+        assert_eq!(out["section_properties"]["complete"], false);
+        assert_eq!(out["section_properties"]["omitted_observed"], 100);
+        assert!(out["section_properties"]["ranges"].as_array().unwrap().is_empty());
+        assert_eq!(out["section_properties"]["omissions"][0]["reason"], "metadata_limit");
+        let table_only = wrap(&table(&paragraph("x").repeat(100)));
+        let table_out = project_with_limits(&table_only, SOURCE, 123, Limits { metadata_bytes: 1_024, ..LIMITS });
+        assert_eq!(table_out["complete"], false);
+        assert_eq!(table_out["section_properties"]["omitted_observed"], 0);
+        assert_eq!(table_out["section_properties"]["omissions"][0]["reason"], "metadata_limit");
+        crate::memory::document_structure::DocumentStructure::from_value(&table_out).unwrap();
+        assert!(serde_json::to_vec(&out).unwrap().len() <= 1_024);
+        crate::memory::document_structure::DocumentStructure::from_value(&out).unwrap();
+    }
+
 }
