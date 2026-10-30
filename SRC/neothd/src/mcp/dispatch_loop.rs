@@ -1728,9 +1728,11 @@ where
         let harness_turn_prompt_hash = crate::mcp::harness::prompt_hash(&prompt);
         let harness_turn_prompt_len = prompt.len();
         retained_tool_result_bytes = retained_tool_result_bytes.and_then(|previous| {
-            tool_result_blocks.iter().try_fold(previous, |total, block| {
-                total.checked_add(u32::try_from(block.as_str().len()).ok()?)
-            })
+            tool_result_blocks
+                .iter()
+                .try_fold(previous, |total, block| {
+                    total.checked_add(u32::try_from(block.as_str().len()).ok()?)
+                })
         });
         prompt = build_next_prompt(&prompt, &replayed_reply, &tool_result_blocks, &hint_blocks);
         // GOLD-ADAPT-HARNESS-02 — append a per-turn replay record to
@@ -4946,7 +4948,10 @@ mod tests {
             prompt: &'a str,
             tool_result_bytes: Option<u32>,
         ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-            self.seen_attribution.lock().unwrap().push(tool_result_bytes);
+            self.seen_attribution
+                .lock()
+                .unwrap()
+                .push(tool_result_bytes);
             self.complete(prompt)
         }
 
@@ -5815,19 +5820,27 @@ mod tests {
                 &crate::cli::elicitation::ElicitationHandler::Disabled,
                 &crate::config::tools::McpHarnessConfig::default(),
                 home.path(),
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
             assert_eq!(outcome.iterations, 2);
             assert_eq!(
                 *driver.seen_attribution.lock().unwrap(),
                 vec![Some(0), if compact { None } else { Some(0) }],
                 "a summary must never relabel old prompt components",
             );
-            assert_eq!(driver.cursor.load(Ordering::SeqCst), if compact { 3 } else { 2 });
+            assert_eq!(
+                driver.cursor.load(Ordering::SeqCst),
+                if compact { 3 } else { 2 }
+            );
             let seen = driver.seen_prompts.lock().unwrap();
             let last = seen.last().unwrap();
             if compact {
                 assert!(last.starts_with(crate::context::compaction::SUMMARY_MARKER));
-                assert!(last.len() < 10_001, "compaction must actually replace old content");
+                assert!(
+                    last.len() < 10_001,
+                    "compaction must actually replace old content"
+                );
                 assert!(seen[1].contains("DENSE SUMMARY:"));
             } else {
                 assert!(last.starts_with(&"x".repeat(10_001)));

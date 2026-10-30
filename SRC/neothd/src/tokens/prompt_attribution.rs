@@ -251,11 +251,7 @@ mod tests {
         let base = PromptAttribution::from_retained_items(&items, 520).unwrap();
         let first_tool = "🦀";
         let first = base
-            .with_appended_tool_results(
-                7,
-                u32::try_from(first_tool.len()).unwrap(),
-                527,
-            )
+            .with_appended_tool_results(7, u32::try_from(first_tool.len()).unwrap(), 527)
             .unwrap();
         assert_eq!(first.counts(), [6, 0, 0, 0, 4, 2, 3]);
         assert_eq!(first.envelope_residual(), 512);

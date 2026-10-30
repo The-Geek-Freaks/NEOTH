@@ -19103,14 +19103,22 @@ modes:
         }
         #[async_trait]
         impl Provider for LoopProvider {
-            fn name(&self) -> &'static str { "local_ollama" }
-            fn default_model(&self) -> Option<&str> { Some("fixture-local") }
+            fn name(&self) -> &'static str {
+                "local_ollama"
+            }
+            fn default_model(&self) -> Option<&str> {
+                Some("fixture-local")
+            }
             async fn complete(&self, request: Request) -> Result<Completion> {
                 let mut seen = self.seen.lock().unwrap();
                 let index = seen.len();
                 seen.push(request);
                 Ok(Completion {
-                    text: self.replies.get(index).expect("bounded three-call script").clone(),
+                    text: self
+                        .replies
+                        .get(index)
+                        .expect("bounded three-call script")
+                        .clone(),
                     model: "fixture-local".into(),
                     input_tokens: Some(11),
                     output_tokens: Some(7),
@@ -19123,12 +19131,18 @@ modes:
         let counter = home.path().join("mcp-origin-tools-count");
         let mut server = crate::mcp::client::stdio_fixture_config(&counter);
         server.smart_approve = false;
-        let calls: Vec<_> = [1, 2].into_iter().map(|sequence| {
-            format!("```mcp-tool-call\n{}\n```", serde_json::json!({
-                "server": server.id, "tool": "read",
-                "arguments": {"sequence": sequence, "text": "ä🦀"}
-            }))
-        }).collect();
+        let calls: Vec<_> = [1, 2]
+            .into_iter()
+            .map(|sequence| {
+                format!(
+                    "```mcp-tool-call\n{}\n```",
+                    serde_json::json!({
+                        "server": server.id, "tool": "read",
+                        "arguments": {"sequence": sequence, "text": "ä🦀"}
+                    })
+                )
+            })
+            .collect();
         let provider = LoopProvider {
             replies: vec![calls[0].clone(), calls[1].clone(), "done".into()],
             seen: std::sync::Mutex::new(Vec::new()),
@@ -19144,30 +19158,43 @@ modes:
             BlockItem::new(Block::E, "operator question").with_prompt_origin(PromptOrigin::User),
         ];
         let tax = PromptTax {
-            components: Some(PromptAttribution::from_retained_items(
-                &items,
-                crate::providers::token_cap::request_token_upper_bound(&base),
-            ).unwrap()),
+            components: Some(
+                PromptAttribution::from_retained_items(
+                    &items,
+                    crate::providers::token_cap::request_token_upper_bound(&base),
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         };
         let wal_path = home.path().join("mcp-origin.wal");
         let (writer, writer_join) = wal_spawn(wal_path.clone()).unwrap();
         let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
-            crate::permissions::AutonomyLevel::Full, Some(writer.clone()), 20_000,
-        ).with_usage_home(home.path())
-         .with_prompt_tax(tax, &base.prompt, base.system.as_deref());
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            20_000,
+        )
+        .with_usage_home(home.path())
+        .with_prompt_tax(tax, &base.prompt, base.system.as_deref());
         let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &provider, authorizer, Some("fixture-local".into()), "test.mcp_continuation",
+            &provider,
+            authorizer,
+            Some("fixture-local".into()),
+            "test.mcp_continuation",
         );
         let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
             crate::permissions::AutonomyLevel::Full,
-        ).unwrap();
+        )
+        .unwrap();
         let mut budget = crate::mcp::dispatch_loop::CompactionBudget::default();
         let once = crate::hooks::SessionOnceGuard::new();
         let outcome = run_mcp_dispatch_loop(
             &authorized,
             base.clone(),
-            &crate::mcp::McpServers { servers: vec![server], smart_loading: true },
+            &crate::mcp::McpServers {
+                servers: vec![server],
+                smart_loading: true,
+            },
             &policy,
             None,
             &writer,
@@ -19195,8 +19222,12 @@ modes:
             false,
             Vec::new(),
             crate::config::CodeMapImpactPolicy::default(),
-            crate::config::CodeMapConfig::default().requested_context_policy().unwrap(),
-        ).await.unwrap();
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(outcome.iterations, 3);
         assert_eq!(outcome.successful_calls, 2);
         assert_eq!(outcome.final_text, "done");
@@ -19209,9 +19240,14 @@ modes:
         assert_eq!(seen.len(), 3);
         assert!(seen[1].prompt.starts_with(&base.prompt));
         assert!(seen[2].prompt.starts_with(&seen[1].prompt));
-        let total_bound: u64 = seen.iter().map(|request|
-            u64::from(crate::providers::token_cap::request_token_upper_bound(request))
-        ).sum();
+        let total_bound: u64 = seen
+            .iter()
+            .map(|request| {
+                u64::from(crate::providers::token_cap::request_token_upper_bound(
+                    request,
+                ))
+            })
+            .sum();
         let usage = crate::daemon::usage_log::aggregate(home.path(), 0, i64::MAX);
         assert_eq!(usage.total_call_count, 3);
         assert_eq!(usage.total_ok_count, 3);
@@ -19222,9 +19258,14 @@ modes:
         assert_eq!(components.request_upper_bound, total_bound);
         assert!(components.tool_result > 0);
         assert_eq!(components.user, 3 * base.prompt.len() as u64);
-        assert_eq!(components.system, 3 * base.system.as_ref().unwrap().len() as u64);
-        assert_eq!(components.envelope_residual,
-            3 * u64::from(tax.components.unwrap().envelope_residual()));
+        assert_eq!(
+            components.system,
+            3 * base.system.as_ref().unwrap().len() as u64
+        );
+        assert_eq!(
+            components.envelope_residual,
+            3 * u64::from(tax.components.unwrap().envelope_residual())
+        );
 
         let bytes = std::fs::read(wal_path).unwrap();
         let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
@@ -19236,12 +19277,18 @@ modes:
                 crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST => {
                     let value: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
                     let id = value["invocation_id"].as_str().unwrap().to_owned();
-                    assert!(intents.insert(id, value).is_none(), "duplicate provider intent");
+                    assert!(
+                        intents.insert(id, value).is_none(),
+                        "duplicate provider intent"
+                    );
                 }
                 crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE => {
-                    terminals.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                    terminals
+                        .push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
                 }
-                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR => panic!("unexpected provider error"),
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR => {
+                    panic!("unexpected provider error")
+                }
                 _ => {}
             }
             assert!(frame.header.total_len > 0);
@@ -19253,23 +19300,31 @@ modes:
         let mut expected_tool_bytes = 0u64;
         for (index, terminal) in terminals.iter().enumerate() {
             let invocation = terminal["invocation_id"].as_str().unwrap();
-            let intent = intents.remove(invocation).expect("one matching durable intent");
-            assert_eq!(terminal["request_binding_sha256"], intent["request_binding_sha256"]);
+            let intent = intents
+                .remove(invocation)
+                .expect("one matching durable intent");
+            assert_eq!(
+                terminal["request_binding_sha256"],
+                intent["request_binding_sha256"]
+            );
             assert_eq!(terminal["provider"], "local_ollama");
             assert_eq!(terminal["wire_model"], "fixture-local");
             assert_eq!(terminal["call_scope"], "test.mcp_continuation");
             assert_eq!(terminal["input_tokens"], 11);
             assert_eq!(terminal["output_tokens"], 7);
             assert_eq!(terminal["prompt_bytes"], seen[index].prompt.len());
-            assert_eq!(terminal["prompt_hash_xxh3"],
-                xxhash_rust::xxh3::xxh3_64(seen[index].prompt.as_bytes()));
+            assert_eq!(
+                terminal["prompt_hash_xxh3"],
+                xxhash_rust::xxh3::xxh3_64(seen[index].prompt.as_bytes())
+            );
             let counts = &terminal["prompt_tax"]["components"];
             let tool_bytes = counts["tool_result"].as_u64().unwrap();
             if index == 0 {
                 assert_eq!(tool_bytes, 0);
             } else {
                 assert!(tool_bytes > previous_tool_bytes);
-                let appended = seen[index].prompt
+                let appended = seen[index]
+                    .prompt
                     .strip_prefix(&seen[index - 1].prompt)
                     .expect("prior request is retained byte-exact");
                 let (_, results) = appended
@@ -19279,8 +19334,10 @@ modes:
                     .strip_suffix("\n\nContinue. Emit more `mcp-tool-call` blocks if you need to, or finish your reply.")
                     .expect("one result block, no repository hints in this fixture");
                 expected_tool_bytes += u64::try_from(rendered_block.len()).unwrap();
-                assert_eq!(tool_bytes, expected_tool_bytes,
-                    "charge attribution only for the actual rendered result, once");
+                assert_eq!(
+                    tool_bytes, expected_tool_bytes,
+                    "charge attribution only for the actual rendered result, once"
+                );
             }
             previous_tool_bytes = tool_bytes;
             let metadata = terminal["prompt_tax"].to_string();
