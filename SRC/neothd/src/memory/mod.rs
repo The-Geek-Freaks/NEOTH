@@ -22,6 +22,7 @@ pub mod assoc_graph;
 pub mod bulk_text;
 pub mod change_bus;
 pub mod channel_weights;
+pub mod code_range;
 /// GOLD-ADAPT-MEM-05 — Pre-compaction backup + persisted counter.
 /// Snapshots session state + bumps a counter before any compaction so a
 /// bad compaction is recoverable. Wire as a pre-compact hook in the

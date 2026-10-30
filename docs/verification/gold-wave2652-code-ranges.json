@@ -1,0 +1,74 @@
+{
+  "schema": "neoth.wave2652.code-ranges.v1",
+  "base": "8356d385bb5bde9d64a4c552d90b9438e62b6fb9",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "roadmap": "ADOPT-20261012-A03",
+  "tests": [
+    "memory::code_range::tests::code_range_gc_paths_remove_mapping_rows",
+    "memory::code_range::tests::code_range_mapping_insert_failure_rolls_back_replacement",
+    "memory::code_range::tests::code_range_purge_modes_remove_mapping_rows",
+    "memory::code_range::tests::code_range_replacement_removes_old_mappings",
+    "memory::code_range::tests::code_ranges_empty_and_limit_states_are_explicit_after_reopen",
+    "memory::code_range::tests::code_ranges_preserve_unicode_crlf_and_whitespace_bytes",
+    "memory::code_range::tests::code_ranges_retain_supplied_document_provenance_independently",
+    "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
+    "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
+    "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
+    "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
+    "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
+    "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure"
+  ],
+  "focusedAdditionalTests": [
+    "memory::gc::tests::ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts",
+    "memory::gc::tests::size_cap_skips_oldest_managed_source_and_reports_actual_removals",
+    "memory::gc::tests::corrupt_vocabulary_rolls_back_both_gc_paths",
+    "memory::gc::tests::source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds",
+    "memory::gc::tests::both_gc_paths_protect_current_and_event_references_without_source_markers",
+    "memory::gc::tests::v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again",
+    "memory::gc::tests::v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries",
+    "memory::gc::tests::ignored_source_delete_rolls_back_entire_gc_batch",
+    "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
+    "memory::migrations::tests::v3_era_schema_migrates_to_current_target",
+    "memory::migrations::tests::v4_era_schema_migrates_to_current_target",
+    "memory::store::tests::fresh_views_database_contains_no_history_journal_tables"
+  ],
+  "priorDocumentCasesRetained": 79,
+  "focusedDocumentRequired": 104,
+  "focusedCostRequired": 130,
+  "combinedRequired": 234,
+  "portableRegistered": 3200,
+  "behavior": [
+    "Schema52 stores exact half-open UTF8 ranges against each inserted FTS table/rowid and the SHA256 of the submitted full code snapshot",
+    "Duplicate chunk text retains distinct ordinals and offsets in BM25, trigram and fuzzy results",
+    "Caller supplied document provenance is preserved independently; no automatic file identity or raw-file offset assertion",
+    "4096 chunks per source permit complete mapping; larger indexing still succeeds with explicit omitted_limit and no partial mapping",
+    "Empty or whitespace-only input retains zero chunks and explicit omitted_empty; source metadata persists",
+    "Existing source transaction owns insertion, replacement, both purge routes and retention cascades; missing/corrupt complete mapping fails the search"
+  ],
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hostedRuntimeAccepted": false,
+    "wholeA03Accepted": false,
+    "goldAccepted": false
+  },
+  "review": {
+    "agent": "/root/readonly_usage_review",
+    "method": "Prompt-only exact supplied integration/read validation and regression design",
+    "result": "No concrete blocking defect apparent",
+    "runtimeExecuted": false
+  },
+  "limits": [
+    "Ranges address the exact submitted UTF8 snapshot, not original container bytes, syntax nodes or logical identity",
+    "Per-hit reads verify stored chunk hashes and metadata; they cannot independently rehash the unavailable full source",
+    "Legacy sources remain unknown until explicitly reindexed",
+    "Markdown fenced code structure and end-to-end A03 acceptance remain separate open work"
+  ],
+  "predecessor": {
+    "run": 41074447282,
+    "producer": "6d7a83a1d05728edfb8a75e59036f062b1cf5fe6",
+    "status": "IN_PROGRESS",
+    "scope": "GC predecessor only"
+  },
+  "goldCheckboxesClosed": 0,
+  "existingMigrationTestsNewlyRegistered": 4
+}

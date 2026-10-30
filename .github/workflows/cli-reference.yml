@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       document_regressions:
-        description: 'Also run 79 exact document identity, structure, recovery and migration regressions'
+        description: 'Also run 104 exact document identity, structure, recovery and migration regressions'
         type: boolean
         default: false
       cost_replay_regressions:
@@ -171,8 +171,8 @@ jobs:
           matrix = json.loads(matrix_bytes)
           spec = matrix.get("wave2604DocumentRegressions", {})
           names = spec.get("requiredTests", [])
-          if spec.get("requiredCount") != 79 or len(names) != 79 or len(set(names)) != 79:
-              raise SystemExit("document regression selection must contain exactly 79 unique identities")
+          if spec.get("requiredCount") != 104 or len(names) != 104 or len(set(names)) != 104:
+              raise SystemExit("document regression selection must contain exactly 104 unique identities")
           if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
               raise SystemExit("invalid document regression identity")
           native = matrix.get("requiredNativeTests", []) + matrix.get("requiredNativeTestsByPlatform", {}).get("Linux", [])
@@ -189,6 +189,7 @@ jobs:
               "docs/verification/gold-wave2641-docx-section-properties.json",
               "docs/verification/gold-wave2642-docx-numbering.json",
               "docs/verification/gold-wave2645-code-index-preservation.json",
+              "docs/verification/gold-wave2652-code-ranges.json",
               "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json",
           ):
               report_bytes = (root / relative).read_bytes()
@@ -196,11 +197,12 @@ jobs:
               expected_names.extend(report.get("tests", report.get("observedWindows", {}).get("failures", [])))
               expected_names.extend(report.get("focusedAdditionalTests", []))
               inputs[relative] = hashlib.sha256(report_bytes).hexdigest()
+          inputs["SRC/neothd/src/memory/code_range.rs"] = hashlib.sha256((root / "SRC/neothd/src/memory/code_range.rs").read_bytes()).hexdigest()
           inputs["SRC/neothd/src/media/docx_sections.rs"] = hashlib.sha256((root / "SRC/neothd/src/media/docx_sections.rs").read_bytes()).hexdigest()
           inputs["SRC/neothd/src/media/docx_lists.rs"] = hashlib.sha256((root / "SRC/neothd/src/media/docx_lists.rs").read_bytes()).hexdigest()
           inputs["SRC/neothd/src/memory/document_numbering.rs"] = hashlib.sha256((root / "SRC/neothd/src/memory/document_numbering.rs").read_bytes()).hexdigest()
-          if names != sorted(expected_names) or len(set(expected_names)) != 79:
-              raise SystemExit("document selection differs from retained76 plus3 explicit-code preservation cases")
+          if names != sorted(expected_names) or len(set(expected_names)) != 104:
+              raise SystemExit("document selection differs from retained79 plus13 ranges and12 retention/migration cases")
           for name in names:
               matches = [record for record in native if record.get("test") == name and record.get("junitClass") == "neoth"]
               if len(matches) != 1:
@@ -223,7 +225,7 @@ jobs:
               "schema": "neoth.document-regressions.v1", "producer": os.environ["GITHUB_SHA"],
               "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"],
               "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"],
-              "requiredCount": 79, "fixtures": records, "inputs": inputs,
+              "requiredCount": 104, "fixtures": records, "inputs": inputs,
           }
           (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
           (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
@@ -252,8 +254,8 @@ jobs:
               failed_or_missing=$((failed_or_missing + 1))
             fi
           done < "$proof_dir/fixture-names.txt"
-          printf 'selected=79\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
-          test "$visited" -eq 79
+          printf 'selected=104\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 104
           test "$failed_or_missing" -eq 0
 
       - name: Run exact cost replay and provider recovery regressions

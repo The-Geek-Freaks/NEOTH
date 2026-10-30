@@ -372,7 +372,26 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A03: reconcile vocabulary drift from automatic source retention",
         run: migration_v50_to_v51,
     },
+    Migration {
+        from: 51,
+        to: 52,
+        description: "A03: bind explicit code hits to submitted UTF-8 ranges",
+        run: migration_v51_to_v52,
+    },
 ];
+
+pub(crate) fn migration_v51_to_v52(conn: &Connection) -> Result<()> {
+    for name in ["code_source_ranges", "code_chunk_ranges"] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1 COLLATE NOCASE)",
+            [name],
+            |row| row.get(0),
+        )?;
+        ensure!(!exists, "v51→v52: conflicting code range object {name}");
+    }
+    conn.execute_batch(crate::memory::code_range::SCHEMA_SQL)
+        .context("v51→v52: bind explicit code hits to submitted UTF-8 ranges")
+}
 
 pub(crate) fn migration_v50_to_v51(conn: &Connection) -> Result<()> {
     crate::memory::ctx::rebuild_vocabulary(conn)

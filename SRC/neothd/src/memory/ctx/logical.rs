@@ -442,6 +442,7 @@ pub(super) fn advance_after_purge(tx: &Transaction<'_>, removed: usize) -> Resul
 /// Historical test fixtures must remove successor objects before downgrading.
 #[cfg(test)]
 pub(crate) fn remove_schema_for_legacy_fixture(conn: &Connection) -> Result<()> {
+    crate::memory::code_range::remove_schema_for_legacy_fixture(conn)?;
     let owners: i64 = conn.query_row("SELECT count(*) FROM logical_documents", [], |row| {
         row.get(0)
     })?;

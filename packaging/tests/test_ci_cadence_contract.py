@@ -393,6 +393,7 @@ class CiCadenceContractTests(unittest.TestCase):
             "gold-wave2641-docx-section-properties.json",
             "gold-wave2642-docx-numbering.json",
             "gold-wave2645-code-index-preservation.json",
+            "gold-wave2652-code-ranges.json",
             "gold-wave2601-ci-checkpoint-and-migration-expectation.json",
         )
         expected: list[str] = []
@@ -405,9 +406,9 @@ class CiCadenceContractTests(unittest.TestCase):
             )
             expected.extend(report.get("focusedAdditionalTests", []))
         selection = matrix["wave2604DocumentRegressions"]
-        self.assertEqual(selection["requiredCount"], 79)
-        self.assertEqual(len(expected), 79)
-        self.assertEqual(len(set(expected)), 79)
+        self.assertEqual(selection["requiredCount"], 104)
+        self.assertEqual(len(expected), 104)
+        self.assertEqual(len(set(expected)), 104)
         self.assertEqual(selection["requiredTests"], sorted(expected))
         native = (
             matrix["requiredNativeTests"]

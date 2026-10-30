@@ -178,8 +178,7 @@ The source transaction, both search indexes, provenance and replacement rollback
 remain shared with other content types. Prose, log and arbitrary tags retain
 their previous behavior. Previously indexed code must be reindexed from its
 original source to recover text removed by the old heading interpretation.
-This does not add Markdown-fence parsing, code-block source ranges or a new
-document structure schema. The three code-preservation cases passed in the 200-case hosted run 41061897452 on producer 6f4dad5e; later source changes require their own qualification.
+This does not add Markdown-fence parsing or a new document structure schema. The three code-preservation cases passed in the 200-case hosted run 41061897452 on producer 6f4dad5e; later source changes require their own qualification.
 
 ## Automatic retention and vocabulary consistency
 
@@ -202,3 +201,38 @@ a failure preserves the old vocabulary and version for retry. Fresh stores use
 the same current schema, and reopening an upgraded store does not repeat the
 rebuild. These changes and eight new regression cases await final native CI
 qualification; they do not establish full A03 completion.
+
+## Exact ranges for explicitly indexed code
+
+Schema52 adds code_source_ranges and code_chunk_ranges under the existing
+index transaction. New code sources record the SHA256 and byte length of the
+complete submitted UTF-8 snapshot, the ctx-code-utf8/1 splitter version and
+the actual chunk count. Each chunk in both FTS indexes is bound by its table
+and rowid to an ordinal, a half-open byte range and its SHA256. Two identical
+chunks have different ranges even when their content hashes match.
+
+The serialized index report exposes code_source_ranges. Search hits expose
+code_provenance.source and code_provenance.range. These describe submitted
+indexed text, not original-container offsets, syntax nodes, authorship or a
+logical document identity. Existing source_document_provenance remains
+independent and is not synthesized or replaced.
+
+Range coverage is complete for 1 through 4096 chunks. Larger code inputs
+still use the existing index path and retain an omitted_limit snapshot with
+no individual mappings. Empty or whitespace-only input retains zero chunks
+and omitted_empty. This bound applies to range metadata, not the accepted
+size of code input; no partial mapping is reported as complete.
+
+Legacy sources retain unknown range provenance until explicitly reindexed.
+Missing or corrupt mappings for a source marked complete fail the search
+instead of silently returning an unbound hit. Per-hit reads verify the
+stored chunk body, digest, source binding and range bounds; the full-snapshot
+digest remains the assertion recorded at indexing time. They cannot
+independently rehash a full source that is unavailable at read time.
+
+Replacement, explicit purge and automatic retention remove both mapping
+tables through the existing source lifecycle and foreign-key cascades.
+Insertion failures and migration-stamp failures roll back with their source
+transaction. Thirteen range regression cases and the retained retention and
+migration cases await hosted qualification. This slice does not complete
+Markdown code structure or the full A03 acceptance contract.

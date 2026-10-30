@@ -682,6 +682,7 @@ mod tests {
 
     fn gc_emulate_legacy_deletion(conn: &mut Connection, victim: i64) {
         let tx = conn.transaction().unwrap();
+        crate::memory::code_range::remove_schema_for_legacy_fixture(&tx).unwrap();
         tx.execute("DELETE FROM chunks WHERE source_id = ?1", [victim])
             .unwrap();
         tx.execute("DELETE FROM chunks_trigram WHERE source_id = ?1", [victim])

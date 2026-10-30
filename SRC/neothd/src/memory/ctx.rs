@@ -16,6 +16,7 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
+use super::code_range::{self, CodeSearchProvenance, CodeSourceRanges};
 use super::document_provenance::DocumentProvenance;
 
 pub mod logical;
@@ -60,6 +61,9 @@ pub struct IndexReport {
     pub chunk_count: usize,
     pub bytes: usize,
     pub indexed_ts: i64,
+    /// Coverage in the submitted code snapshot; legacy reports may omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_source_ranges: Option<CodeSourceRanges>,
 }
 
 /// One hit from a `search()` call. `mode` reports which fallback layer
@@ -79,6 +83,9 @@ pub struct CtxHit {
     /// Provenance of the full source text from which this hit was chunked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_document_provenance: Option<DocumentProvenance>,
+    /// Exact submitted-text coordinates, independent of document-container metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_provenance: Option<CodeSearchProvenance>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,9 +194,22 @@ fn index_document_in_transaction(
 
     // Chunk + insert into both FTS tables.
     let chunks = split_chunks(&req.content, &req.content_type);
+    let code_source_ranges = if req.content_type == "code" {
+        Some(code_range::insert_source(tx, source_id, &req.content, chunks.len())?)
+    } else {
+        None
+    };
     let mut total_bytes = 0usize;
     for (idx, chunk) in chunks.iter().enumerate() {
-        total_bytes += chunk.body.len();
+        let start = total_bytes;
+        total_bytes = total_bytes.checked_add(chunk.body.len()).context("ctx byte count overflow")?;
+        let range = if let Some(source) = &code_source_ranges {
+            ensure!(req.content.get(start..total_bytes) == Some(chunk.body.as_str()),
+                "code chunk does not preserve submitted bytes");
+            code_range::chunk_range(source, idx, start, &chunk.body)?
+        } else {
+            None
+        };
         for table in &["chunks", "chunks_trigram"] {
             let sql = format!(
                 "INSERT INTO {table} \
@@ -209,9 +229,18 @@ fn index_document_in_transaction(
                     now,
                 ],
             )?;
+            // Capture this exact FTS row before any other insert changes it.
+            let rowid = tx.last_insert_rowid();
+            if let Some(range) = &range {
+                code_range::insert_chunk(tx, source_id, table, rowid, range)?;
+            }
         }
         bump_vocabulary(tx, &chunk.body)?;
-        let _ = idx;
+    }
+    if let Some(source) = &code_source_ranges {
+        ensure!(chunks.is_empty() || total_bytes == req.content.len(),
+            "code chunks do not cover submitted bytes");
+        code_range::validate_inserted(tx, source_id, source)?;
     }
 
     tx.execute(
@@ -225,6 +254,7 @@ fn index_document_in_transaction(
         chunk_count: chunks.len(),
         bytes: total_bytes,
         indexed_ts: now,
+        code_source_ranges,
     })
 }
 
@@ -545,9 +575,14 @@ fn run_match(
                 t.source_category, t.event_id, t.file_path, t.ts_ns, \
                 s.document_provenance_schema, s.document_parser_version, s.document_source_sha256, \
                 s.document_source_bytes, s.document_text_sha256, s.document_text_bytes, \
-                s.document_text_encoding, s.document_text_truncated, s.document_structure_json \
+                s.document_text_encoding, s.document_text_truncated, s.document_structure_json, \
+                cs.source_id,cs.parser_version,cs.text_sha256,cs.text_bytes,cs.chunk_count,cs.coverage, \
+                cr.source_id,cr.ordinal,cr.start_byte,cr.end_byte,cr.chunk_sha256, \
+                s.content_type,s.chunk_count \
          FROM {table} t \
          JOIN sources s ON s.id = t.source_id \
+         LEFT JOIN code_source_ranges cs ON cs.source_id = s.id \
+         LEFT JOIN code_chunk_ranges cr ON cr.fts_table = '{table}' AND cr.chunk_rowid = t.rowid \
          WHERE t.content MATCH ?1 \
          ORDER BY rank \
          LIMIT ?2"
@@ -571,11 +606,13 @@ fn run_match(
                         )
                     })?;
             }
+            let content: String = row.get(3)?;
+            let code_provenance = code_range::from_row(row, 18, &content)?;
             Ok(CtxHit {
                 source_id: row.get(0)?,
                 label: row.get(1)?,
                 title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                content: row.get(3)?,
+                content,
                 content_type: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
                 source_category: row.get(5)?,
                 event_id: row.get(6)?,
@@ -583,6 +620,7 @@ fn run_match(
                 ts_ns: row.get(8)?,
                 mode,
                 source_document_provenance,
+                code_provenance,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

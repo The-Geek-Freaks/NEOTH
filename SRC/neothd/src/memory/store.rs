@@ -140,7 +140,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v49: optional bounded DOCX source structure stored with document provenance.
 /// v50: explicit logical-document revisions, event receipts and purge epochs.
 /// v51: reconcile vocabulary drift left by historical automatic source retention.
-pub const SCHEMA_VERSION: i64 = 51;
+/// v52: exact submitted UTF-8 code chunk ranges in both FTS indexes.
+pub const SCHEMA_VERSION: i64 = 52;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -3066,6 +3067,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(crate::memory::ctx::logical::SCHEMA_SQL)
         .context("create A03 logical-document lifecycle")?;
+
+    conn.execute_batch(crate::memory::code_range::SCHEMA_SQL)
+        .context("create A03 explicit code ranges")?;
 
     // Stamp schema version (idempotent).
     conn.execute(
