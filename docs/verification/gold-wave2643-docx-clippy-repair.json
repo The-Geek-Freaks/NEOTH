@@ -1,0 +1,45 @@
+{
+  "schema": "neoth.wave2643.docx-clippy-repair.v1",
+  "base": "57dcb3e9749be335bc8186823e71408f80171961",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "failedRun": 41037322621,
+  "failedJob": 124001276988,
+  "diagnostic": {
+    "after": "if self.building.as_ref().is_none_or(|b| b.depth != depth) {",
+    "file": "SRC/neothd/src/media/docx_sections.rs",
+    "lint": "clippy::nonminimal_bool",
+    "line": 98,
+    "before": "if !self.building.as_ref().is_some_and(|b| b.depth == depth) {"
+  },
+  "behavior": "Equivalent early return for absent or differently nested section; retain matching-depth whole-container publication",
+  "source": {
+    "afterSha256": "4B281BBAD628A143D57F5820B658029602DD08437F90DC8E32795585B38B559E",
+    "beforeSha256": "04E1C71759CD8E2FC849779E29732F3DDA8A6CF45092B4AE8840C255FA2D13F5"
+  },
+  "review": {
+    "outcome": "Equivalent, no suppression",
+    "method": "Prompt-only truth-table review of None/equal/different depth",
+    "agent": "/root/docx_clippy_repair_review"
+  },
+  "validation": {
+    "localRuntimeExecuted": false,
+    "casesRanInFailedRun": 0,
+    "newHostedAcceptance": "pending",
+    "slimClippy": "failed before repair",
+    "costCases": 115,
+    "documentCases": 62,
+    "total": 177,
+    "workspaceClippy": "not reached"
+  },
+  "priorNative": {
+    "producer": "d54b615bd46510013ba48d8546040ff8ac9f2d44",
+    "fullAccepted": false,
+    "run": 41019849216,
+    "windowsSkipped": 34,
+    "macos": "150-minute cold compilation timeout; no runtime result",
+    "linuxPassed": 19598,
+    "linuxSkipped": 32,
+    "windowsPassed": 19459
+  },
+  "goldCheckboxesClosed": 0
+}

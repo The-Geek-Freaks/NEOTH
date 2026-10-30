@@ -95,7 +95,7 @@ impl Sections {
     }
 
     pub(super) fn end(&mut self, depth: usize, end: usize) {
-        if !self.building.as_ref().is_some_and(|b| b.depth == depth) {
+        if self.building.as_ref().is_none_or(|b| b.depth != depth) {
             return;
         }
         let building = self.building.take().expect("matching section depth");
