@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T07:52:50.3728073Z",
+  "capturedUtc": "2026-10-30T07:55:32.3940482Z",
   "validationStatus": "W2640_SOURCE_INTEGRATED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -7333,33 +7333,33 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions.rs",
-      "bytes": 18173,
-      "sha256": "14E4E83427FB2ECC0A58DD960153CC630EFC87D80F48A5F6401F3569B5C0951E"
+      "bytes": 20999,
+      "sha256": "E93A6579AC52BE568BC18BE94826970D96DF40BCF4A41EDE470208F7E0A29A92"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/collector.rs",
-      "bytes": 26431,
-      "sha256": "7583E566CFA0F16C951A97D9C72383910F16836DE42D236EC1CF269A6EAC384D"
+      "bytes": 30214,
+      "sha256": "FD35BE916E533DE29DE3FA994AEE87AAC91138AE65EBC28F7B1214BC57D6CCE2"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
-      "bytes": 15345,
-      "sha256": "EAA9D912C8BD970FB2C378AF6F78CF546F7A94D80174DDBC913919E6776882B7"
+      "bytes": 17357,
+      "sha256": "FEBF7EB7F446091EDC1B432BF9043B0A0A5BD0235C672EAD827FAD96626297C6"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
-      "bytes": 7450,
-      "sha256": "6148FB7B8B63427E318CD0DA0CEDE2700BC3F7637CF80855377BEDF8D850B242"
+      "bytes": 7645,
+      "sha256": "A6B9F4EFF17795624D10BBFDBE923E53F8A15F5A03CC9D8458229977D7CE383A"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "bytes": 19901,
-      "sha256": "328585CF72AF22535574D7D1B5EA4164CF7DD8A769E4E9348ED7301401271FE4"
+      "bytes": 21999,
+      "sha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs",
-      "bytes": 3237,
-      "sha256": "286D34E415F4B0E3D39250FE56A282F588F5F83CF5DFDF03E3044CB34CB1C718"
+      "bytes": 3256,
+      "sha256": "52712EBCECE221AB31F4377DE1A398A51675375F216B1DB91514C686F5D10CCF"
     },
     {
       "path": "SRC/neothd/src/cli/usage.rs",
@@ -8183,8 +8183,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
-      "bytes": 121941,
-      "sha256": "1B30915B0D7EA3045C49D756DA4E90573CC75F5B801B1CE992B69738EE3C6F25"
+      "bytes": 122159,
+      "sha256": "EC38B4A11EC619E148AE72FE7214C58394E1A5CEA1C7E94D8CC7C4860F8B17C2"
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",

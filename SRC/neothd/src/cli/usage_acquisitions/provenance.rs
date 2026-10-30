@@ -1,8 +1,8 @@
 //! Read-only comparison of retained invocation metadata, never budget authority.
 mod decode;
-mod unique_json;
 #[cfg(test)]
 mod tests;
+mod unique_json;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
@@ -63,16 +63,26 @@ struct Collector {
 
 impl Collector {
     fn new(limits: Limits) -> Self {
-        Self { base: collector::Collector::new(limits), extra: BTreeMap::new() }
+        Self {
+            base: collector::Collector::new(limits),
+            extra: BTreeMap::new(),
+        }
     }
 
-    fn ingest(&mut self, event_type: u8, subtype: u8, location: Location, payload: &[u8]) -> Result<()> {
+    fn ingest(
+        &mut self,
+        event_type: u8,
+        subtype: u8,
+        location: Location,
+        payload: &[u8],
+    ) -> Result<()> {
         let kind = match event_type {
             EVENT_TYPE_PROVIDER_REQUEST => "request",
             EVENT_TYPE_COST_ESTIMATE_SHOWN => "plan",
             EVENT_TYPE_PROVIDER_RESPONSE | EVENT_TYPE_PROVIDER_ERROR => "terminal",
-            EVENT_TYPE_EXTENDED if subtype == ExtendedSubtype::ProviderBudgetAcquired as u8 =>
-                "acquisition",
+            EVENT_TYPE_EXTENDED if subtype == ExtendedSubtype::ProviderBudgetAcquired as u8 => {
+                "acquisition"
+            }
             _ => return Ok(()),
         };
         // One shared charge per recognized frame, before any JSON allocation.
@@ -85,7 +95,9 @@ impl Collector {
                 };
                 if kind == "request"
                     && value.get("model").is_some_and(|model| {
-                        model.as_str().is_none() || model.as_str() != value.get("wire_model").and_then(serde_json::Value::as_str)
+                        model.as_str().is_none()
+                            || model.as_str()
+                                != value.get("wire_model").and_then(serde_json::Value::as_str)
                     })
                 {
                     return self.base.diagnostic(location, kind, "malformed");
@@ -98,16 +110,30 @@ impl Collector {
             }
             "plan" => match decode::plan(payload) {
                 Ok(record) => {
-                    self.extra.entry(record.invocation_id.clone()).or_default()
-                        .plans.push(Located { location, is_in_window: false, record });
+                    self.extra
+                        .entry(record.invocation_id.clone())
+                        .or_default()
+                        .plans
+                        .push(Located {
+                            location,
+                            is_in_window: false,
+                            record,
+                        });
                     Ok(())
                 }
                 Err(code) => self.base.diagnostic(location, kind, code),
             },
             _ => match decode::terminal(event_type, payload) {
                 Ok(record) => {
-                    self.extra.entry(record.invocation_id.clone()).or_default()
-                        .terminals.push(Located { location, is_in_window: false, record });
+                    self.extra
+                        .entry(record.invocation_id.clone())
+                        .or_default()
+                        .terminals
+                        .push(Located {
+                            location,
+                            is_in_window: false,
+                            record,
+                        });
                     Ok(())
                 }
                 Err(code) => self.base.diagnostic(location, kind, code),
@@ -151,7 +177,12 @@ impl Collector {
     }
 }
 
-fn mark_window<T>(records: &mut [Located<T>], since: u64, until: u64, time: impl Fn(&T) -> u64) -> bool {
+fn mark_window<T>(
+    records: &mut [Located<T>],
+    since: u64,
+    until: u64,
+    time: impl Fn(&T) -> u64,
+) -> bool {
     for value in records.iter_mut() {
         value.is_in_window = (since..=until).contains(&time(&value.record));
     }
@@ -159,7 +190,9 @@ fn mark_window<T>(records: &mut [Located<T>], since: u64, until: u64, time: impl
 }
 
 fn differ<T: PartialEq>(records: &[Located<T>]) -> bool {
-    records.first().is_some_and(|first| records.iter().any(|value| value.record != first.record))
+    records
+        .first()
+        .is_some_and(|first| records.iter().any(|value| value.record != first.record))
 }
 
 impl Group {
@@ -167,7 +200,11 @@ impl Group {
         for (kind, count, differs) in [
             ("request", self.requests.len(), differ(&self.requests)),
             ("plan", self.plans.len(), differ(&self.plans)),
-            ("acquisition", self.acquisitions.len(), differ(&self.acquisitions)),
+            (
+                "acquisition",
+                self.acquisitions.len(),
+                differ(&self.acquisitions),
+            ),
             ("terminal", self.terminals.len(), differ(&self.terminals)),
         ] {
             if count == 0 {
@@ -180,16 +217,41 @@ impl Group {
             }
         }
         // All valid occurrences participate; no winner is selected on conflicts.
-        let identities = self.requests.iter().map(|v| {
-            (Some(v.record.request_binding_sha256.as_str()), v.record.provider.as_str(), v.record.wire_model.as_str())
-        }).chain(self.plans.iter().map(|v| {
-            (Some(v.record.binding.as_str()), v.record.provider.as_str(), v.record.wire_model.as_str())
-        })).chain(self.acquisitions.iter().map(|v| {
-            (Some(v.record.request_binding_sha256.as_str()), v.record.provider.as_str(), v.record.wire_model.as_str())
-        })).chain(self.terminals.iter().map(|v| {
-            (if v.record.lifecycle_bound { v.record.binding.as_deref() } else { None },
-                v.record.provider.as_str(), v.record.wire_model.as_str())
-        }));
+        let identities = self
+            .requests
+            .iter()
+            .map(|v| {
+                (
+                    Some(v.record.request_binding_sha256.as_str()),
+                    v.record.provider.as_str(),
+                    v.record.wire_model.as_str(),
+                )
+            })
+            .chain(self.plans.iter().map(|v| {
+                (
+                    Some(v.record.binding.as_str()),
+                    v.record.provider.as_str(),
+                    v.record.wire_model.as_str(),
+                )
+            }))
+            .chain(self.acquisitions.iter().map(|v| {
+                (
+                    Some(v.record.request_binding_sha256.as_str()),
+                    v.record.provider.as_str(),
+                    v.record.wire_model.as_str(),
+                )
+            }))
+            .chain(self.terminals.iter().map(|v| {
+                (
+                    if v.record.lifecycle_bound {
+                        v.record.binding.as_deref()
+                    } else {
+                        None
+                    },
+                    v.record.provider.as_str(),
+                    v.record.wire_model.as_str(),
+                )
+            }));
         let mut bindings = BTreeSet::new();
         let mut providers = BTreeSet::new();
         let mut models = BTreeSet::new();
@@ -209,7 +271,10 @@ impl Group {
                 self.difference_fields.insert(field);
             }
         }
-        self.unbound_terminal_present = self.terminals.iter().any(|v| !v.record.lifecycle_bound || v.record.binding.is_none());
+        self.unbound_terminal_present = self
+            .terminals
+            .iter()
+            .any(|v| !v.record.lifecycle_bound || v.record.binding.is_none());
         self.association = if !self.difference_fields.is_empty() {
             Association::Conflict
         } else if !self.duplicate_kinds.is_empty() {
@@ -248,7 +313,9 @@ where
         bail!("provenance start must not be after end");
     }
     let mut collector = Collector::new(Limits {
-        max_records: 20_000, max_diagnostics: 1_000, max_input_bytes: 8 * 1024 * 1024,
+        max_records: 20_000,
+        max_diagnostics: 1_000,
+        max_input_bytes: 8 * 1024 * 1024,
     });
     // A failed scan/callback exposes no partial observations.
     let scan = scan(&mut collector)?;
@@ -274,37 +341,78 @@ fn inspect(home: &Path, since: u64, until: u64) -> Result<Inspection> {
         crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
             home,
             crate::wal::scan::supported_home_scan_limits(),
-            |source, frame| collector.ingest(
-                frame.header.event_type, frame.header.event_subtype, location(source), frame.payload,
-            ),
+            |source, frame| {
+                collector.ingest(
+                    frame.header.event_type,
+                    frame.header.event_subtype,
+                    location(source),
+                    frame.payload,
+                )
+            },
         )
     })
 }
 
 fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
-    let mut output = BoundedOutput { bytes: Vec::new(), limit: MAX_OUTPUT_BYTES };
+    let mut output = BoundedOutput {
+        bytes: Vec::new(),
+        limit: MAX_OUTPUT_BYTES,
+    };
     match format {
         UsageFormat::Json => serde_json::to_writer_pretty(&mut output, inspection)?,
         UsageFormat::Table => {
-            writeln!(output, "Invocation provenance [{} .. {}] (inclusive recorded timestamps)",
-                inspection.observations.since_unix, inspection.observations.until_unix)?;
-            writeln!(output, "Retained segments={} authenticated_bytes_complete={} decoding_complete={}",
-                inspection.scan.boundaries.len(), inspection.scan.complete, inspection.observations.semantic_decode_complete)?;
-            writeln!(output, "Metadata matches cover observed records only; this is not complete history or an atomic latest view.")?;
-            writeln!(output, "Plans are estimates; acquisitions are reservations; terminal counters are provider reports.")?;
-            writeln!(output, "Frozen computed costs are not invoices or current balances. null stays unknown; zero stays known.")?;
-            writeln!(output, "Prompt components use a UTF-8 upper-bound estimate, not a model tokenizer; tokenizer version is unknown.")?;
+            writeln!(
+                output,
+                "Invocation provenance [{} .. {}] (inclusive recorded timestamps)",
+                inspection.observations.since_unix, inspection.observations.until_unix
+            )?;
+            writeln!(
+                output,
+                "Retained segments={} authenticated_bytes_complete={} decoding_complete={}",
+                inspection.scan.boundaries.len(),
+                inspection.scan.complete,
+                inspection.observations.semantic_decode_complete
+            )?;
+            writeln!(
+                output,
+                "Metadata matches cover observed records only; this is not complete history or an atomic latest view."
+            )?;
+            writeln!(
+                output,
+                "Plans are estimates; acquisitions are reservations; terminal counters are provider reports."
+            )?;
+            writeln!(
+                output,
+                "Frozen computed costs are not invoices or current balances. null stays unknown; zero stays known."
+            )?;
+            writeln!(
+                output,
+                "Prompt components use a UTF-8 upper-bound estimate, not a model tokenizer; tokenizer version is unknown."
+            )?;
             if inspection.scan.boundaries.is_empty() {
-                writeln!(output, "No retained WAL segments; this does not establish zero usage.")?;
+                writeln!(
+                    output,
+                    "No retained WAL segments; this does not establish zero usage."
+                )?;
             }
             for boundary in &inspection.scan.boundaries {
-                writeln!(output, "  segment {:?}: authenticated through {} of {} logical bytes",
-                    boundary.segment_name, boundary.authenticated_through, boundary.logical_len)?;
+                writeln!(
+                    output,
+                    "  segment {:?}: authenticated through {} of {} logical bytes",
+                    boundary.segment_name, boundary.authenticated_through, boundary.logical_len
+                )?;
             }
             for group in &inspection.observations.groups {
-                writeln!(output, "\nInvocation {:?}: {:?}; missing={:?} duplicates={:?} differences={:?} unbound_terminal={}",
-                    group.invocation_id, group.association, group.missing_kinds, group.duplicate_kinds,
-                    group.difference_fields, group.unbound_terminal_present)?;
+                writeln!(
+                    output,
+                    "\nInvocation {:?}: {:?}; missing={:?} duplicates={:?} differences={:?} unbound_terminal={}",
+                    group.invocation_id,
+                    group.association,
+                    group.missing_kinds,
+                    group.duplicate_kinds,
+                    group.difference_fields,
+                    group.unbound_terminal_present
+                )?;
                 for value in &group.requests {
                     write!(output, "  request ")?;
                     serde_json::to_writer(&mut output, value)?;
@@ -327,8 +435,14 @@ fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
                 }
             }
             for diagnostic in &inspection.observations.diagnostics {
-                writeln!(output, "  scan-wide diagnostic: {} {} at {:?}:{}",
-                    diagnostic.record_kind, diagnostic.code, diagnostic.location.segment_name, diagnostic.location.logical_offset)?;
+                writeln!(
+                    output,
+                    "  scan-wide diagnostic: {} {} at {:?}:{}",
+                    diagnostic.record_kind,
+                    diagnostic.code,
+                    diagnostic.location.segment_name,
+                    diagnostic.location.logical_offset
+                )?;
             }
         }
     }
@@ -340,10 +454,13 @@ pub(in crate::cli) fn run(home: &Path, args: UsageArgs) -> Result<()> {
     if args.currency.is_some() || args.acquisitions {
         bail!("--provenance cannot be combined with --acquisitions or --currency");
     }
-    let format = UsageFormat::parse(&args.format).context("provenance format must be table or json")?;
+    let format =
+        UsageFormat::parse(&args.format).context("provenance format must be table or json")?;
     let (since, until) = window(&args, || {
-        let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
-            .context("system clock before unix epoch")?.as_secs();
+        let seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before unix epoch")?
+            .as_secs();
         i64::try_from(seconds).context("system clock exceeds timestamp range")
     })?;
     let text = render(&inspect(home, since, until)?, format)?;

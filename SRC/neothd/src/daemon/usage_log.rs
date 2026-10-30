@@ -834,9 +834,7 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
 /// must supply an authenticated frame and validate its lifecycle/binding fields.
 /// V2 keeps observed counters but leaves unsaved amounts unknown. V3+ preserves
 /// the validated frozen snapshot, including any available historic price basis.
-pub(crate) fn retained_terminal_usage(
-    payload: &[u8],
-) -> anyhow::Result<Option<UsageEvent>> {
+pub(crate) fn retained_terminal_usage(payload: &[u8]) -> anyhow::Result<Option<UsageEvent>> {
     usage_event_from_terminal_payload_with_legacy(payload, |event| event)
 }
 
@@ -2826,20 +2824,25 @@ mod tests {
         assert_eq!(retained.cache_savings_usd, None);
         assert_eq!(retained.pricing_basis, None);
         // The existing repair policy is intentionally separate and unchanged.
-        assert!(usage_event_from_terminal_payload(&bytes)
-            .unwrap().unwrap().cost_usd.is_some());
+        assert!(
+            usage_event_from_terminal_payload(&bytes)
+                .unwrap()
+                .unwrap()
+                .cost_usd
+                .is_some()
+        );
     }
 
     #[test]
     fn retained_terminal_versions_preserve_frozen_amount_bits_basis_and_components() {
         let (legacy_event, legacy_payload) = frozen_terminal_fixture();
-        let mut priced = priced_terminal_event(
-            "openai_api", "gpt-4o", Some(99), Some(3), Some(0), Some(0),
-        );
+        let mut priced =
+            priced_terminal_event("openai_api", "gpt-4o", Some(99), Some(3), Some(0), Some(0));
         // Synthetic historical snapshot tests exact retention, not price arithmetic.
         // Rates and amounts deliberately differ from today's lookup.
         priced.pricing_basis = Some(crate::providers::pricing_basis::PricingBasis::from_price(
-            &priced.provider, &priced.model,
+            &priced.provider,
+            &priced.model,
             crate::providers::cost::PriceRow {
                 input_eur_per_mtok: 7.25,
                 output_eur_per_mtok: 13.5,
@@ -2854,8 +2857,10 @@ mod tests {
         component_event.prompt_tax = Some(crate::tokens::budget::PromptTax {
             components: Some(
                 crate::tokens::prompt_attribution::PromptAttribution::from_retained_items(
-                    &[item], 520,
-                ).unwrap(),
+                    &[item],
+                    520,
+                )
+                .unwrap(),
             ),
             ..Default::default()
         });
@@ -2869,10 +2874,16 @@ mod tests {
             (component_event, component_payload),
         ] {
             let retained = retained_terminal_usage(&serde_json::to_vec(&payload).unwrap())
-                .unwrap().unwrap();
-            assert_eq!(retained.cost_usd.map(f64::to_bits), expected.cost_usd.map(f64::to_bits));
-            assert_eq!(retained.cache_savings_usd.map(f64::to_bits),
-                expected.cache_savings_usd.map(f64::to_bits));
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                retained.cost_usd.map(f64::to_bits),
+                expected.cost_usd.map(f64::to_bits)
+            );
+            assert_eq!(
+                retained.cache_savings_usd.map(f64::to_bits),
+                expected.cache_savings_usd.map(f64::to_bits)
+            );
             assert_eq!(retained, expected);
         }
     }
@@ -2892,7 +2903,8 @@ mod tests {
             let mut raw = payload.clone();
             raw["usage_snapshot"] = terminal_usage_snapshot(&expected).unwrap();
             let retained = retained_terminal_usage(&serde_json::to_vec(&raw).unwrap())
-                .unwrap().unwrap();
+                .unwrap()
+                .unwrap();
             assert_eq!(retained.cost_usd, cost);
             assert_eq!(retained.cache_savings_usd, savings);
         }

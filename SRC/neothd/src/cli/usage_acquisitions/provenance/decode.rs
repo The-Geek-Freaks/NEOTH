@@ -79,7 +79,12 @@ pub(super) fn plan(payload: &[u8]) -> Result<Plan, &'static str> {
     if wire.authorization_binding != "actual_leaf_request"
         || wire.authorization_id != wire.invocation_id
         || wire.input_bound_kind != "utf8_bytes_plus_request_message_overhead"
-        || !identity_ok(&wire.invocation_id, &wire.request_binding_sha256, &wire.provider, &wire.model)
+        || !identity_ok(
+            &wire.invocation_id,
+            &wire.request_binding_sha256,
+            &wire.provider,
+            &wire.model,
+        )
         || wire.output_token_ceiling == Some(0)
     {
         return Err("malformed");
@@ -90,7 +95,9 @@ pub(super) fn plan(payload: &[u8]) -> Result<Plan, &'static str> {
                 && bound.input_upper_bound == wire.input_token_upper_bound
                 && bound.output_ceiling == ceiling =>
         {
-            bound.bound_usd(&wire.provider, &wire.model).map_err(|_| "malformed")?;
+            bound
+                .bound_usd(&wire.provider, &wire.model)
+                .map_err(|_| "malformed")?;
         }
         (None, Some(_)) if wire.cost_bound_kind == "token_bounded_unknown_pricing" => {}
         (None, None) if wire.cost_bound_kind == "unbounded_provider_invocation" => {}
@@ -125,8 +132,9 @@ pub(super) fn terminal(event_type: u8, payload: &[u8]) -> Result<Terminal, &'sta
     };
     let amount_provenance = match projection_schema {
         "neoth.provider-usage.v2" => "legacy_unpriced",
-        "neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5" =>
-            "frozen_computed_amounts_not_invoice",
+        "neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5" => {
+            "frozen_computed_amounts_not_invoice"
+        }
         _ => return Err("unsupported_schema"),
     };
     let lifecycle_present = match object.get("schema") {
@@ -137,7 +145,10 @@ pub(super) fn terminal(event_type: u8, payload: &[u8]) -> Result<Terminal, &'sta
     };
     let invocation_id = required_string(object, "invocation_id")?;
     let provider = required_string(object, "provider")?;
-    let ts_unix = object.get("ts_unix").and_then(Value::as_u64).ok_or("malformed")?;
+    let ts_unix = object
+        .get("ts_unix")
+        .and_then(Value::as_u64)
+        .ok_or("malformed")?;
     let model_field = |key: &str| -> Result<Option<&str>, &'static str> {
         match object.get(key) {
             None => Ok(None),
@@ -159,13 +170,14 @@ pub(super) fn terminal(event_type: u8, payload: &[u8]) -> Result<Terminal, &'sta
         Some(_) => return Err("malformed"),
     };
     // Only the identity check uses this sentinel; absent bindings remain absent.
-    let identity_binding = binding.unwrap_or(
-        "0000000000000000000000000000000000000000000000000000000000000000",
-    );
+    let identity_binding =
+        binding.unwrap_or("0000000000000000000000000000000000000000000000000000000000000000");
     if !identity_ok(invocation_id, identity_binding, provider, model) {
         return Err("malformed");
     }
-    let event = retained_terminal_usage(payload).map_err(|_| "malformed")?.ok_or("malformed")?;
+    let event = retained_terminal_usage(payload)
+        .map_err(|_| "malformed")?
+        .ok_or("malformed")?;
     if event.provider != provider
         || event.model != model
         || event.invocation_id.as_deref() != Some(invocation_id)
@@ -185,8 +197,12 @@ pub(super) fn terminal(event_type: u8, payload: &[u8]) -> Result<Terminal, &'sta
         event_type,
         projection_schema: projection_schema.to_owned(),
         amount_provenance,
-        cost_usd_bits: event.cost_usd.map(|value| format!("{:016x}", value.to_bits())),
-        cache_savings_usd_bits: event.cache_savings_usd.map(|value| format!("{:016x}", value.to_bits())),
+        cost_usd_bits: event
+            .cost_usd
+            .map(|value| format!("{:016x}", value.to_bits())),
+        cache_savings_usd_bits: event
+            .cache_savings_usd
+            .map(|value| format!("{:016x}", value.to_bits())),
         event,
     })
 }

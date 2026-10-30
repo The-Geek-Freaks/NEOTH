@@ -96,7 +96,9 @@ impl<'de> serde::de::Visitor<'de> for UniqueValueVisitor {
 pub(super) fn parse_unique_json(raw: &[u8]) -> Result<serde_json::Value, &'static str> {
     use serde::de::DeserializeSeed as _;
     let mut deserializer = serde_json::Deserializer::from_slice(raw);
-    let value = UniqueValueSeed.deserialize(&mut deserializer).map_err(|_| "malformed")?;
+    let value = UniqueValueSeed
+        .deserialize(&mut deserializer)
+        .map_err(|_| "malformed")?;
     deserializer.end().map_err(|_| "malformed")?;
     Ok(value)
 }

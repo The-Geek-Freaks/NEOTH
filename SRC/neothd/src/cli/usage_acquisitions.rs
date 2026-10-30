@@ -114,52 +114,125 @@ impl Write for BoundedOutput {
 }
 
 fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
-    let mut output = BoundedOutput { bytes: Vec::new(), limit: MAX_OUTPUT_BYTES };
+    let mut output = BoundedOutput {
+        bytes: Vec::new(),
+        limit: MAX_OUTPUT_BYTES,
+    };
     match format {
         UsageFormat::Json => serde_json::to_writer_pretty(&mut output, inspection)?,
         UsageFormat::Table => {
-            writeln!(output, "Acquisition observations [{} .. {}] (inclusive recorded timestamps)",
-                inspection.observations.since_unix, inspection.observations.until_unix)?;
-            writeln!(output, "Retained segments={} authenticated_bytes_complete={} decoding_complete={}",
-                inspection.scan.boundaries.len(), inspection.scan.complete,
-                inspection.observations.semantic_decode_complete)?;
-            writeln!(output, "This is a retained snapshot, not complete history or an atomic latest view.")?;
-            writeln!(output, "Matches compare recorded metadata within this home; they do not prove causal identity.")?;
-            writeln!(output, "Conflicts name differing recorded fields; they do not establish separate events, double debits or budget discrepancies.")?;
-            writeln!(output, "Amounts are reservations, not spending, settlement or current balance.")?;
-            writeln!(output, "None means no scope recorded in that observation; missing records remain unknown.")?;
+            writeln!(
+                output,
+                "Acquisition observations [{} .. {}] (inclusive recorded timestamps)",
+                inspection.observations.since_unix, inspection.observations.until_unix
+            )?;
+            writeln!(
+                output,
+                "Retained segments={} authenticated_bytes_complete={} decoding_complete={}",
+                inspection.scan.boundaries.len(),
+                inspection.scan.complete,
+                inspection.observations.semantic_decode_complete
+            )?;
+            writeln!(
+                output,
+                "This is a retained snapshot, not complete history or an atomic latest view."
+            )?;
+            writeln!(
+                output,
+                "Matches compare recorded metadata within this home; they do not prove causal identity."
+            )?;
+            writeln!(
+                output,
+                "Conflicts name differing recorded fields; they do not establish separate events, double debits or budget discrepancies."
+            )?;
+            writeln!(
+                output,
+                "Amounts are reservations, not spending, settlement or current balance."
+            )?;
+            writeln!(
+                output,
+                "None means no scope recorded in that observation; missing records remain unknown."
+            )?;
             if inspection.no_retained_segments {
-                writeln!(output, "No retained WAL segments; this does not establish zero usage.")?;
+                writeln!(
+                    output,
+                    "No retained WAL segments; this does not establish zero usage."
+                )?;
             }
             for boundary in &inspection.scan.boundaries {
-                writeln!(output, "  segment {:?}: authenticated through {} of {} logical bytes",
-                    boundary.segment_name, boundary.authenticated_through, boundary.logical_len)?;
+                writeln!(
+                    output,
+                    "  segment {:?}: authenticated through {} of {} logical bytes",
+                    boundary.segment_name, boundary.authenticated_through, boundary.logical_len
+                )?;
             }
             for group in &inspection.observations.groups {
-                writeln!(output, "\nInvocation {:?}: observed {:?}; differing fields: {:?}", group.invocation_id, group.association, group.difference_fields)?;
+                writeln!(
+                    output,
+                    "\nInvocation {:?}: observed {:?}; differing fields: {:?}",
+                    group.invocation_id, group.association, group.difference_fields
+                )?;
                 for request in &group.requests {
-                    writeln!(output, "  request t={} in_window={} provider={:?} model={:?} binding={:?} at {:?}:{}",
-                        request.record.ts_unix, request.is_in_window, request.record.provider,
-                        request.record.wire_model, request.record.request_binding_sha256,
-                        request.location.segment_name, request.location.logical_offset)?;
+                    writeln!(
+                        output,
+                        "  request t={} in_window={} provider={:?} model={:?} binding={:?} at {:?}:{}",
+                        request.record.ts_unix,
+                        request.is_in_window,
+                        request.record.provider,
+                        request.record.wire_model,
+                        request.record.request_binding_sha256,
+                        request.location.segment_name,
+                        request.location.logical_offset
+                    )?;
                 }
                 for acquisition in &group.acquisitions {
-                    writeln!(output, "  acquisition t={} in_window={} provider={:?} model={:?} binding={:?} at {:?}:{}",
-                        acquisition.record.ts_unix, acquisition.is_in_window, acquisition.record.provider,
-                        acquisition.record.wire_model, acquisition.record.request_binding_sha256,
-                        acquisition.location.segment_name, acquisition.location.logical_offset)?;
-                    writeln!(output, "    daily_usd_nanos={:?} operation_tokens={:?} operation_microusd={:?} cluster_usd_nanos={:?} cluster_grant={:?}",
+                    writeln!(
+                        output,
+                        "  acquisition t={} in_window={} provider={:?} model={:?} binding={:?} at {:?}:{}",
+                        acquisition.record.ts_unix,
+                        acquisition.is_in_window,
+                        acquisition.record.provider,
+                        acquisition.record.wire_model,
+                        acquisition.record.request_binding_sha256,
+                        acquisition.location.segment_name,
+                        acquisition.location.logical_offset
+                    )?;
+                    writeln!(
+                        output,
+                        "    daily_usd_nanos={:?} operation_tokens={:?} operation_microusd={:?} cluster_usd_nanos={:?} cluster_grant={:?}",
                         acquisition.record.daily_reserved_usd_nanos,
-                        acquisition.record.operation.as_ref().map(|value| value.reserved_tokens),
-                        acquisition.record.operation.as_ref().map(|value| value.reserved_microusd),
-                        acquisition.record.cluster.as_ref().map(|value| value.reserved_usd_nanos),
-                        acquisition.record.cluster.as_ref().map(|value| value.grant_id.as_str()))?;
+                        acquisition
+                            .record
+                            .operation
+                            .as_ref()
+                            .map(|value| value.reserved_tokens),
+                        acquisition
+                            .record
+                            .operation
+                            .as_ref()
+                            .map(|value| value.reserved_microusd),
+                        acquisition
+                            .record
+                            .cluster
+                            .as_ref()
+                            .map(|value| value.reserved_usd_nanos),
+                        acquisition
+                            .record
+                            .cluster
+                            .as_ref()
+                            .map(|value| value.grant_id.as_str())
+                    )?;
                 }
             }
             for diagnostic in &inspection.observations.diagnostics {
-                writeln!(output, "  scan-wide diagnostic: {} {} at {:?}:{}",
-                    diagnostic.record_kind, diagnostic.code, diagnostic.location.segment_name,
-                    diagnostic.location.logical_offset)?;
+                writeln!(
+                    output,
+                    "  scan-wide diagnostic: {} {} at {:?}:{}",
+                    diagnostic.record_kind,
+                    diagnostic.code,
+                    diagnostic.location.segment_name,
+                    diagnostic.location.logical_offset
+                )?;
             }
         }
     }
@@ -177,10 +250,12 @@ where
     };
     let since = match args.since_unix {
         Some(since) => since,
-        None => until.checked_sub(i64::from(args.days.max(1)) * 86_400)
+        None => until
+            .checked_sub(i64::from(args.days.max(1)) * 86_400)
             .context("acquisition time range underflow")?,
     };
-    let since = u64::try_from(since).context("acquisition start must be a nonnegative timestamp")?;
+    let since =
+        u64::try_from(since).context("acquisition start must be a nonnegative timestamp")?;
     let until = u64::try_from(until).context("acquisition end must be a nonnegative timestamp")?;
     if since > until {
         bail!("acquisition start must not be after end");
@@ -190,12 +265,17 @@ where
 
 pub(super) fn run(home: &Path, args: UsageArgs) -> Result<()> {
     if args.currency.is_some() {
-        bail!("--currency cannot be used with --acquisitions; recorded units remain USD nanos and micro-USD");
+        bail!(
+            "--currency cannot be used with --acquisitions; recorded units remain USD nanos and micro-USD"
+        );
     }
-    let format = UsageFormat::parse(&args.format).context("acquisition format must be table or json")?;
+    let format =
+        UsageFormat::parse(&args.format).context("acquisition format must be table or json")?;
     let (since, until) = window(&args, || {
-        let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
-            .context("system clock before unix epoch")?.as_secs();
+        let seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before unix epoch")?
+            .as_secs();
         i64::try_from(seconds).context("system clock exceeds timestamp range")
     })?;
     let inspection = inspect(home, since, until)?;
@@ -228,7 +308,8 @@ mod tests {
             "invocation_id": "b".repeat(64), "request_binding_sha256": "a".repeat(64),
             "provider": "openai_api", "wire_model": "gpt-4o", "ts_unix": 10,
             "private_fixture_extra": "never-include-this-content",
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     fn acquisition() -> Vec<u8> {
@@ -239,33 +320,57 @@ mod tests {
             "daily_reserved_usd_nanos": 0,
             "operation": {"reserved_tokens": 128, "reserved_microusd": 25},
             "cluster": null,
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     async fn real_home(home: &Path) {
         fs::create_dir_all(home.join("wal")).unwrap();
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            home.join("wal/000001.wal"), home.to_path_buf(),
-        ).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(home.join("wal/000001.wal"), home.to_path_buf())
+                .unwrap();
         let payload = request();
-        writer.append_authenticated(
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST, &payload).build(),
-            payload,
-        ).await.unwrap();
+        writer
+            .append_authenticated(
+                crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                    &payload,
+                )
+                .build(),
+                payload,
+            )
+            .await
+            .unwrap();
         let payload = acquisition();
-        writer.append_authenticated(
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
-                .event_subtype(crate::wal::events::ExtendedSubtype::ProviderBudgetAcquired as u8).build(),
-            payload,
-        ).await.unwrap();
+        writer
+            .append_authenticated(
+                crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(
+                        crate::wal::events::ExtendedSubtype::ProviderBudgetAcquired as u8,
+                    )
+                    .build(),
+                payload,
+            )
+            .await
+            .unwrap();
         // An unrelated frame carrying similar JSON must never become an observation.
         let payload = acquisition();
-        writer.append_authenticated(
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE, &payload).build(),
-            payload,
-        ).await.unwrap();
+        writer
+            .append_authenticated(
+                crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+                    &payload,
+                )
+                .build(),
+                payload,
+            )
+            .await
+            .unwrap();
         drop(writer);
-        tokio::time::timeout(Duration::from_secs(5), join).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), join)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     fn snapshot(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
@@ -275,7 +380,10 @@ mod tests {
                 if path.is_dir() {
                     collect(root, &path, files);
                 } else {
-                    files.insert(path.strip_prefix(root).unwrap().to_path_buf(), fs::read(path).unwrap());
+                    files.insert(
+                        path.strip_prefix(root).unwrap().to_path_buf(),
+                        fs::read(path).unwrap(),
+                    );
                 }
             }
         }
@@ -299,7 +407,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         real_home(home.path()).await;
         fs::create_dir_all(home.path().join("usage")).unwrap();
-        fs::write(home.path().join("usage/sentinel.jsonl"), b"not parsed or repaired\n").unwrap();
+        fs::write(
+            home.path().join("usage/sentinel.jsonl"),
+            b"not parsed or repaired\n",
+        )
+        .unwrap();
         let before = snapshot(home.path());
         let inspection = inspect(home.path(), 10, 11).unwrap();
         assert_eq!(inspection.observations.groups.len(), 1);
@@ -307,9 +419,13 @@ mod tests {
         assert_eq!(group.association, collector::Association::Matched);
         assert_eq!(group.requests.len(), 1);
         assert_eq!(group.acquisitions.len(), 1);
-        assert_eq!(group.acquisitions[0].record.daily_reserved_usd_nanos, Some(0));
+        assert_eq!(
+            group.acquisitions[0].record.daily_reserved_usd_nanos,
+            Some(0)
+        );
         assert_eq!(group.acquisitions[0].location.segment_name, "000001.wal");
-        let value: Value = serde_json::from_str(&render(&inspection, UsageFormat::Json).unwrap()).unwrap();
+        let value: Value =
+            serde_json::from_str(&render(&inspection, UsageFormat::Json).unwrap()).unwrap();
         assert_eq!(value["schema"], "neoth.provider-acquisition-inspection.v1");
         assert_eq!(value["full_history_complete"], false);
         assert!(!value.to_string().contains("never-include-this-content"));
@@ -327,10 +443,17 @@ mod tests {
     #[test]
     fn error_after_valid_callback_discards_all_buffered_observations() {
         let result = collect_after_scan(0, 20, |collector| {
-            collector.ingest_request(Location {
-                segment_name: "000001.wal".into(), segment_generation: 1, segment_seq: 1,
-                segment_start_ts_ns: 0, segment_node_id: [0; 16], logical_offset: 64,
-            }, &request())?;
+            collector.ingest_request(
+                Location {
+                    segment_name: "000001.wal".into(),
+                    segment_generation: 1,
+                    segment_seq: 1,
+                    segment_start_ts_ns: 0,
+                    segment_node_id: [0; 16],
+                    logical_offset: 64,
+                },
+                &request(),
+            )?;
             bail!("injected later authentication failure")
         });
         assert!(result.is_err());
@@ -341,26 +464,42 @@ mod tests {
         // The scanner itself tests real keyed-marker tail exclusion. This seam
         // checks that the reader preserves its incomplete-coverage result.
         let inspection = collect_after_scan(0, 20, |collector| {
-            collector.ingest_request(Location {
-                segment_name: "000001.wal".into(), segment_generation: 1, segment_seq: 1,
-                segment_start_ts_ns: 0, segment_node_id: [0; 16], logical_offset: 64,
-            }, &request())?;
+            collector.ingest_request(
+                Location {
+                    segment_name: "000001.wal".into(),
+                    segment_generation: 1,
+                    segment_seq: 1,
+                    segment_start_ts_ns: 0,
+                    segment_node_id: [0; 16],
+                    logical_offset: 64,
+                },
+                &request(),
+            )?;
             Ok(AuthenticatedPrefixScan {
                 complete: false,
                 boundaries: vec![crate::wal::scan::AuthenticatedPrefixBoundary {
-                    segment_name: "000001.wal".into(), authenticated_through: 128, logical_len: 256,
+                    segment_name: "000001.wal".into(),
+                    authenticated_through: 128,
+                    logical_len: 256,
                 }],
             })
-        }).unwrap();
+        })
+        .unwrap();
         assert!(!inspection.scan.complete);
-        assert_eq!(inspection.observations.groups[0].association, collector::Association::RequestOnly);
+        assert_eq!(
+            inspection.observations.groups[0].association,
+            collector::Association::RequestOnly
+        );
         assert!(inspection.observations.groups[0].acquisitions.is_empty());
         assert!(!inspection.full_history_complete);
     }
 
     #[test]
     fn output_limit_is_enforced_before_extending_the_buffer() {
-        let mut output = BoundedOutput { bytes: Vec::new(), limit: 4 };
+        let mut output = BoundedOutput {
+            bytes: Vec::new(),
+            limit: 4,
+        };
         output.write_all(b"1234").unwrap();
         assert!(output.write_all(b"5").is_err());
         assert_eq!(output.bytes, b"1234");
@@ -372,19 +511,36 @@ mod tests {
         assert!(!legacy.acquisitions);
         assert_eq!(legacy.format, "table");
         assert_eq!(legacy.days, 1);
-        let legacy_currency = TestCli::try_parse_from(["test", "--currency", "EUR"]).unwrap().args;
+        let legacy_currency = TestCli::try_parse_from(["test", "--currency", "EUR"])
+            .unwrap()
+            .args;
         assert!(!legacy_currency.acquisitions);
         assert_eq!(legacy_currency.currency.as_deref(), Some("EUR"));
         assert!(TestCli::try_parse_from(["test", "--acquisitions", "--currency", "EUR"]).is_err());
-        assert!(TestCli::try_parse_from(["test", "--acquisitions"]).unwrap().args.acquisitions);
+        assert!(
+            TestCli::try_parse_from(["test", "--acquisitions"])
+                .unwrap()
+                .args
+                .acquisitions
+        );
     }
 
     #[test]
     fn explicit_window_never_reads_the_clock_and_keeps_inclusive_bounds() {
         let args = TestCli::try_parse_from([
-            "test", "--acquisitions", "--since-unix", "10", "--until-unix", "20",
-        ]).unwrap().args;
-        assert_eq!(window(&args, || panic!("explicit interval must not read clock")).unwrap(), (10, 20));
+            "test",
+            "--acquisitions",
+            "--since-unix",
+            "10",
+            "--until-unix",
+            "20",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(
+            window(&args, || panic!("explicit interval must not read clock")).unwrap(),
+            (10, 20)
+        );
         let mut invalid = args.clone();
         invalid.since_unix = Some(21);
         assert!(window(&invalid, || Ok(0)).is_err());
@@ -394,7 +550,9 @@ mod tests {
 
     #[test]
     fn default_window_uses_checked_subtraction() {
-        let args = TestCli::try_parse_from(["test", "--acquisitions"]).unwrap().args;
+        let args = TestCli::try_parse_from(["test", "--acquisitions"])
+            .unwrap()
+            .args;
         assert_eq!(window(&args, || Ok(100_000)).unwrap(), (13_600, 100_000));
         assert!(window(&args, || Ok(i64::MIN)).is_err());
     }
