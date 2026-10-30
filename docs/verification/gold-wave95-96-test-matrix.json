@@ -4,8 +4,8 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 458712,
-    "sha256": "423F88AC99D6C3AC75E535662A502BAD9DC29CE55481CCE947BB2C41B4AA413D"
+    "bytes": 458713,
+    "sha256": "CDA3351F0B73ADE92AA79A17ADFAE8DEBF3AEB133C2190D4B2FBCFBA8F7B8049"
   },
   "sourceInputs": 2504,
   "requiredNativeTests": [
@@ -89099,49 +89099,13 @@
     "status": "SOURCE_INTEGRATED_HOSTED_PENDING"
   },
   "wave2640ProvenanceIntegration": {
-    "base": "110d3c998ef39df5e1f2cbfb63a49bb8f463f934",
+    "base": "ad52fcdb4f14cc1613806259fe01595e6d517527",
     "sources": [
       {
-        "path": "SRC/neothd/src/cli/usage_acquisitions.rs",
-        "bytes": 20999,
-        "sha256": "E93A6579AC52BE568BC18BE94826970D96DF40BCF4A41EDE470208F7E0A29A92",
-        "blob": "82c7cd85bbdcbca9da5e7700a15d16e665b370e1"
-      },
-      {
-        "path": "SRC/neothd/src/cli/usage_acquisitions/collector.rs",
-        "bytes": 30214,
-        "sha256": "FD35BE916E533DE29DE3FA994AEE87AAC91138AE65EBC28F7B1214BC57D6CCE2",
-        "blob": "a08b49b54809b7dd7b67d169df216d88b0eab99e"
-      },
-      {
-        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
-        "bytes": 17357,
-        "sha256": "FEBF7EB7F446091EDC1B432BF9043B0A0A5BD0235C672EAD827FAD96626297C6",
-        "blob": "fa52985436e5469f44f9a049447f15280c08fa2e"
-      },
-      {
-        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
-        "bytes": 7645,
-        "sha256": "A6B9F4EFF17795624D10BBFDBE923E53F8A15F5A03CC9D8458229977D7CE383A",
-        "blob": "fec9be222edb6e58295aecabed93c432ef4fea9e"
-      },
-      {
-        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-        "bytes": 21999,
-        "sha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
-        "blob": "e4c321bfb09c3a6ed224f978ede43583e7023261"
-      },
-      {
-        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs",
-        "bytes": 3256,
-        "sha256": "52712EBCECE221AB31F4377DE1A398A51675375F216B1DB91514C686F5D10CCF",
-        "blob": "847c306824053fae1b9f057b4a8620b0ff096221"
-      },
-      {
-        "path": "SRC/neothd/src/daemon/usage_log.rs",
-        "bytes": 122159,
-        "sha256": "EC38B4A11EC619E148AE72FE7214C58394E1A5CEA1C7E94D8CC7C4860F8B17C2",
-        "blob": "c1aa5211850d1cd1d2904d01d2bc6d74c901274d"
+        "path": "docs/COST_PROVENANCE.md",
+        "bytes": 11048,
+        "sha256": "03C094E1106F6762A366EBA21D9A87C9FD009B46F5F57DCBE44894EDBD0AAB88",
+        "blob": "ad56af61071ff800f295ced5d3be8149168903b1"
       }
     ],
     "note": "Acquisition and provenance readers, readonly frozen terminal decoder; 115 exact cases retain prior67; local runtime held; native run41019849216 remains prior producer proof only.",

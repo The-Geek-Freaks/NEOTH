@@ -14,7 +14,7 @@ A02 now carries optional `prompt_tax.components` for instrumented final bundles.
 
 The existing request binding carries this metadata into the same reservation/ticket. Changed prompt/system bytes clear it; a changed model/stop envelope clears the component estimate even if content stays identical. Request intents keep their original v2 shape. Terminals with components use WAL v5 and snapshot v3, including the same price basis and exact amount bits. Historical terminal v2/v3/v4 and snapshot v1/v2 reject the new component key, including null. Canonical v5 replay validates the component arithmetic and outer/snapshot equality without repricing, calling a provider or debiting again.
 
-`neoth usage` and its JSON rollup show seven-category estimates, residual and observed-call coverage separately from reported token and money totals. Missing legacy or unbound measurements remain unavailable; observed zeros remain zeros. Tool-loop rewrites without retained typed provenance remain unavailable rather than being guessed from tool text. Reservation-price history, model-specific tokenizer measurements, broader tool-loop origin propagation and dedicated GUI/mobile presentation remain open. This slice stores no prompt text and introduces no second ledger.
+`neoth usage` and its JSON rollup show seven-category estimates, residual and observed-call coverage separately from reported token and money totals. Missing legacy or unbound measurements remain unavailable; observed zeros remain zeros. Tool-loop rewrites without retained typed provenance remain unavailable rather than being guessed from tool text. The retained-WAL inspection modes below expose recorded plans and acquisitions. Complete per-stage reservation history, model-specific tokenizer measurements, broader tool-loop origin propagation and dedicated GUI/mobile presentation remain open. This slice stores no prompt text and introduces no second ledger.
 
 Authenticated capability observation and Doctor quality reporting accept terminal v2, v3, v4 and v5. The v3/v4/v5 paths first use the same canonical snapshot decoder as usage recovery, then retain their quality-specific identity, workflow, event-type and time checks. Invalid declared snapshots fail instead of becoming legacy observations. Unknown versions remain legacy and do not contribute quality evidence.
 
@@ -32,4 +32,29 @@ New producer code emits the additive EXTENDED subtype `provider_budget_acquired`
 
 The raw provider dispatch guard is returned only after this observation is durably acknowledged. Caller cancellation retains the owned append task and existing terminal owner. Daily pre-dispatch rollback remains with its original owner; operation quota remains charged. The cluster settlement owner is attached before the new await. Its existing failure policy settles unknown cost at the full reserved bound only after the terminal WAL append succeeds; a failed terminal write leaves the claim outstanding for reconciliation.
 
-This is historical acquisition evidence at the recorded point, not a current balance, final charge, invoice or proof that the provider ran. Missing observations remain unknown: rejection, cancellation or failure may occur before this combined observation despite an earlier acquisition. Complete per-stage history, canonical reader validation, CLI/GUI/mobile presentation and tokenizer measurements remain open. Terminal usage snapshots and replay do not consume this record or debit again. Hosted qualification of this new producer remains pending until its exact-source regression receipt is admitted.
+This is historical acquisition evidence at the recorded point, not a current balance, final charge, invoice or proof that the provider ran. Missing observations remain unknown: rejection, cancellation or failure may occur before this combined observation despite an earlier acquisition. The inspection modes below validate and compare retained records without changing their accounting owner. Complete per-stage history, GUI/mobile presentation and tokenizer measurements remain open. Terminal usage snapshots and replay do not consume this record or debit again.
+
+
+## Inspect retained invocation evidence
+
+The ordinary `neoth usage` command keeps its existing JSONL rollup. Two explicit modes read authenticated prefixes of the retained home WAL instead:
+
+```console
+neoth usage --acquisitions --days 7
+neoth usage --provenance --days 7 --format json
+neoth usage --provenance --since-unix 100 --until-unix 200
+```
+
+`--acquisitions` compares request and acquired-budget observations, preserving daily USD nanos, operation token/micro-USD reservations and cluster USD nanos/grant IDs. `--provenance` adds the planned authorization price and terminal usage for each invocation. The modes are mutually exclusive and reject `--currency`; recorded units and frozen USD amounts are preserved. Both accept `table` or `json` and the existing day/explicit timestamp window options.
+
+The provenance JSON uses `neoth.provider-provenance-inspection.v1`. Each occurrence retains its recorded timestamp, segment identity, logical offset and `is_in_window` flag. An invocation is selected if any recognized record falls within the inclusive window; its other retained observations remain visible as context. Diagnostics are scan-wide because malformed records have no trusted timestamp.
+
+An `observed_metadata_match` requires exactly one request, plan, acquisition and terminal with the same canonical request binding, provider and wire model. A terminal also needs the recognized lifecycle schema and a present binding. This is comparison of recorded metadata within the scanned home, not proof of causality, globally unique invocation IDs or complete history. `conflict`, `duplicate`, `unbound` and `incomplete` remain distinct. The group retains missing kinds, duplicate kinds and differing fields even when another status takes precedence.
+
+Plans remain estimates, acquired scopes remain reservations, and terminal token counters remain reported observations. Terminal v3/v4/v5 preserve frozen computed amounts, exact amount bits, available historical price basis and prompt components. The read-only terminal-v2 path leaves cost and savings unknown; it does not invoke the older JSONL repair policy's current-rate reconstruction. A missing observation or amount is never converted to zero. UTF-8 upper bounds and envelope residuals remain estimates, with no fabricated model-tokenizer version.
+
+Always inspect `scan.complete` and `observations.semantic_decode_complete`. Even when both are true, `full_history_complete` and `atomic_latest_snapshot` remain false: retention and concurrent writes limit what this read can establish. An empty retained WAL does not establish zero usage. Repeated or conflicting observations are all retained; they are not summed into an invoice, settlement or current balance.
+
+The reader has shared limits of 20,000 recognized records, 8 MiB of recognized payload/segment-name input, 1,000 diagnostics and 16 MiB of serialized output. Limits or authentication/scan errors fail the read before buffered output is published. Provenance mode rejects duplicate JSON keys recursively. Neither mode creates missing WAL keys, repairs JSONL, calls a provider, replays an effect or performs another debit.
+
+The W2640 source and hosted formatting/static gates are published. Its 115-case focused runtime and generated CLI reference remain a separate pending qualification; this documentation does not claim GUI/mobile or release acceptance.
