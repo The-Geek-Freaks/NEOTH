@@ -179,4 +179,26 @@ remain shared with other content types. Prose, log and arbitrary tags retain
 their previous behavior. Previously indexed code must be reindexed from its
 original source to recover text removed by the old heading interpretation.
 This does not add Markdown-fence parsing, code-block source ranges or a new
-document structure schema. The three new regression cases await hosted execution.
+document structure schema. The three code-preservation cases passed in the 200-case hosted run 41061897452 on producer 6f4dad5e; later source changes require their own qualification.
+
+## Automatic retention and vocabulary consistency
+
+Automatic TTL and size-cap retention preserve sources with a logical identity,
+a current logical-document reference or a retained logical-event reference.
+Removing those documents remains an explicit operation through the existing
+logical lifecycle. The size cap deletes eligible oldest sources, reports the
+actual deletion count and logs when protected references keep the store above
+the requested soft cap.
+
+For an eligible source, canonical vocabulary contributions, both FTS indexes
+and the source row are removed in one transaction. A missing or invalid vocabulary
+contribution, a failed deletion or a deletion ignored by a trigger rolls back
+the whole batch. The trigram mirror never contributes a second vocabulary count.
+
+Schema51 rebuilds vocabulary once from the canonical chunks retained in an
+existing store, repairing drift that earlier automatic retention could leave.
+The existing migration dispatcher commits the rebuild and version stamp together;
+a failure preserves the old vocabulary and version for retry. Fresh stores use
+the same current schema, and reopening an upgraded store does not repeat the
+rebuild. These changes and eight new regression cases await final native CI
+qualification; they do not establish full A03 completion.

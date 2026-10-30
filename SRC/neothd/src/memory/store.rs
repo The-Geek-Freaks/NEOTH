@@ -139,7 +139,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v48: fuzzy vocabulary rebuilt from canonical chunks and maintained on deletion.
 /// v49: optional bounded DOCX source structure stored with document provenance.
 /// v50: explicit logical-document revisions, event receipts and purge epochs.
-pub const SCHEMA_VERSION: i64 = 50;
+/// v51: reconcile vocabulary drift left by historical automatic source retention.
+pub const SCHEMA_VERSION: i64 = 51;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The

@@ -451,7 +451,7 @@ fn bump_vocabulary(conn: &Connection, body: &str) -> Result<()> {
     Ok(())
 }
 
-fn remove_source_vocabulary(tx: &rusqlite::Transaction, source_id: i64) -> Result<()> {
+pub(super) fn remove_source_vocabulary(tx: &rusqlite::Transaction, source_id: i64) -> Result<()> {
     // Canonical chunks own the exact prior bodies. The trigram mirror must
     // never contribute a second count. Keep subtraction in the caller's tx.
     let mut statement = tx.prepare("SELECT content FROM chunks WHERE source_id = ?1")?;

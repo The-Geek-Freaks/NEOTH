@@ -18,12 +18,15 @@
 //!      without this).
 //!   2. Delete the `sources` row.
 //!
-//! Vocabulary terms are NOT deleted here — they're append-only, idempotent,
-//! and cheap to keep around. A separate `vocabulary` GC could run if the
-//! table ever blows up, but the corpus growth rate doesn't warrant one.
+//! Logical-document sources and retained logical references are protected:
+//! automatic GC does not authorize an explicit logical lifecycle mutation.
+//! Eligible sources use the shared vocabulary subtraction before FTS/source
+//! deletion, so all derived removals commit or roll back together.
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
+
+use super::ctx;
 
 /// Default retention for transient sources. 90 days — same boundary as
 /// the warm→cold memory tier promotion, so operator mental model stays
@@ -42,6 +45,13 @@ pub const TRANSIENT_CATEGORIES: &[&str] = &["transient", "session", "scratch"];
 /// grow the ctx store unbounded (`max_entries` only caps per-tick). With it,
 /// feed entries age out at the same 90-day boundary as other transient sources.
 pub const TRANSIENT_PREFIXES: &[&str] = &["rss:"];
+
+/// Keep physical markers, current owners and historical event references.
+/// Retention is not permission to delete an explicitly managed document.
+const UNOWNED_SOURCE_PREDICATE: &str =
+    "sources.logical_id IS NULL \
+     AND sources.id NOT IN (SELECT current_source_id FROM logical_documents) \
+     AND sources.id NOT IN (SELECT source_id_at_result FROM logical_document_events)";
 
 /// Result of one sweep pass.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -77,7 +87,8 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
         .collect::<String>();
     let select_sql = format!(
         "SELECT id FROM sources \
-         WHERE (source_category IN ({placeholders}){like_clause}) AND indexed_ts < ?",
+         WHERE (source_category IN ({placeholders}){like_clause}) AND indexed_ts < ? \
+         AND {UNOWNED_SOURCE_PREDICATE} ORDER BY id",
     );
     let mut stmt = tx.prepare(&select_sql)?;
     // Bind categories first, then the cutoff.
@@ -98,6 +109,8 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
     let mut chunks_dropped = 0usize;
     let mut chunks_trigram_dropped = 0usize;
     for id in &victim_ids {
+        ctx::remove_source_vocabulary(&tx, *id)
+            .with_context(|| format!("remove vocabulary for source {id}"))?;
         chunks_dropped += tx
             .execute("DELETE FROM chunks WHERE source_id = ?1", params![id])
             .with_context(|| format!("delete chunks for source {id}"))?;
@@ -108,17 +121,14 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
             )
             .with_context(|| format!("delete trigram chunks for source {id}"))?;
     }
-    let sources_dropped = if victim_ids.is_empty() {
-        0
-    } else {
-        let placeholders = victim_ids
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!("DELETE FROM sources WHERE id IN ({placeholders})");
-        tx.execute(&sql, rusqlite::params_from_iter(victim_ids.iter().copied()))?
-    };
+    let mut sources_dropped = 0;
+    for id in &victim_ids {
+        let deleted = tx
+            .execute("DELETE FROM sources WHERE id = ?1", [id])
+            .with_context(|| format!("delete source {id}"))?;
+        anyhow::ensure!(deleted == 1, "source {id} deletion was not applied");
+        sources_dropped += deleted;
+    }
 
     tx.commit().context("commit gc tx")?;
     Ok(GcReport {
@@ -131,33 +141,40 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
 /// GOLD-ADAPT-MEM-13 — default soft cap on the ctx `sources` table. The TTL
 /// pass ([`run_pass`]) only ages out *transient* rows; a busy operator can
 /// still accrete an unbounded archive of non-transient indexed content. This
-/// caps the total at a generous bound so the store can't grow without limit.
+/// bounds automatic retention of unowned sources. Protected logical sources
+/// may keep the total above this soft cap and require explicit lifecycle work.
 pub const DEFAULT_MAX_SOURCES: usize = 50_000;
 
 /// MEM-13 — enforce a total-size cap on the ctx `sources` table: when the row
 /// count exceeds `max_sources`, delete the **oldest** (`indexed_ts ASC`)
-/// overflow rows, cascading into the `chunks` + `chunks_trigram` FTS tables
-/// exactly like [`run_pass`]. Returns the number of source rows dropped.
-/// Transactional — partial failure rolls back. (Operator episodes + ground
-/// truth live in separate tables and are untouched.)
+/// overflow rows that have no logical ownership or event reference. Both FTS
+/// tables and vocabulary are removed in the same transaction as the source.
+/// Returns the actual number dropped. Protected documents may keep the total
+/// above the requested cap; that outcome is logged, never reported as erased.
+/// Operator episodes and ground truth live in separate tables and are untouched.
 pub fn enforce_size_cap(conn: &mut Connection, max_sources: usize) -> Result<usize> {
-    let total: i64 = conn
+    let max_sources = i64::try_from(max_sources).unwrap_or(i64::MAX);
+    let tx = conn.transaction().context("begin size-cap tx")?;
+    let total: i64 = tx
         .query_row("SELECT count(*) FROM sources", [], |r| r.get(0))
         .context("count sources for size cap")?;
-    if total <= max_sources as i64 {
+    if total <= max_sources {
         return Ok(0);
     }
-    let overflow = total - max_sources as i64;
+    let overflow = total - max_sources;
 
-    let tx = conn.transaction().context("begin size-cap tx")?;
     let victim_ids: Vec<i64> = {
-        let mut stmt =
-            tx.prepare("SELECT id FROM sources ORDER BY indexed_ts ASC, id ASC LIMIT ?1")?;
+        let mut stmt = tx.prepare(&format!(
+            "SELECT id FROM sources WHERE {UNOWNED_SOURCE_PREDICATE} \
+             ORDER BY indexed_ts ASC, id ASC LIMIT ?1"
+        ))?;
         let rows = stmt.query_map(params![overflow], |r| r.get::<_, i64>(0))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .context("collect size-cap source ids")?
     };
     for id in &victim_ids {
+        ctx::remove_source_vocabulary(&tx, *id)
+            .with_context(|| format!("remove vocabulary for source {id}"))?;
         tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![id])
             .with_context(|| format!("delete chunks for source {id}"))?;
         tx.execute(
@@ -166,20 +183,24 @@ pub fn enforce_size_cap(conn: &mut Connection, max_sources: usize) -> Result<usi
         )
         .with_context(|| format!("delete trigram chunks for source {id}"))?;
     }
-    let dropped = if victim_ids.is_empty() {
-        0
-    } else {
-        let placeholders = victim_ids
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
-        tx.execute(
-            &format!("DELETE FROM sources WHERE id IN ({placeholders})"),
-            rusqlite::params_from_iter(victim_ids.iter().copied()),
-        )?
-    };
+    let mut dropped = 0;
+    for id in &victim_ids {
+        let deleted = tx
+            .execute("DELETE FROM sources WHERE id = ?1", [id])
+            .with_context(|| format!("delete source {id}"))?;
+        anyhow::ensure!(deleted == 1, "source {id} deletion was not applied");
+        dropped += deleted;
+    }
+    let remaining: i64 =
+        tx.query_row("SELECT count(*) FROM sources", [], |row| row.get(0))?;
     tx.commit().context("commit size-cap tx")?;
+    if remaining > max_sources {
+        tracing::warn!(
+            remaining_sources = remaining,
+            requested_cap = max_sources,
+            "automatic source cap remains above target; logical references are protected"
+        );
+    }
     Ok(dropped)
 }
 
@@ -409,5 +430,353 @@ mod tests {
             labels,
             vec!["keep-fresh".to_string(), "keep-op".to_string()]
         );
+    }
+
+    fn gc_index_transient(conn: &mut Connection, label: &str, content: &str) -> i64 {
+        crate::memory::ctx::index_document(
+            conn,
+            &crate::memory::ctx::IndexRequest {
+                label: label.into(),
+                content: content.into(),
+                file_path: None,
+                content_type: "prose".into(),
+                source_category: Some("transient".into()),
+                event_id: None,
+                document_provenance: None,
+            },
+        )
+        .unwrap()
+        .source_id
+    }
+
+    fn gc_register_managed(conn: &mut Connection) -> Vec<u8> {
+        let request = serde_json::to_vec(&serde_json::json!({
+            "action": "register",
+            "logical_document_id": "doc",
+            "logical_event_id": "registered",
+            "authorization_epoch": 0,
+            "index": {
+                "label": "managed",
+                "content": "sharedquartz logicalzircon",
+                "file_path": "old/document.md",
+                "source_category": "transient"
+            }
+        }))
+        .unwrap();
+        crate::memory::ctx::logical::apply(conn, &request).unwrap();
+        request
+    }
+
+    fn gc_current_source(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT current_source_id FROM logical_documents WHERE logical_id='doc'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn gc_age_sources(conn: &Connection) {
+        conn.execute("UPDATE sources SET indexed_ts=0", []).unwrap();
+    }
+
+    fn gc_source_exists(conn: &Connection, id: i64) -> bool {
+        conn.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE id=?1)", [id], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn gc_fts_count(conn: &Connection, table: &str, word: &str) -> i64 {
+        assert!(matches!(table, "chunks" | "chunks_trigram"));
+        conn.query_row(&format!("SELECT count(*) FROM {table} WHERE {table} MATCH ?1"), [word], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn gc_vocabulary_frequency(conn: &Connection, word: &str) -> Option<i64> {
+        use rusqlite::OptionalExtension;
+        conn.query_row("SELECT frequency FROM vocabulary WHERE term=?1", [word], |row| row.get(0))
+            .optional()
+            .unwrap()
+    }
+
+    fn gc_snapshot(conn: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+        [
+            "sources", "chunks", "chunks_trigram", "vocabulary",
+            "logical_documents", "logical_document_events", "ctx_logical_state", "sqlite_sequence",
+        ]
+        .iter()
+        .map(|table| {
+            let mut stmt = conn.prepare(&format!("SELECT * FROM {table} ORDER BY rowid")).unwrap();
+            let columns = stmt.column_count();
+            stmt.query_map([], |row| {
+                (0..columns).map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+        })
+        .collect()
+    }
+
+    fn gc_apply_path(conn: &mut Connection, ttl: bool) -> anyhow::Result<usize> {
+        if ttl {
+            run_pass(conn, 100, 1).map(|report| report.sources_dropped)
+        } else {
+            enforce_size_cap(conn, 1)
+        }
+    }
+
+    #[test]
+    fn ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts() {
+        let (_dir, mut conn) = fresh_db();
+        let request = gc_register_managed(&mut conn);
+        let managed = gc_current_source(&conn);
+        let victim = gc_index_transient(&mut conn, "unowned", "sharedquartz victimamethyst");
+        gc_age_sources(&conn);
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(2));
+
+        let report = run_pass(&mut conn, 100, 1).unwrap();
+        assert_eq!(report.sources_dropped, 1);
+        assert_eq!(report.chunks_dropped, 1);
+        assert_eq!(report.chunks_trigram_dropped, 1);
+        assert!(gc_source_exists(&conn, managed));
+        assert!(!gc_source_exists(&conn, victim));
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "logicalzircon"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        for table in ["chunks", "chunks_trigram"] {
+            assert_eq!(gc_fts_count(&conn, table, "sharedquartz"), 1);
+            assert_eq!(gc_fts_count(&conn, table, "logicalzircon"), 1);
+            assert_eq!(gc_fts_count(&conn, table, "victimamethyst"), 0);
+        }
+        let replay = crate::memory::ctx::logical::apply(&mut conn, &request).unwrap();
+        assert!(replay.replayed && replay.is_current);
+        assert_eq!(replay.source_id, managed);
+    }
+
+    #[test]
+    fn size_cap_skips_oldest_managed_source_and_reports_actual_removals() {
+        let (_dir, mut conn) = fresh_db();
+        let request = gc_register_managed(&mut conn);
+        let managed = gc_current_source(&conn);
+        let victim = gc_index_transient(&mut conn, "newer", "sharedquartz victimamethyst");
+        conn.execute("UPDATE sources SET indexed_ts=0 WHERE id=?1", [managed]).unwrap();
+        conn.execute("UPDATE sources SET indexed_ts=1 WHERE id=?1", [victim]).unwrap();
+        assert_eq!(enforce_size_cap(&mut conn, usize::MAX).unwrap(), 0);
+        assert_eq!(enforce_size_cap(&mut conn, 1).unwrap(), 1);
+        assert!(gc_source_exists(&conn, managed));
+        assert!(!gc_source_exists(&conn, victim));
+        assert_eq!(enforce_size_cap(&mut conn, 0).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT count(*) FROM sources", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        let replay = crate::memory::ctx::logical::apply(&mut conn, &request).unwrap();
+        assert!(replay.replayed && replay.is_current);
+        assert_eq!(replay.source_id, managed);
+    }
+
+    #[test]
+    fn corrupt_vocabulary_rolls_back_both_gc_paths() {
+        for ttl in [true, false] {
+            let (_dir, mut conn) = fresh_db();
+            gc_register_managed(&mut conn);
+            gc_index_transient(&mut conn, "victim", "sharedquartz victimamethyst");
+            gc_age_sources(&conn);
+            assert_eq!(conn.execute("DELETE FROM vocabulary WHERE term='victimamethyst'", []).unwrap(), 1);
+            let before = gc_snapshot(&conn);
+            assert!(gc_apply_path(&mut conn, ttl).is_err(), "ttl={ttl}");
+            assert_eq!(gc_snapshot(&conn), before, "ttl={ttl}");
+        }
+    }
+
+    #[test]
+    fn source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds() {
+        for ttl in [true, false] {
+            let (_dir, mut conn) = fresh_db();
+            gc_register_managed(&mut conn);
+            let victim = gc_index_transient(&mut conn, "victim", "sharedquartz victimamethyst");
+            gc_age_sources(&conn);
+            conn.execute_batch(
+                "CREATE TRIGGER gc_test_reject_source_delete BEFORE DELETE ON sources
+                 BEGIN SELECT RAISE(ABORT,'injected source delete failure'); END;",
+            ).unwrap();
+            let before = gc_snapshot(&conn);
+            assert!(gc_apply_path(&mut conn, ttl).is_err(), "ttl={ttl}");
+            assert_eq!(gc_snapshot(&conn), before, "ttl={ttl}");
+            conn.execute_batch("DROP TRIGGER gc_test_reject_source_delete").unwrap();
+            assert_eq!(gc_apply_path(&mut conn, ttl).unwrap(), 1, "ttl={ttl}");
+            assert!(!gc_source_exists(&conn, victim));
+            assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+            assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        }
+    }
+
+    #[test]
+    fn both_gc_paths_protect_current_and_event_references_without_source_markers() {
+        for ttl in [true, false] {
+            let (_dir, mut conn) = fresh_db();
+            gc_register_managed(&mut conn);
+            let event_source = gc_current_source(&conn);
+            conn.execute(
+                "UPDATE sources SET logical_id=NULL,logical_revision=NULL WHERE id=?1",
+                [event_source],
+            ).unwrap();
+            let current_source = gc_index_transient(&mut conn, "current", "currenttopaz");
+            conn.execute(
+                "UPDATE logical_documents SET current_source_id=?1 WHERE logical_id='doc'",
+                [current_source],
+            ).unwrap();
+            let victim = gc_index_transient(&mut conn, "victim", "victimamethyst");
+            gc_age_sources(&conn);
+            let removed = if ttl {
+                run_pass(&mut conn, 100, 1).unwrap().sources_dropped
+            } else {
+                enforce_size_cap(&mut conn, 0).unwrap()
+            };
+            assert_eq!(removed, 1, "ttl={ttl}");
+            assert!(gc_source_exists(&conn, event_source), "ttl={ttl}");
+            assert!(gc_source_exists(&conn, current_source), "ttl={ttl}");
+            assert!(!gc_source_exists(&conn, victim), "ttl={ttl}");
+            assert_eq!(gc_current_source(&conn), current_source);
+            let retained_event: i64 = conn.query_row(
+                "SELECT source_id_at_result FROM logical_document_events WHERE event_id='registered'",
+                [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(retained_event, event_source);
+        }
+    }
+
+    fn gc_emulate_legacy_deletion(conn: &mut Connection, victim: i64) {
+        let tx = conn.transaction().unwrap();
+        tx.execute("DELETE FROM chunks WHERE source_id = ?1", [victim])
+            .unwrap();
+        tx.execute("DELETE FROM chunks_trigram WHERE source_id = ?1", [victim])
+            .unwrap();
+        assert_eq!(
+            tx.execute("DELETE FROM sources WHERE id = ?1", [victim])
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            tx.execute(
+                "UPDATE meta SET value = '50' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap(),
+            1
+        );
+        tx.commit().unwrap();
+    }
+
+    fn gc_schema_version(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again() {
+        let (dir, mut conn) = fresh_db();
+        let request = gc_register_managed(&mut conn);
+        let managed = gc_current_source(&conn);
+        let victim = gc_index_transient(&mut conn, "victim", "sharedquartz victimamethyst");
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(2));
+        gc_emulate_legacy_deletion(&mut conn, victim);
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(2));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), Some(1));
+        drop(conn);
+
+        let mut conn = store::open(&dir.path().join("v.db")).unwrap();
+        assert_eq!(gc_schema_version(&conn), store::SCHEMA_VERSION.to_string());
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "logicalzircon"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        assert!(gc_source_exists(&conn, managed));
+        assert!(!gc_source_exists(&conn, victim));
+        for table in ["chunks", "chunks_trigram"] {
+            assert_eq!(gc_fts_count(&conn, table, "sharedquartz"), 1);
+            assert_eq!(gc_fts_count(&conn, table, "logicalzircon"), 1);
+            assert_eq!(gc_fts_count(&conn, table, "victimamethyst"), 0);
+        }
+        let replay = crate::memory::ctx::logical::apply(&mut conn, &request).unwrap();
+        assert!(replay.replayed && replay.is_current);
+        assert_eq!(replay.source_id, managed);
+
+        conn.execute_batch(
+            "CREATE TRIGGER gc_test_reject_vocabulary_insert
+             BEFORE INSERT ON vocabulary
+             BEGIN SELECT RAISE(ABORT, 'unexpected vocabulary rebuild'); END;",
+        )
+        .unwrap();
+        drop(conn);
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        assert_eq!(gc_schema_version(&conn), store::SCHEMA_VERSION.to_string());
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "logicalzircon"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        conn.execute_batch("DROP TRIGGER gc_test_reject_vocabulary_insert;")
+            .unwrap();
+    }
+
+    #[test]
+    fn v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries() {
+        let (_dir, mut conn) = fresh_db();
+        let request = gc_register_managed(&mut conn);
+        let victim = gc_index_transient(&mut conn, "victim", "sharedquartz victimamethyst");
+        gc_emulate_legacy_deletion(&mut conn, victim);
+        conn.execute_batch(
+            "CREATE TRIGGER gc_test_reject_logical_term
+             BEFORE INSERT ON vocabulary WHEN NEW.term = 'logicalzircon'
+             BEGIN SELECT RAISE(ABORT, 'injected vocabulary rebuild failure'); END;",
+        )
+        .unwrap();
+        let before = gc_snapshot(&conn);
+        assert!(crate::memory::migrations::migrate(&mut conn, 50, 51).is_err());
+        assert_eq!(gc_snapshot(&conn), before);
+        assert_eq!(gc_schema_version(&conn), "50");
+
+        conn.execute_batch("DROP TRIGGER gc_test_reject_logical_term;")
+            .unwrap();
+        assert_eq!(
+            crate::memory::migrations::migrate(&mut conn, 50, 51).unwrap(),
+            51
+        );
+        assert_eq!(gc_schema_version(&conn), "51");
+        assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "logicalzircon"), Some(1));
+        assert_eq!(gc_vocabulary_frequency(&conn, "victimamethyst"), None);
+        let replay = crate::memory::ctx::logical::apply(&mut conn, &request).unwrap();
+        assert!(replay.replayed && replay.is_current);
+    }
+
+    #[test]
+    fn ignored_source_delete_rolls_back_entire_gc_batch() {
+        for ttl in [true, false] {
+            let (_dir, mut conn) = fresh_db();
+            gc_register_managed(&mut conn);
+            let first = gc_index_transient(&mut conn, "first", "sharedquartz firstamethyst");
+            let ignored = gc_index_transient(&mut conn, "ignored", "sharedquartz ignoredamethyst");
+            gc_age_sources(&conn);
+            conn.execute_batch(&format!(
+                "CREATE TRIGGER gc_test_ignore_source_delete BEFORE DELETE ON sources
+                 WHEN OLD.id = {ignored} BEGIN SELECT RAISE(IGNORE); END;"
+            ))
+            .unwrap();
+            let before = gc_snapshot(&conn);
+            let error = gc_apply_path(&mut conn, ttl).unwrap_err();
+            assert!(error.to_string().contains("deletion was not applied"));
+            assert_eq!(gc_snapshot(&conn), before, "ttl={ttl}");
+            assert!(gc_source_exists(&conn, first));
+            assert!(gc_source_exists(&conn, ignored));
+            conn.execute_batch("DROP TRIGGER gc_test_ignore_source_delete;")
+                .unwrap();
+            assert_eq!(gc_apply_path(&mut conn, ttl).unwrap(), 2, "ttl={ttl}");
+            assert_eq!(gc_vocabulary_frequency(&conn, "sharedquartz"), Some(1));
+            assert_eq!(gc_vocabulary_frequency(&conn, "firstamethyst"), None);
+            assert_eq!(gc_vocabulary_frequency(&conn, "ignoredamethyst"), None);
+        }
     }
 }

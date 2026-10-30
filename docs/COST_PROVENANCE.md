@@ -57,7 +57,7 @@ Always inspect `scan.complete` and `observations.semantic_decode_complete`. Even
 
 The reader has shared limits of 20,000 recognized records, 8 MiB of recognized payload/segment-name input, 1,000 diagnostics and 16 MiB of serialized output. Limits or authentication/scan errors fail the read before buffered output is published. Provenance mode rejects duplicate JSON keys recursively. Neither mode creates missing WAL keys, repairs JSONL, calls a provider, replays an effect or performs another debit.
 
-The prior 115-case cost/provenance selection and generated CLI reference were accepted from run 41039038367 on producer a3e5b071, with original artifact digests and source bindings. The additive component reconciliation below introduces six cases that still require their own hosted qualification; this does not claim GUI/mobile or release acceptance.
+The 121-case cost/provenance selection, including six component-reconciliation cases, passed run 41061897452 on producer 6f4dad5e together with 79 document cases, slim Clippy and the CLI export. Workspace Clippy failed on a needless borrow in a test fixture; that one-line repair and the final source still require the full native gate. Root verified the original archives and exact source bindings. This acceptance belongs to that producer; later source changes and native/release qualification require their own evidence. A02 remains open because the supported MCP continuation path still carries tool results as text without typed origin propagation into its existing reservation. Clearing stale attribution is correct but does not close that integration gap.
 
 ## Reconcile observed input without inventing attribution
 

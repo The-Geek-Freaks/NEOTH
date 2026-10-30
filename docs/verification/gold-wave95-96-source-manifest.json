@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T13:13:56.3513160Z",
-  "validationStatus": "W2648_RECONCILIATION_FIXTURE_HOSTED_PENDING",
+  "capturedUtc": "2026-10-30T14:37:38.2275315Z",
+  "validationStatus": "W2647_GC_V51_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -748,13 +748,13 @@
     },
     {
       "path": "docs/COST_PROVENANCE.md",
-      "bytes": 12696,
-      "sha256": "29EA4E2C0D77BE5785B4CBC8570932A4A2932F9EF73C3B42D0625D93E1E85060"
+      "bytes": 13107,
+      "sha256": "5533F481A7E211D2556BD24F299599D3193F4B26F062F337DDE08D9CBD3A74EA"
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
-      "bytes": 8979,
-      "sha256": "BE216ED91DE521064A86AB4BBD52CD9A9E2041588F81189754CABA9F1B39DC4D"
+      "bytes": 10388,
+      "sha256": "795FB759B72D12982DCCDAAB08710FF2F6F286D0C341170171F19BC5823833E9"
     },
     {
       "path": "docs/getting-started.md",
@@ -4727,6 +4727,11 @@
       "sha256": "11097A3F48A254C297C0240E8F87972CD566EF00E26F6C068B82E9F1E825B745"
     },
     {
+      "path": "docs/verification/gold-wave2647-gc-retention.json",
+      "bytes": 4676,
+      "sha256": "D602E4C041E64BCDA88EDEFCD339522F5DC21068EDE59C6404E0E0F2F489092A"
+    },
+    {
       "path": "docs/verification/gold-wave2648-reconciliation-fixture-repair.json",
       "bytes": 2017,
       "sha256": "36FD5E4D19063A35DB433A13737C3B9DCC9C9F7EE516638D0E00EAD8EC052EAE"
@@ -5973,8 +5978,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2729014,
-      "sha256": "C4EA292C5DA896C6118557E08EAA23711D529E8537A1E83C237E8A29745D7C4F"
+      "bytes": 2731780,
+      "sha256": "FAB6BEAFC153FF5295283C33B2ADA5F013732EC1C8ECB9518BD72ABFA366FDC1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7383,8 +7388,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "bytes": 29881,
-      "sha256": "69A20AD8C4603A8ED695575C7385244FF14BFAF0BB5C94663F14678B9E4F09CA"
+      "bytes": 29880,
+      "sha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs",
@@ -8873,8 +8878,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "bytes": 76321,
-      "sha256": "7563252797F9EA2EFFFE02046CEE321E5B659EE4F5317E077CEA105E761C3F40"
+      "bytes": 76332,
+      "sha256": "93EDA7090AAF9E1CC5EDD40F620A070C8105D5889B4E49CFED3F51BBFF3CFAF9"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical_request.rs",
@@ -8927,6 +8932,11 @@
       "sha256": "A144AF36A4607861FDC04B25AB88926E426D8E83FBF9527DD0A21ABB161E5C83"
     },
     {
+      "path": "SRC/neothd/src/memory/gc.rs",
+      "bytes": 33660,
+      "sha256": "06FEBD218A2E7A73B076DF0B4C68128090A698C3D5F3BE42D0E2965BB27F39C1"
+    },
+    {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
       "bytes": 9209,
       "sha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD"
@@ -8938,8 +8948,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "bytes": 262523,
-      "sha256": "47E2DFE624C951B3A6E001050C0608433EA66A5910BD4FFE48D3583B6EE4E58A"
+      "bytes": 262903,
+      "sha256": "C162E22EE5725FEAC138117C8DCBEC686AC42267740C2104B98ED80993367995"
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
@@ -8973,8 +8983,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 205952,
-      "sha256": "4278076C2D9C57BF2A27F58F5B48DAC44EC2DCC02503CE5D145C0243CA3AE307"
+      "bytes": 206035,
+      "sha256": "994C59A1C3027E59F4258141104CC59ACE2A2465CEF627364C67C0A0AF936A1D"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",

@@ -1,0 +1,93 @@
+{
+  "schema": "neoth.wave2647.gc-retention.v1",
+  "status": "SOURCE_INTEGRATED_FINAL_NATIVE_PENDING",
+  "baseProducer": "6f4dad5e534af7391a3c8feafae8f7dead04f1e4",
+  "roadmap": "ADOPT-20261012-A03",
+  "tests": [
+    "memory::gc::tests::ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts",
+    "memory::gc::tests::size_cap_skips_oldest_managed_source_and_reports_actual_removals",
+    "memory::gc::tests::corrupt_vocabulary_rolls_back_both_gc_paths",
+    "memory::gc::tests::source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds",
+    "memory::gc::tests::both_gc_paths_protect_current_and_event_references_without_source_markers",
+    "memory::gc::tests::v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again",
+    "memory::gc::tests::v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries",
+    "memory::gc::tests::ignored_source_delete_rolls_back_entire_gc_batch"
+  ],
+  "newTests": 8,
+  "schemaMigration": {
+    "owner": "existing migration dispatcher",
+    "newSqlObjects": 0,
+    "to": 51,
+    "from": 50
+  },
+  "implementation": [
+    "Automatic TTL and size-cap GC retain logical markers, current owners and historical event references",
+    "Eligible victims share canonical vocabulary subtraction in existing FTS/source transaction",
+    "Each fixed-parameter source deletion must affect one row; ignored or failed deletion rolls back the complete batch",
+    "Size cap returns actual removals and warns when protected sources keep total above target",
+    "Migration50to51 repairs retained vocabulary from canonical chunks once; trigram mirror is not double counted; version stamp is in same transaction"
+  ],
+  "validation": {
+    "hostedRuntimeAccepted": false,
+    "localRuntimeExecuted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "clippyRepair": {
+    "finalVerification": "pending",
+    "source": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+    "productionBehaviorChanged": false,
+    "change": "Remove unnecessary reference to Copy fixture field",
+    "diagnostic": "clippy::needless_borrows_for_generic_args"
+  },
+  "prior200": {
+    "proof": "work/gold-20260906/wave2648-reconciliation-fixture-repair/ROOT_COMBINED200_CASES_ONLY.json",
+    "cases": 200,
+    "scope": "TEST_CASES_AND_CLI_ONLY",
+    "overallRunConclusion": "failure",
+    "producer": "6f4dad5e534af7391a3c8feafae8f7dead04f1e4",
+    "sha256": "96CEB9DBCA6AAB6A9BEEDB14B93DBA41D37A2A17463E942D2FE1CC5B26C01B85",
+    "run": 41061897452,
+    "doesNotValidateNewGcSource": true,
+    "workspaceClippy": "failure"
+  },
+  "nativeQualification": {
+    "workflow": ".github/workflows/ci.yml",
+    "requiredExistingCases": 200,
+    "requiredNewGcCases": [
+      "memory::gc::tests::ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts",
+      "memory::gc::tests::size_cap_skips_oldest_managed_source_and_reports_actual_removals",
+      "memory::gc::tests::corrupt_vocabulary_rolls_back_both_gc_paths",
+      "memory::gc::tests::source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds",
+      "memory::gc::tests::both_gc_paths_protect_current_and_event_references_without_source_markers",
+      "memory::gc::tests::v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again",
+      "memory::gc::tests::v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries",
+      "memory::gc::tests::ignored_source_delete_rolls_back_entire_gc_batch"
+    ],
+    "platforms": [
+      "Linux",
+      "Windows",
+      "macOS"
+    ],
+    "additionalMigrationCases": [
+      "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
+      "memory::migrations::tests::v3_era_schema_migrates_to_current_target",
+      "memory::migrations::tests::v4_era_schema_migrates_to_current_target",
+      "memory::store::tests::fresh_views_database_contains_no_history_journal_tables"
+    ],
+    "eachCaseMustActuallyPass": true,
+    "totalRequiredCases": 208
+  },
+  "review": {
+    "method": "Prompt-only supplied production deltas and eight regression scenarios",
+    "resolvedFinding": "RAISE(IGNORE) must fail instead of retaining source after derived deletions",
+    "agent": "/root/docx_numbering_candidate",
+    "outcome": "No further blocking defect apparent; hosted compile and behavior proof pending"
+  },
+  "limits": [
+    "Canonical data present at migration time is the repair authority; no claim of previously observed production GC incident",
+    "Protected sources can exceed the soft size cap and require explicit logical lifecycle work",
+    "Exact source ranges and broader A03 structure/lineage acceptance remain separate"
+  ],
+  "goldCheckboxesClosed": 0
+}

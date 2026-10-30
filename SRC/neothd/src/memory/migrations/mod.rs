@@ -366,7 +366,18 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A03: explicit logical document revisions and purge-safe replay",
         run: migration_v49_to_v50,
     },
+    Migration {
+        from: 50,
+        to: 51,
+        description: "A03: reconcile vocabulary drift from automatic source retention",
+        run: migration_v50_to_v51,
+    },
 ];
+
+pub(crate) fn migration_v50_to_v51(conn: &Connection) -> Result<()> {
+    crate::memory::ctx::rebuild_vocabulary(conn)
+        .context("v50→v51: reconcile automatic retention vocabulary drift")
+}
 
 pub(crate) fn migration_v49_to_v50(conn: &Connection) -> Result<()> {
     for name in [

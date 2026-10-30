@@ -725,7 +725,7 @@ fn provenance_reconciliation_repeated_components_do_not_imply_cache_hits() {
         .unwrap()
         .event;
     event.prompt_tax.as_mut().unwrap().components = Some(estimate);
-    rows[3].2["prompt_tax"] = serde_json::to_value(&event.prompt_tax).unwrap();
+    rows[3].2["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
     rows[3].2["usage_snapshot"] = terminal_usage_snapshot_v3(&event).unwrap();
     let report = collect(&rows);
     let value = report.groups[0].component_reconciliation.as_ref().unwrap();
