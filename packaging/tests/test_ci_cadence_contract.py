@@ -341,6 +341,16 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(len(expected), 115)
         self.assertEqual(len(set(expected)), 115)
         self.assertEqual(selection["requiredTests"], sorted(expected))
+        reconciliation = json.loads(
+            (ROOT / "docs/verification/gold-wave2646-component-reconciliation.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(reconciliation["tests"]), 6)
+        expected.extend(reconciliation["tests"])
+        selection = matrix["wave2646ReconciliationRegressions"]
+        self.assertEqual(selection["requiredCount"], 121)
+        self.assertEqual(len(expected), 121)
+        self.assertEqual(len(set(expected)), 121)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):

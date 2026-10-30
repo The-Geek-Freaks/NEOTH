@@ -45,6 +45,49 @@ struct Group {
     plans: Vec<Located<Plan>>,
     acquisitions: Vec<Located<Acquisition>>,
     terminals: Vec<Located<Terminal>>,
+    component_reconciliation: Option<ComponentReconciliation>,
+}
+
+/// Reconcile one retained input counter without allocating estimates or cache
+/// counters to components. Zero evidenced allocation describes this read model,
+/// not a provider measurement; absent input keeps the reconciliation unknown.
+#[derive(Debug, Serialize)]
+struct ComponentReconciliation {
+    schema: &'static str,
+    scope: &'static str,
+    estimated_input_components_utf8_upper_bounds:
+        Option<crate::tokens::prompt_attribution::PromptAttribution>,
+    observed_input_tokens: Option<u32>,
+    observed_output_tokens: Option<u32>,
+    input_tokens_with_component_evidence: Option<u32>,
+    unallocated_input_tokens: Option<u32>,
+    component_allocation: &'static str,
+    observed_cache_creation_tokens: Option<u32>,
+    observed_cache_read_tokens: Option<u32>,
+    component_cache_classification: &'static str,
+    cache_counter_relation_to_input: &'static str,
+}
+
+impl ComponentReconciliation {
+    fn from_event(event: &crate::daemon::usage_log::UsageEvent) -> Self {
+        Self {
+            schema: "neoth.prompt-component-reconciliation.v1",
+            scope: "observed_terminal_counter_not_complete_history",
+            estimated_input_components_utf8_upper_bounds: event
+                .prompt_tax
+                .as_ref()
+                .and_then(|tax| tax.components),
+            observed_input_tokens: event.input_tokens,
+            observed_output_tokens: event.output_tokens,
+            input_tokens_with_component_evidence: event.input_tokens.map(|_| 0),
+            unallocated_input_tokens: event.input_tokens,
+            component_allocation: "unavailable_no_provider_component_evidence",
+            observed_cache_creation_tokens: event.cache_creation_tokens,
+            observed_cache_read_tokens: event.cache_read_tokens,
+            component_cache_classification: "unknown",
+            cache_counter_relation_to_input: "provider_specific_not_normalized",
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -165,6 +208,12 @@ impl Collector {
                 continue;
             }
             group.classify();
+            if group.association == Association::ObservedMetadataMatch {
+                group.component_reconciliation = group
+                    .terminals
+                    .first()
+                    .map(|value| ComponentReconciliation::from_event(&value.record.event));
+            }
             groups.push(group);
         }
         Ok(Observations {
@@ -426,6 +475,11 @@ fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
                 for value in &group.acquisitions {
                     write!(output, "  acquired scopes ")?;
                     serde_json::to_writer(&mut output, value)?;
+                    writeln!(output)?;
+                }
+                if let Some(reconciliation) = &group.component_reconciliation {
+                    write!(output, "  observed input reconciliation (UTF-8 estimates separate) ")?;
+                    serde_json::to_writer(&mut output, reconciliation)?;
                     writeln!(output)?;
                 }
                 for value in &group.terminals {

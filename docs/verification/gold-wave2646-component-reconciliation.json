@@ -1,0 +1,50 @@
+{
+  "schema": "neoth.wave2646.component-reconciliation.v1",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "baseProducer": "a05a973dfd93b53976b1eb25ed9996ae35268d58",
+  "roadmap": "ADOPT-20261012-A02",
+  "tests": [
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
+    "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries"
+  ],
+  "newTests": 6,
+  "focusedRequiredCount": 121,
+  "prior115Retained": true,
+  "implementation": [
+    "Derived reconciliation only for the existing unique lifecycle-bound observed metadata match; incomplete/duplicate/conflict/unbound groups keep null",
+    "UTF-8 upper-bound component estimates remain separate from provider counters and frozen pricing",
+    "Known input equals zero tokens backed by component evidence plus all observed input unallocated; unknown input retains null on both sides",
+    "Cache creation/read counters remain optional independent provider-specific observations; no normalization, inferred component allocation or repeated-text cache hit",
+    "Existing bounded output, late-scan failure behavior, immutable source locations and accounting/lifecycle owners retained"
+  ],
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hostedRuntimeAccepted": false,
+    "wholeRoadmapAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "review": {
+    "agent": "/root/provenance_decoder",
+    "method": "Prompt-only supplied implementation and six test behaviors",
+    "outcome": "No concrete remaining semantic defect or necessary test gap apparent"
+  },
+  "predecessor": {
+    "producer": "a3e5b071abab8ed35473aa5fcfaaf7eae8048102",
+    "run": 41039038367,
+    "costCases": 115,
+    "accepted": true,
+    "rootProof": "work/gold-20260906/wave2643-docx-clippy-repair/ROOT_COMBINED177_ADMISSION.json",
+    "proofSha256": "529FD84A406882374B3C51063AB16A94BF85153350897476FCD6F5065CD159A2"
+  },
+  "limits": [
+    "No measured per-component provider attribution exists in retained schema; all observed input remains explicitly unallocated",
+    "Provider cache counter inclusion in input differs by adapter/provider and is not inferred here",
+    "No new billing, WAL, provider call, GUI/mobile or model-tokenizer implementation"
+  ],
+  "goldCheckboxesClosed": 0
+}

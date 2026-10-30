@@ -57,4 +57,29 @@ Always inspect `scan.complete` and `observations.semantic_decode_complete`. Even
 
 The reader has shared limits of 20,000 recognized records, 8 MiB of recognized payload/segment-name input, 1,000 diagnostics and 16 MiB of serialized output. Limits or authentication/scan errors fail the read before buffered output is published. Provenance mode rejects duplicate JSON keys recursively. Neither mode creates missing WAL keys, repairs JSONL, calls a provider, replays an effect or performs another debit.
 
-The W2640 source and hosted formatting/static gates are published. Its 115-case focused runtime and generated CLI reference remain a separate pending qualification; this documentation does not claim GUI/mobile or release acceptance.
+The prior 115-case cost/provenance selection and generated CLI reference were accepted from run 41039038367 on producer a3e5b071, with original artifact digests and source bindings. The additive component reconciliation below introduces six cases that still require their own hosted qualification; this does not claim GUI/mobile or release acceptance.
+
+## Reconcile observed input without inventing attribution
+
+A unique, lifecycle-bound observed_metadata_match additionally exposes
+component_reconciliation. Incomplete, duplicate, conflicting or unbound groups
+keep that field null. The projection concerns the one retained terminal counter,
+not complete history; the original terminal, source location and frozen price
+basis remain visible beside it.
+
+estimated_input_components_utf8_upper_bounds retains only the existing local
+component estimates. Those estimates are not measured provider tokens and are
+never scaled into a measured allocation or monetary charge. The retained schema
+has no provider evidence assigning observed input to components. For a known
+input count, input_tokens_with_component_evidence is therefore zero and
+unallocated_input_tokens equals the observed input. This zero describes the
+evidence available to the read model, not a provider measurement. If input usage
+is unknown, both sides remain null. Reported zero remains zero.
+
+Observed output, cache-creation and cache-read counters are retained independently.
+Cache counters may overlap input or have provider-specific semantics; this
+projection neither adds them to input nor subtracts them to invent an uncached
+count. Per-component cache classification remains unknown. Repeated text or
+reused components alone never establish a cache hit. Provider/model/rate evidence
+continues to come from the original bound records; no current-price lookup,
+second debit or prompt collection is introduced.

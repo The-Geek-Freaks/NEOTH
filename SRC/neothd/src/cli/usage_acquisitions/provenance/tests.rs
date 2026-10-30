@@ -613,3 +613,162 @@ async fn provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key()
     std::fs::write(home.path().join("wal/hmac.key"), [0x19u8; 32]).unwrap();
     assert!(inspect(home.path(), 0, 100).is_err());
 }
+
+#[test]
+fn provenance_reconciliation_conserves_input_without_allocating_estimates() {
+    let mut rows = records();
+    rows[3].2 = terminal(5);
+    let expected = decode::terminal(EVENT_TYPE_PROVIDER_RESPONSE, &bytes(&rows[3].2)).unwrap();
+    let report = collect(&rows);
+    let group = &report.groups[0];
+    let value = group.component_reconciliation.as_ref().unwrap();
+    assert_eq!(value.observed_input_tokens, Some(100));
+    assert_eq!(value.input_tokens_with_component_evidence, Some(0));
+    assert_eq!(value.unallocated_input_tokens, Some(100));
+    assert_eq!(value.observed_output_tokens, Some(50));
+    assert_eq!(
+        value.estimated_input_components_utf8_upper_bounds,
+        expected.event.prompt_tax.and_then(|tax| tax.components)
+    );
+    assert_eq!(
+        value
+            .estimated_input_components_utf8_upper_bounds
+            .unwrap()
+            .request_upper_bound(),
+        520
+    );
+    assert_eq!(group.terminals[0].record, expected);
+}
+
+#[test]
+fn provenance_reconciliation_preserves_unknown_zero_and_timeout_counters() {
+    for tokens in [None, Some(0), Some(100), Some(u32::MAX)] {
+        let mut rows = records();
+        rows[3].2["input_tokens"] = json!(tokens);
+        rows[3].2["output_tokens"] = Value::Null;
+        rows[3].2["cache_creation_tokens"] = Value::Null;
+        rows[3].2["cache_read_tokens"] = Value::Null;
+        rows[3].2["ok"] = json!(false);
+        rows[3].2["terminal_kind"] = json!("stream_error");
+        rows[3].0 = EVENT_TYPE_PROVIDER_ERROR;
+        let report = collect(&rows);
+        let value = report.groups[0].component_reconciliation.as_ref().unwrap();
+        assert_eq!(value.observed_input_tokens, tokens);
+        assert_eq!(value.unallocated_input_tokens, tokens);
+        assert_eq!(value.input_tokens_with_component_evidence, tokens.map(|_| 0));
+        assert_eq!(
+            value
+                .input_tokens_with_component_evidence
+                .zip(value.unallocated_input_tokens)
+                .map(|(allocated, unallocated)| allocated + unallocated),
+            tokens
+        );
+        assert!(value.observed_output_tokens.is_none());
+        assert!(value.observed_cache_creation_tokens.is_none());
+        assert!(value.observed_cache_read_tokens.is_none());
+        assert!(value.estimated_input_components_utf8_upper_bounds.is_none());
+    }
+    let mut rows = records();
+    rows.pop();
+    assert!(collect(&rows).groups[0].component_reconciliation.is_none());
+}
+
+#[test]
+fn provenance_reconciliation_never_sums_overlapping_cache_counters() {
+    let mut rows = records();
+    rows[3].2["cache_creation_tokens"] = json!(u32::MAX);
+    rows[3].2["cache_read_tokens"] = json!(u32::MAX);
+    let report = collect(&rows);
+    let value = report.groups[0].component_reconciliation.as_ref().unwrap();
+    assert_eq!(value.observed_input_tokens, Some(100));
+    assert_eq!(value.unallocated_input_tokens, Some(100));
+    assert_eq!(value.observed_cache_creation_tokens, Some(u32::MAX));
+    assert_eq!(value.observed_cache_read_tokens, Some(u32::MAX));
+    assert_eq!(value.component_cache_classification, "unknown");
+    assert_eq!(value.cache_counter_relation_to_input, "provider_specific_not_normalized");
+    assert!(report.groups[0].terminals[0].record.event.cost_usd.is_none());
+}
+
+#[test]
+fn provenance_reconciliation_repeated_components_do_not_imply_cache_hits() {
+    use crate::tokens::budget::{Block, BlockItem};
+    use crate::tokens::prompt_attribution::{PromptAttribution, PromptOrigin};
+    let item = BlockItem::new(Block::E, "never-leak-repeated-component")
+        .with_prompt_origin(PromptOrigin::Skill);
+    let estimate = PromptAttribution::from_retained_items(&[item.clone(), item], 520).unwrap();
+    let mut rows = records();
+    rows[3].2 = terminal(5);
+    let mut event = decode::terminal(EVENT_TYPE_PROVIDER_RESPONSE, &bytes(&rows[3].2))
+        .unwrap()
+        .event;
+    event.prompt_tax.as_mut().unwrap().components = Some(estimate);
+    rows[3].2["prompt_tax"] = serde_json::to_value(&event.prompt_tax).unwrap();
+    rows[3].2["usage_snapshot"] = terminal_usage_snapshot_v3(&event).unwrap();
+    let report = collect(&rows);
+    let value = report.groups[0].component_reconciliation.as_ref().unwrap();
+    assert_eq!(value.estimated_input_components_utf8_upper_bounds, Some(estimate));
+    assert_eq!(value.unallocated_input_tokens, event.input_tokens);
+    assert_eq!(value.input_tokens_with_component_evidence, Some(0));
+    assert_eq!(value.observed_cache_read_tokens, None);
+    assert_eq!(value.component_cache_classification, "unknown");
+    let text = serde_json::to_string(&report).unwrap();
+    assert!(!text.contains("never-leak-repeated-component"));
+    assert!(!text.contains("never-echo-this-prompt"));
+}
+
+#[test]
+fn provenance_reconciliation_requires_unique_bound_metadata_match() {
+    for scenario in ["missing", "duplicate", "conflict", "unbound"] {
+        let mut rows = records();
+        match scenario {
+            "missing" => {
+                rows.remove(0);
+            }
+            "duplicate" => rows.push(rows[3].clone()),
+            "conflict" => rows[3].2["provider"] = json!("different-provider"),
+            "unbound" => {
+                rows[3]
+                    .2
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("request_binding_sha256");
+            }
+            _ => unreachable!(),
+        }
+        let report = collect(&rows);
+        assert_ne!(report.groups[0].association, Association::ObservedMetadataMatch);
+        assert!(report.groups[0].component_reconciliation.is_none(), "{scenario}");
+    }
+}
+
+#[test]
+fn provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries() {
+    let inspection = collect_after_scan(0, 100, |collector| {
+        feed(collector, &records())?;
+        Ok(AuthenticatedPrefixScan {
+            complete: false,
+            boundaries: vec![],
+        })
+    })
+    .unwrap();
+    let json: Value =
+        serde_json::from_str(&render(&inspection, UsageFormat::Json).unwrap()).unwrap();
+    let value = &json["observations"]["groups"][0]["component_reconciliation"];
+    assert_eq!(value["unallocated_input_tokens"], 100);
+    assert_eq!(value["input_tokens_with_component_evidence"], 0);
+    assert!(value["estimated_input_components_utf8_upper_bounds"].is_null());
+    assert_eq!(value["scope"], "observed_terminal_counter_not_complete_history");
+    assert_eq!(json["scan"]["complete"], false);
+    assert_eq!(json["full_history_complete"], false);
+    let table = render(&inspection, UsageFormat::Table).unwrap();
+    assert!(table.contains("UTF-8 estimates separate"));
+    assert!(table.contains("\"unallocated_input_tokens\":100"));
+    assert!(table.contains("authenticated_bytes_complete=false"));
+    assert!(
+        collect_after_scan(0, 100, |collector| {
+            feed(collector, &records())?;
+            anyhow::bail!("late authenticated scan failure")
+        })
+        .is_err()
+    );
+}

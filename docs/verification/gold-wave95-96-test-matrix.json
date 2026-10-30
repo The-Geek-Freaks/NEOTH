@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2645_CODE_INDEX_PRESERVATION_HOSTED_PENDING",
+  "status": "W2646_COMPONENT_RECONCILIATION_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 460005,
-    "sha256": "A6531F5D4BB8BD8A00834A61ECD8E34989D7D7FD50242BFDD34399E0E49AD33C"
+    "bytes": 460202,
+    "sha256": "2D959A477C37F686AB19A2D414699B7449A6436251B71988973904CF241DFA99"
   },
-  "sourceInputs": 2511,
+  "sourceInputs": 2512,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -18727,103 +18727,103 @@
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "971B6276EFE277EFB3C0DB3D05D19C87065E99124FEBA16E4842014E2495224D",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     },
     {
@@ -18986,6 +18986,42 @@
       "test": "memory::ctx::tests::explicit_code_index_reopen_and_failed_replacement_retain_both_indexes",
       "sourcePath": "SRC/neothd/src/memory/ctx.rs",
       "sourceSha256": "7563252797F9EA2EFFFE02046CEE321E5B659EE4F5317E077CEA105E761C3F40",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
+      "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sourceSha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
       "junitClass": "neoth"
     }
   ],
@@ -89611,6 +89647,185 @@
       }
     ],
     "note": "Explicit code retains source bytes through existing UTF-8 chunking and transaction owner; 3 new cases retain prior document76 and cost115. Prior191 run remains tied to a20 producer. New code source and all native/Gold acceptance pending; local runtime held.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2646ReconciliationRegressions": {
+    "requiredCount": 121,
+    "newTests": 6,
+    "newPortableRegistrations": 6,
+    "requiredTests": [
+      "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
+      "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
+      "cli::usage_acquisitions::collector::tests::all_null_is_malformed",
+      "cli::usage_acquisitions::collector::tests::binding_provider_and_model_mismatches_are_observed_conflicts",
+      "cli::usage_acquisitions::collector::tests::conflict_outside_window_remains_visible",
+      "cli::usage_acquisitions::collector::tests::diagnostic_and_location_limits_poison_future_readout",
+      "cli::usage_acquisitions::collector::tests::duplicate_known_json_keys_are_malformed",
+      "cli::usage_acquisitions::collector::tests::explicit_zero_and_null_are_preserved",
+      "cli::usage_acquisitions::collector::tests::identical_occurrences_are_duplicates",
+      "cli::usage_acquisitions::collector::tests::legacy_request_is_unknown",
+      "cli::usage_acquisitions::collector::tests::legacy_request_without_schema_is_unknown",
+      "cli::usage_acquisitions::collector::tests::missing_nullable_is_malformed",
+      "cli::usage_acquisitions::collector::tests::noncanonical_identity_hashes_are_rejected_not_misreported_as_conflict",
+      "cli::usage_acquisitions::collector::tests::record_and_byte_limits_poison_future_readout",
+      "cli::usage_acquisitions::collector::tests::single_compatible_pair_matches_without_retaining_request_extras",
+      "cli::usage_acquisitions::collector::tests::timestamp_only_divergence_explains_conflict_without_claiming_budget_discrepancy",
+      "cli::usage_acquisitions::collector::tests::union_window_includes_context_and_endpoints",
+      "cli::usage_acquisitions::collector::tests::unmatched_records_are_explicit",
+      "cli::usage_acquisitions::collector::tests::unsupported_schema_is_explicit_before_current_field_types",
+      "cli::usage_acquisitions::collector::tests::wrong_types_and_extra_fields_are_malformed_without_payload_leak",
+      "cli::usage_acquisitions::collector::tests::zero_nested_amounts_are_valid",
+      "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
+      "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
+      "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
+      "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
+      "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
+      "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
+      "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
+      "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
+      "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
+      "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
+      "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
+      "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
+      "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
+      "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
+      "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
+      "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
+      "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
+      "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
+      "cli::usage_acquisitions::tests::absent_home_retains_unknown_history_without_creating_files",
+      "cli::usage_acquisitions::tests::changed_verification_key_returns_no_inspection",
+      "cli::usage_acquisitions::tests::cli_mode_defaults_and_currency_conflict_are_explicit",
+      "cli::usage_acquisitions::tests::default_window_uses_checked_subtraction",
+      "cli::usage_acquisitions::tests::error_after_valid_callback_discards_all_buffered_observations",
+      "cli::usage_acquisitions::tests::explicit_window_never_reads_the_clock_and_keeps_inclusive_bounds",
+      "cli::usage_acquisitions::tests::incomplete_prefix_does_not_turn_unseen_acquisition_into_zero",
+      "cli::usage_acquisitions::tests::output_limit_is_enforced_before_extending_the_buffer",
+      "cli::usage_acquisitions::tests::real_authenticated_wal_binds_observations_and_leaves_home_unchanged",
+      "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback",
+      "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
+      "daemon::usage_log::tests::legacy_terminal_and_snapshot_reject_component_key_even_null",
+      "daemon::usage_log::tests::mixed_component_usage_rollup_keeps_missing_and_zero_distinct",
+      "daemon::usage_log::tests::retained_terminal_preserves_unknown_zero_and_existing_rejection_boundary",
+      "daemon::usage_log::tests::retained_terminal_v2_keeps_observed_tokens_without_current_price_projection",
+      "daemon::usage_log::tests::retained_terminal_versions_preserve_frozen_amount_bits_basis_and_components",
+      "daemon::usage_log::tests::terminal_v3_keeps_unknown_amounts_distinct_from_known_zero",
+      "daemon::usage_log::tests::terminal_v3_preserves_original_amount_bits_instead_of_current_rates",
+      "daemon::usage_log::tests::terminal_v3_refuses_outer_identity_usage_and_context_mismatches",
+      "daemon::usage_log::tests::terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values",
+      "daemon::usage_log::tests::terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions",
+      "daemon::usage_log::tests::terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts",
+      "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
+      "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
+      "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
+      "daemon::usage_log::tests::terminal_v4_rejects_outer_basis_and_model_mismatches",
+      "daemon::usage_log::tests::terminal_v4_requires_complete_basis_and_refuses_mixed_versions",
+      "daemon::usage_log::tests::terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis",
+      "daemon::usage_log::tests::terminal_v5_component_replay_preserves_estimates_without_price_lookup",
+      "daemon::usage_log::tests::terminal_v5_rejects_mixed_versions_component_drift_and_missing_fields",
+      "pipeline::enriched_request::tests::enriched_producers_label_components_independently_of_authority",
+      "providers::cost::authorization_price_observation_tests::bound_observation_keeps_unknown_price_distinct_from_local_zero",
+      "providers::cost::authorization_price_observation_tests::bound_observation_preserves_missing_empty_and_nonempty_systems",
+      "providers::cost_authorization::tests::authorization_id_and_binding_match_cost_and_permission_frames",
+      "providers::cost_authorization::tests::budget_acquisition_absent_scopes_preserve_old_lifecycle_frames",
+      "providers::cost_authorization::tests::budget_acquisition_cancellation_waits_for_ack_before_terminal_and_rolls_back_daily",
+      "providers::cost_authorization::tests::budget_acquisition_cluster_cancellation_settles_unknown_full_bound",
+      "providers::cost_authorization::tests::budget_acquisition_cluster_terminal_write_failure_keeps_claim_outstanding",
+      "providers::cost_authorization::tests::budget_acquisition_join_failure_after_durable_append_attempts_existing_terminal",
+      "providers::cost_authorization::tests::budget_acquisition_observes_zero_operation_cost_without_second_debit",
+      "providers::cost_authorization::tests::budget_acquisition_records_actual_daily_and_operation_units",
+      "providers::cost_authorization::tests::budget_acquisition_write_failure_blocks_permit_and_preserves_operation_charge",
+      "providers::cost_authorization::tests::cluster_budget_no_quorum_blocks_before_raw_provider_dispatch",
+      "providers::cost_authorization::tests::cluster_budget_quorum_leaf_dispatches_exactly_once",
+      "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
+      "providers::cost_authorization::tests::cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch",
+      "providers::cost_authorization::tests::cost_wal_failure_blocks_dispatch",
+      "providers::cost_authorization::tests::default_claude_full_is_not_structurally_disabled_or_given_a_fake_cap",
+      "providers::cost_authorization::tests::finite_token_cap_with_unknown_price_never_claims_a_eur_upper_bound",
+      "providers::cost_authorization::tests::missing_cost_wal_also_blocks_unknown_bound_dispatch_at_full",
+      "providers::cost_authorization::tests::missing_cost_wal_blocks_cloud_dispatch",
+      "providers::cost_authorization::tests::only_canonical_local_providers_bypass_paid_call_gate",
+      "providers::cost_authorization::tests::operation_budget_daily_rejection_precedes_and_preserves_operation_quota",
+      "providers::cost_authorization::tests::operation_budget_rejection_rolls_back_daily_pre_dispatch_reservation",
+      "providers::cost_authorization::tests::operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch",
+      "providers::cost_authorization::tests::operation_budget_uses_transport_bound_not_billing_reserve",
+      "providers::cost_authorization::tests::operation_plan_rejects_mismatched_frozen_price_envelope",
+      "providers::cost_authorization::tests::permission_grant_wal_failure_after_cost_frame_blocks_dispatch",
+      "providers::cost_authorization::tests::prompt_components_bind_model_and_stop_envelope_before_ticket",
+      "providers::cost_authorization::tests::terminal_v5_wal_repairs_components_idempotently_without_provider_replay",
+      "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",
+      "providers::cost_authorization::tests::unknown_bound_full_fail_closed_proceeds_and_is_audited",
+      "providers::cost_authorization::tests::unknown_bound_standard_channel_approval_proceeds_and_is_audited",
+      "providers::cost_authorization::tests::unknown_bound_standard_fail_closed_audits_then_blocks_before_dispatch",
+      "providers::cost_authorization::tests::wal_and_paid_gate_use_each_leaf_output_ceiling",
+      "providers::pricing_basis::authorization_bound_tests::frozen_bound_keeps_synthetic_and_zero_prices_without_table_lookup",
+      "providers::pricing_basis::authorization_bound_tests::frozen_bound_preserves_exact_legacy_arithmetic_and_roundtrip",
+      "providers::pricing_basis::authorization_bound_tests::frozen_bound_rejects_tampered_inputs_identity_and_policy",
+      "providers::pricing_basis::tests::price_basis_rejects_invalid_rates_even_with_matching_digest",
+      "providers::pricing_basis::tests::price_basis_rejects_tampered_rates_policy_and_identity",
+      "providers::pricing_basis::tests::price_basis_roundtrip_preserves_exact_row_and_policy",
+      "tokens::prompt_attribution::tests::explicit_origin_wins_over_block_and_legacy_source",
+      "tokens::prompt_attribution::tests::rejects_stale_estimates_overflow_and_unknown_estimator",
+      "tokens::prompt_attribution::tests::retained_unicode_unlabeled_and_residual",
+      "tokens::prompt_attribution::tests::rollup_overflow_preserves_previous_totals",
+      "tokens::prompt_attribution::tests::serde_roundtrip_rejects_bad_total_and_unknown_fields",
+      "tokens::prompt_attribution::tests::seven_origins_survive_truncation_and_user_rewrites_lose_provenance"
+    ],
+    "status": "SOURCE_INTEGRATED_HOSTED_PENDING"
+  },
+  "wave2646ComponentReconciliation": {
+    "base": "a05a973dfd93b53976b1eb25ed9996ae35268d58",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 53938,
+        "sha256": "FE38009640E38CD971753625566E280ACD69CD6F3B5405D9E0271E7B92198324",
+        "blob": "5dd4fc5336ce5bf82d8742ccbec9ce448cc13af6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2726891,
+        "sha256": "AD7A5E8E51C96D43B3871A94445EF76F24543619FF0236F66E95591665E7A0D3",
+        "blob": "90363ff70a3391c0b82c35583880949fc3e63cd8"
+      },
+      {
+        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
+        "bytes": 19956,
+        "sha256": "734AA39054CBF588622313E0A3DF98E4BEDEC321875CCE379F0B0ECE5DE7FCE9",
+        "blob": "993999316270806cdc786dc1a678912463d580cd"
+      },
+      {
+        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+        "bytes": 29004,
+        "sha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852",
+        "blob": "6b6e212a25ff7c24ceee9d2c5fd946508d15cd87"
+      },
+      {
+        "path": "docs/COST_PROVENANCE.md",
+        "bytes": 12696,
+        "sha256": "29EA4E2C0D77BE5785B4CBC8570932A4A2932F9EF73C3B42D0625D93E1E85060",
+        "blob": "b4ce5213380fab34c8f7b5fa22e499e7276f40b9"
+      },
+      {
+        "path": "docs/verification/gold-wave2646-component-reconciliation.json",
+        "bytes": 2854,
+        "sha256": "39154F0001DC5A55C41AF555B5E7610A6D3998AC27A125DA4999779A751FEEE0",
+        "blob": "394e1a5f7b7edf190c987e0c51fb4880f22d9ab0"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 86005,
+        "sha256": "6F9880D953C75840A96ECA563766F54E834B889D78AC1DAF2619F616408BEABE",
+        "blob": "b3d1f4cff4d06e0bc3a694869e9f63ba4c57fc4d"
+      }
+    ],
+    "note": "Readonly observed-input reconciliation preserves unknown/zero and unallocated provider counters independently of UTF8 estimates and cache evidence; six new cases retain all prior115. Document79 plus cost121 form200. Prior191 remains bound to a20. New runtime/native/Gold acceptance pending; local hold preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
