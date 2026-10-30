@@ -655,7 +655,10 @@ fn provenance_reconciliation_preserves_unknown_zero_and_timeout_counters() {
         let value = report.groups[0].component_reconciliation.as_ref().unwrap();
         assert_eq!(value.observed_input_tokens, tokens);
         assert_eq!(value.unallocated_input_tokens, tokens);
-        assert_eq!(value.input_tokens_with_component_evidence, tokens.map(|_| 0));
+        assert_eq!(
+            value.input_tokens_with_component_evidence,
+            tokens.map(|_| 0)
+        );
         assert_eq!(
             value
                 .input_tokens_with_component_evidence
@@ -685,8 +688,17 @@ fn provenance_reconciliation_never_sums_overlapping_cache_counters() {
     assert_eq!(value.observed_cache_creation_tokens, Some(u32::MAX));
     assert_eq!(value.observed_cache_read_tokens, Some(u32::MAX));
     assert_eq!(value.component_cache_classification, "unknown");
-    assert_eq!(value.cache_counter_relation_to_input, "provider_specific_not_normalized");
-    assert!(report.groups[0].terminals[0].record.event.cost_usd.is_none());
+    assert_eq!(
+        value.cache_counter_relation_to_input,
+        "provider_specific_not_normalized"
+    );
+    assert!(
+        report.groups[0].terminals[0]
+            .record
+            .event
+            .cost_usd
+            .is_none()
+    );
 }
 
 #[test]
@@ -706,7 +718,10 @@ fn provenance_reconciliation_repeated_components_do_not_imply_cache_hits() {
     rows[3].2["usage_snapshot"] = terminal_usage_snapshot_v3(&event).unwrap();
     let report = collect(&rows);
     let value = report.groups[0].component_reconciliation.as_ref().unwrap();
-    assert_eq!(value.estimated_input_components_utf8_upper_bounds, Some(estimate));
+    assert_eq!(
+        value.estimated_input_components_utf8_upper_bounds,
+        Some(estimate)
+    );
     assert_eq!(value.unallocated_input_tokens, event.input_tokens);
     assert_eq!(value.input_tokens_with_component_evidence, Some(0));
     assert_eq!(value.observed_cache_read_tokens, None);
@@ -736,8 +751,14 @@ fn provenance_reconciliation_requires_unique_bound_metadata_match() {
             _ => unreachable!(),
         }
         let report = collect(&rows);
-        assert_ne!(report.groups[0].association, Association::ObservedMetadataMatch);
-        assert!(report.groups[0].component_reconciliation.is_none(), "{scenario}");
+        assert_ne!(
+            report.groups[0].association,
+            Association::ObservedMetadataMatch
+        );
+        assert!(
+            report.groups[0].component_reconciliation.is_none(),
+            "{scenario}"
+        );
     }
 }
 
@@ -757,7 +778,10 @@ fn provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries() {
     assert_eq!(value["unallocated_input_tokens"], 100);
     assert_eq!(value["input_tokens_with_component_evidence"], 0);
     assert!(value["estimated_input_components_utf8_upper_bounds"].is_null());
-    assert_eq!(value["scope"], "observed_terminal_counter_not_complete_history");
+    assert_eq!(
+        value["scope"],
+        "observed_terminal_counter_not_complete_history"
+    );
     assert_eq!(json["scan"]["complete"], false);
     assert_eq!(json["full_history_complete"], false);
     let table = render(&inspection, UsageFormat::Table).unwrap();

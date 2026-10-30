@@ -46,5 +46,14 @@
     "Provider cache counter inclusion in input differs by adapter/provider and is not inferred here",
     "No new billing, WAL, provider call, GUI/mobile or model-tokenizer implementation"
   ],
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "hostedFormatting": {
+    "producer": "aacd4e87472d2df02dfbf5b1e67ca655ef824a69",
+    "run": 41051596966,
+    "artifact": 12974053880,
+    "zipSha256": "FC7585755454019115974910F38B09581F9E136764A0C589F0CCC0F3AB126B61",
+    "postimageBlobsVerified": 2,
+    "localRustfmtExecuted": false,
+    "sourceRuntimeAccepted": false
+  }
 }

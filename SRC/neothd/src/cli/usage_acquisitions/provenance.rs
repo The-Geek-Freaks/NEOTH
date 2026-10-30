@@ -478,7 +478,10 @@ fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
                     writeln!(output)?;
                 }
                 if let Some(reconciliation) = &group.component_reconciliation {
-                    write!(output, "  observed input reconciliation (UTF-8 estimates separate) ")?;
+                    write!(
+                        output,
+                        "  observed input reconciliation (UTF-8 estimates separate) "
+                    )?;
                     serde_json::to_writer(&mut output, reconciliation)?;
                     writeln!(output)?;
                 }

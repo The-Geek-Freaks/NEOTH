@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T11:55:08.8416796Z",
-  "validationStatus": "W2646_COMPONENT_RECONCILIATION_HOSTED_PENDING",
+  "capturedUtc": "2026-10-30T11:59:54.4180762Z",
+  "validationStatus": "W2646_HOSTED_FORMAT_APPLIED_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4723,8 +4723,8 @@
     },
     {
       "path": "docs/verification/gold-wave2646-component-reconciliation.json",
-      "bytes": 2854,
-      "sha256": "39154F0001DC5A55C41AF555B5E7610A6D3998AC27A125DA4999779A751FEEE0"
+      "bytes": 3184,
+      "sha256": "11097A3F48A254C297C0240E8F87972CD566EF00E26F6C068B82E9F1E825B745"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5968,8 +5968,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2726891,
-      "sha256": "AD7A5E8E51C96D43B3871A94445EF76F24543619FF0236F66E95591665E7A0D3"
+      "bytes": 2727305,
+      "sha256": "C4FD0B4CAA24E09BB33C7EC100F3A092A70658A8FFB9B730766F63CB0EE23E51"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7368,8 +7368,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
-      "bytes": 19956,
-      "sha256": "734AA39054CBF588622313E0A3DF98E4BEDEC321875CCE379F0B0ECE5DE7FCE9"
+      "bytes": 20026,
+      "sha256": "35175172DA82CA5D6217BF53227926F7AFA22F6D4B5A63E155B6563AC8B2D1C7"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
@@ -7378,8 +7378,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "bytes": 29004,
-      "sha256": "0DB3C95C7F0306C4DB76EF9B1EA42A2BF333E2DC25384B862D65745B75772852"
+      "bytes": 29238,
+      "sha256": "D5C063B97548B03AF10C84AC872AC61DF186E90099B6F3AAE06F855AE9640409"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs",
