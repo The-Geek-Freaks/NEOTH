@@ -35,6 +35,7 @@ static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
 
 tokio::task_local! {
     static USAGE_AUTOMATED_OVERRIDE: bool;
+    static PROMPT_CONTINUATION: Option<PromptContinuationBinding>;
     static COUNCIL_ATTEMPT_BUDGET: CouncilAttemptBudget;
 }
 
@@ -202,6 +203,67 @@ fn operation_budget_reservation_plan(
 /// changing provider-wire request fields or weakening the authorization bind.
 pub(crate) async fn automated_usage_scope<F: std::future::Future>(future: F) -> F::Output {
     USAGE_AUTOMATED_OVERRIDE.scope(true, future).await
+}
+
+/// Private, content-free transfer for one append-only MCP continuation.
+/// It changes attribution only; the existing leaf owns reservation and billing.
+pub(crate) struct PromptContinuationBinding {
+    base_binding: String,
+    final_binding: String,
+    appended_bytes: u32,
+    tool_result_bytes: u32,
+}
+
+impl PromptContinuationBinding {
+    pub(crate) fn for_request(
+        base: &Request,
+        request: &Request,
+        tool_result_bytes: Option<u32>,
+    ) -> Option<Self> {
+        let tool_result_bytes = tool_result_bytes?;
+        if base.system != request.system || !request.prompt.starts_with(&base.prompt) {
+            return None;
+        }
+        let appended_bytes = u32::try_from(request.prompt.len().checked_sub(base.prompt.len())?).ok()?;
+        if tool_result_bytes > appended_bytes {
+            return None;
+        }
+        Some(Self {
+            base_binding: prompt_tax_request_binding_sha256(&base.prompt, base.system.as_deref()),
+            final_binding: prompt_tax_request_binding_sha256(&request.prompt, request.system.as_deref()),
+            appended_bytes,
+            tool_result_bytes,
+        })
+    }
+
+    fn apply(&self, context: &mut ProviderCallAuditContext, request: &Request, final_binding: &str) {
+        if self.final_binding != final_binding
+            || context.prompt_tax_request_binding_sha256.as_deref() != Some(self.base_binding.as_str())
+        {
+            return;
+        }
+        if let Some(tax) = &mut context.prompt_tax {
+            tax.components = tax.components.and_then(|components| {
+                components.with_appended_tool_results(
+                    self.appended_bytes,
+                    self.tool_result_bytes,
+                    crate::providers::token_cap::request_token_upper_bound(request),
+                ).ok()
+            });
+            // The five historical injection counts remain valid because all
+            // initially tagged material survives unchanged in this request.
+            context.prompt_tax_request_binding_sha256 = Some(self.final_binding.clone());
+        }
+    }
+}
+
+/// An explicit None shadows any outer scope. Tokio restores nested scopes on
+/// completion, cancellation and error; unrelated tasks inherit no override.
+pub(crate) async fn prompt_continuation_scope<F: std::future::Future>(
+    binding: Option<PromptContinuationBinding>,
+    future: F,
+) -> F::Output {
+    PROMPT_CONTINUATION.scope(binding, future).await
 }
 
 /// Run one already-charged Council provider call. The task-local follows every
@@ -3036,6 +3098,11 @@ impl ProviderCallAuthorizer {
         let mut audit_context = self.audit_context.clone();
         let leaf_prompt_tax_request_binding =
             prompt_tax_request_binding_sha256(&req.prompt, req.system.as_deref());
+        let _ = PROMPT_CONTINUATION.try_with(|binding| {
+            if let Some(binding) = binding {
+                binding.apply(&mut audit_context, req, &leaf_prompt_tax_request_binding);
+            }
+        });
         let prompt_tax_matches_leaf = match (
             audit_context.prompt_tax.as_ref(),
             audit_context.prompt_tax_request_binding_sha256.as_deref(),
@@ -5186,6 +5253,136 @@ mod tests {
         let error = provider.complete(request).await.unwrap_err();
         assert!(error.to_string().contains("operation budget exhausted"));
         assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+    }
+
+    fn continuation_fixture() -> (Request, crate::tokens::budget::PromptTax) {
+        use crate::tokens::budget::{Block, BlockItem, PromptTax};
+        use crate::tokens::prompt_attribution::{PromptAttribution, PromptOrigin};
+        let base = Request {
+            prompt: "question".into(),
+            system: Some("policy".into()),
+            model: Some("fixture".into()),
+            ..Default::default()
+        };
+        let items = [
+            BlockItem::new(Block::A, "policy").with_prompt_origin(PromptOrigin::System),
+            BlockItem::new(Block::E, "question").with_prompt_origin(PromptOrigin::User),
+        ];
+        let tax = PromptTax {
+            memory_tokens: 3,
+            components: Some(PromptAttribution::from_retained_items(
+                &items,
+                crate::providers::token_cap::request_token_upper_bound(&base),
+            ).unwrap()),
+            ..Default::default()
+        };
+        (base, tax)
+    }
+
+    async fn continuation_leaf_tax(
+        base: &Request,
+        request: &Request,
+        tax: crate::tokens::budget::PromptTax,
+    ) -> Option<crate::tokens::budget::PromptTax> {
+        ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_prompt_tax(tax, &base.prompt, base.system.as_deref())
+            .authorize_leaf("local_ollama", request, "test.continuation", false, Some(64))
+            .await
+            .unwrap()
+            .ticket
+            .context
+            .prompt_tax
+    }
+
+    #[tokio::test]
+    async fn append_only_continuation_reaches_leaf_with_exact_components() {
+        let (base, tax) = continuation_fixture();
+        let request = Request {
+            prompt: format!("{}\n🦀\n", base.prompt),
+            ..base.clone()
+        };
+        let result = prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &request, Some(4)),
+            continuation_leaf_tax(&base, &request, tax),
+        ).await.unwrap();
+        assert_eq!(result.memory_tokens, tax.memory_tokens);
+        let components = result.components.unwrap();
+        assert_eq!(components.counts(), [6, 0, 0, 0, 4, 8, 2]);
+        assert_eq!(components.envelope_residual(), tax.components.unwrap().envelope_residual());
+        assert_eq!(components.request_upper_bound(),
+            crate::providers::token_cap::request_token_upper_bound(&request));
+        let encoded = serde_json::to_string(&result).unwrap();
+        assert!(!encoded.contains("question") && !encoded.contains("policy") && !encoded.contains('🦀'));
+        assert!(continuation_leaf_tax(&base, &request, tax).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn continuation_rejects_changed_bytes_baseline_and_envelope() {
+        let (base, tax) = continuation_fixture();
+        let request = Request { prompt: format!("{} tool", base.prompt), ..base.clone() };
+        for changed in [
+            Request { prompt: "different".into(), ..request.clone() },
+            Request { system: Some("changed policy".into()), ..request.clone() },
+        ] {
+            assert!(prompt_continuation_scope(
+                PromptContinuationBinding::for_request(&base, &request, Some(4)),
+                continuation_leaf_tax(&base, &changed, tax),
+            ).await.is_none());
+        }
+        let wrong_base = Request { prompt: "another".into(), ..base.clone() };
+        assert!(prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &request, Some(4)),
+            continuation_leaf_tax(&wrong_base, &request, tax),
+        ).await.is_none());
+        assert!(PromptContinuationBinding::for_request(&base, &wrong_base, Some(0)).is_none());
+        assert!(PromptContinuationBinding::for_request(&base, &request, Some(6)).is_none());
+        assert!(PromptContinuationBinding::for_request(&base, &request, None).is_none());
+        let changed = Request { stop_sequences: vec!["stop".into()], ..request.clone() };
+        let result = prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &changed, Some(4)),
+            continuation_leaf_tax(&base, &changed, tax),
+        ).await.unwrap();
+        assert_eq!(result.memory_tokens, 3);
+        assert!(result.components.is_none());
+    }
+
+    #[tokio::test]
+    async fn continuation_scopes_restore_nested_concurrent_and_cancelled_calls() {
+        let (base, tax) = continuation_fixture();
+        let request = Request { prompt: format!("{} tool", base.prompt), ..base.clone() };
+        prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &request, Some(4)),
+            async {
+                assert!(continuation_leaf_tax(&base, &request, tax).await.is_some());
+                assert!(prompt_continuation_scope(
+                    None, continuation_leaf_tax(&base, &request, tax),
+                ).await.is_none());
+                assert!(continuation_leaf_tax(&base, &request, tax).await.is_some());
+                let failed: Result<()> = prompt_continuation_scope(None, async {
+                    anyhow::bail!("injected scoped error")
+                }).await;
+                assert!(failed.is_err());
+                assert!(continuation_leaf_tax(&base, &request, tax).await.is_some());
+            },
+        ).await;
+        let first = prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &request, Some(4)),
+            async { tokio::task::yield_now().await; continuation_leaf_tax(&base, &request, tax).await },
+        );
+        let second = prompt_continuation_scope(
+            None,
+            async { tokio::task::yield_now().await; continuation_leaf_tax(&base, &request, tax).await },
+        );
+        let (known, unknown) = tokio::join!(first, second);
+        assert!(known.is_some() && unknown.is_none());
+        let mut pending = Box::pin(prompt_continuation_scope(
+            PromptContinuationBinding::for_request(&base, &request, Some(4)),
+            std::future::pending::<()>(),
+        ));
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        drop(pending);
+        assert!(PROMPT_CONTINUATION.try_with(Option::is_some).is_err());
+        assert!(continuation_leaf_tax(&base, &request, tax).await.is_none());
     }
 
     fn prompt_tax_fixture() -> crate::tokens::budget::PromptTax {
@@ -8597,6 +8794,13 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].outcome.as_deref(), Some("client_abandoned"));
         assert!(!events[0].ok);
+        assert_eq!(events[0].input_tokens, None);
+        assert_eq!(events[0].output_tokens, None);
+        assert_eq!(events[0].cache_creation_tokens, None);
+        assert_eq!(events[0].cache_read_tokens, None);
+        for field in ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"] {
+            assert_eq!(frames[1].1.get(field), Some(&serde_json::Value::Null));
+        }
     }
 
     #[tokio::test]

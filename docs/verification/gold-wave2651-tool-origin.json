@@ -1,0 +1,51 @@
+{
+  "schema": "neoth.wave2651.tool-origin.v1",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "baseProducer": "6d7a83a1d05728edfb8a75e59036f062b1cf5fe6",
+  "roadmap": "ADOPT-20261012-A02",
+  "tests": [
+    "cli::chat::tests::mcp_continuations_record_tool_origins_once_through_real_provider_boundary",
+    "mcp::dispatch_loop::tests::loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it",
+    "mcp::dispatch_loop::tests::manifest_scan_without_wal_survives_feedback_but_never_issues_a_permit",
+    "providers::cost_authorization::tests::append_only_continuation_reaches_leaf_with_exact_components",
+    "providers::cost_authorization::tests::continuation_rejects_changed_bytes_baseline_and_envelope",
+    "providers::cost_authorization::tests::continuation_scopes_restore_nested_concurrent_and_cancelled_calls",
+    "providers::cost_authorization::tests::post_dispatch_future_drop_records_client_abandoned_and_indeterminate",
+    "tokens::prompt_attribution::tests::appended_tool_results_preserve_known_origins_and_utf8_residual",
+    "tokens::prompt_attribution::tests::appended_tool_results_reject_invalid_counts_envelope_and_saturation"
+  ],
+  "newTests": 7,
+  "strengthenedTests": 2,
+  "focusedRequiredCount": 130,
+  "prior121Retained": true,
+  "implementation": [
+    "MCP continuation carries cumulative post-compression rendered ToolResult UTF8 bytes to the existing provider authorizer",
+    "Private scope binds initial and actual final prompt/system hashes; leaf verifies unchanged baseline and canonical final request envelope",
+    "Preserved origin counts and residual remain estimates; appended non-tool bytes remain unattributed; no second reservation or accounting owner",
+    "Compaction clears continuation provenance; nested, concurrent, cancelled and summary calls do not inherit a stale override",
+    "Production-loop regression verifies exact rendered byte counts, distinct durable intent-terminal associations and observed usage without prompt text in metadata"
+  ],
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hostedRuntimeAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "review": {
+    "agent": "/root/readonly_usage_review",
+    "method": "Prompt-only concrete production algorithms and regression behavior",
+    "outcome": "No concrete source defect apparent; hosted validation pending"
+  },
+  "priorNative": {
+    "run": 41074447282,
+    "producer": "6d7a83a1d05728edfb8a75e59036f062b1cf5fe6",
+    "accepted": false,
+    "scope": "GC208 and migration4 only; immutable predecessor source does not qualify this change"
+  },
+  "limits": [
+    "Append-only continuation only; destructive rewrites keep historical attribution unknown",
+    "No measured model-tokenizer allocation, per-component provider money, or inferred cache-hit evidence",
+    "No claim of full A02, native, release, GUI/mobile or Road-to-Gold acceptance"
+  ],
+  "goldCheckboxesClosed": 0
+}

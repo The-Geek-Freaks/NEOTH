@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       cost_replay_regressions:
-        description: 'Also run 121 exact invocation provenance, acquisition reader, budget acquisition, authorization-price, prompt component, usage and provider recovery regressions'
+        description: 'Also run 130 exact invocation provenance, acquisition reader, budget acquisition, authorization-price, prompt component, usage and provider recovery regressions'
         type: boolean
         default: false
       macos_provider_regression:
@@ -278,7 +278,7 @@ jobs:
           matrix_path = root / "docs/verification/gold-wave95-96-test-matrix.json"
           matrix_bytes = matrix_path.read_bytes()
           matrix = json.loads(matrix_bytes)
-          spec = matrix.get("wave2646ReconciliationRegressions", {})
+          spec = matrix.get("wave2651ToolOriginRegressions", {})
           names = spec.get("requiredTests", [])
           report_path = "docs/verification/gold-wave2603-terminal-usage-replay.json"
           report_bytes = (root / report_path).read_bytes()
@@ -296,15 +296,17 @@ jobs:
           provenance_report_bytes = (root / provenance_report_path).read_bytes()
           reconciliation_report_path = "docs/verification/gold-wave2646-component-reconciliation.json"
           reconciliation_report_bytes = (root / reconciliation_report_path).read_bytes()
-          expected = json.loads(report_bytes)["tests"] + json.loads(extra_report_bytes)["tests"] + json.loads(component_report_bytes)["tests"] + json.loads(authorization_report_bytes)["tests"] + json.loads(acquisition_report_bytes)["tests"] + json.loads(reader_report_bytes)["tests"] + json.loads(provenance_report_bytes)["tests"] + json.loads(reconciliation_report_bytes)["tests"]
-          if spec.get("requiredCount") != 121 or len(names) != 121 or len(set(names)) != 121 or names != sorted(expected):
-              raise SystemExit("cost replay selection must contain exactly 121 report-bound identities")
+          tool_origin_report_path = "docs/verification/gold-wave2651-tool-origin.json"
+          tool_origin_report_bytes = (root / tool_origin_report_path).read_bytes()
+          expected = json.loads(tool_origin_report_bytes)["tests"] + json.loads(report_bytes)["tests"] + json.loads(extra_report_bytes)["tests"] + json.loads(component_report_bytes)["tests"] + json.loads(authorization_report_bytes)["tests"] + json.loads(acquisition_report_bytes)["tests"] + json.loads(reader_report_bytes)["tests"] + json.loads(provenance_report_bytes)["tests"] + json.loads(reconciliation_report_bytes)["tests"]
+          if spec.get("requiredCount") != 130 or len(names) != 130 or len(set(names)) != 130 or names != sorted(expected):
+              raise SystemExit("cost replay selection must contain exactly 130 report-bound identities")
           if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
               raise SystemExit("invalid cost replay identity")
           required_recovery = "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently"
           if required_recovery not in names:
               raise SystemExit("real provider recovery case is missing")
-          allowed_sources = {"SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/daemon/capability_decay.rs", "SRC/neothd/src/tokens/prompt_attribution.rs", "SRC/neothd/src/pipeline/enriched_request.rs", "SRC/neothd/src/cli/chat.rs", "SRC/neothd/src/cli/usage_acquisitions.rs", "SRC/neothd/src/cli/usage_acquisitions/collector.rs", "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs"}
+          allowed_sources = {"SRC/neothd/src/mcp/dispatch_loop.rs", "SRC/neothd/src/daemon/usage_log.rs", "SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/providers/pricing_basis.rs", "SRC/neothd/src/providers/cost.rs", "SRC/neothd/src/daemon/capability_decay.rs", "SRC/neothd/src/tokens/prompt_attribution.rs", "SRC/neothd/src/pipeline/enriched_request.rs", "SRC/neothd/src/cli/chat.rs", "SRC/neothd/src/cli/usage_acquisitions.rs", "SRC/neothd/src/cli/usage_acquisitions/collector.rs", "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs"}
           records = []
           inputs = {"docs/verification/gold-wave95-96-test-matrix.json": hashlib.sha256(matrix_bytes).hexdigest(), report_path: hashlib.sha256(report_bytes).hexdigest(), extra_report_path: hashlib.sha256(extra_report_bytes).hexdigest()}
           inputs[component_report_path] = hashlib.sha256(component_report_bytes).hexdigest()
@@ -313,6 +315,9 @@ jobs:
           inputs[reader_report_path] = hashlib.sha256(reader_report_bytes).hexdigest()
           inputs[provenance_report_path] = hashlib.sha256(provenance_report_bytes).hexdigest()
           inputs[reconciliation_report_path] = hashlib.sha256(reconciliation_report_bytes).hexdigest()
+          inputs[tool_origin_report_path] = hashlib.sha256(tool_origin_report_bytes).hexdigest()
+          for relative in ("SRC/neothd/tests/fixtures/mcp_stdio_fixture.py", "SRC/neothd/src/mcp/client.rs", "SRC/neothd/src/context/compaction.rs"):
+              inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
           for name in names:
               matches = [record for record in matrix.get("requiredNativeTests", []) if record.get("test") == name and record.get("junitClass") == "neoth"]
               if len(matches) != 1 or matches[0].get("sourcePath") not in allowed_sources:
@@ -328,7 +333,7 @@ jobs:
               inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
           fixture_source = "SRC/neothd/src/cluster/budget_raft/service_tests.rs"
           inputs[fixture_source] = hashlib.sha256((root / fixture_source).read_bytes()).hexdigest()
-          receipt = {"schema": "neoth.cost-replay-regressions.v7", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 121, "fixtures": records, "inputs": inputs}
+          receipt = {"schema": "neoth.cost-replay-regressions.v8", "producer": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "jobKey": os.environ["GITHUB_JOB"], "requiredCount": 130, "fixtures": records, "inputs": inputs}
           (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
           (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
           PY
@@ -356,8 +361,8 @@ jobs:
               failed_or_missing=$((failed_or_missing + 1))
             fi
           done < "$proof_dir/fixture-names.txt"
-          printf 'selected=121\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
-          test "$visited" -eq 121
+          printf 'selected=130\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 130
           test "$failed_or_missing" -eq 0
 
       - name: Upload cost replay regression evidence

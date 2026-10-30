@@ -362,6 +362,16 @@ pub trait CompletionDriver {
         &'a mut self,
         prompt: &'a str,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+
+    /// Counts only rendered tool-result bytes appended by the loop. None means
+    /// the original typed baseline was rewritten or cannot be proven retained.
+    fn complete_with_tool_attribution<'a>(
+        &'a mut self,
+        prompt: &'a str,
+        _tool_result_bytes: Option<u32>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        self.complete(prompt)
+    }
 }
 
 /// Run the dispatch loop with the default iteration cap.
@@ -644,6 +654,7 @@ where
     P: PolicyArgument + Copy + Send + Sync,
 {
     let mut prompt = initial_prompt;
+    let mut retained_tool_result_bytes = Some(0u32);
     let mut iterations = 0u32;
     let mut hit_cap = false;
     let mut successful_calls = 0u32;
@@ -723,6 +734,8 @@ where
         // completion if it crossed the threshold. Iteration 1 is the operator's
         // own prompt (never compact that); only the grown prompt (2+) qualifies.
         if iterations > 1 {
+            use sha2::Digest as _;
+            let before_compaction = sha2::Sha256::digest(prompt.as_bytes());
             prompt = compact_if_needed_in(
                 driver,
                 prompt,
@@ -733,6 +746,11 @@ where
                 compaction_budget,
             )
             .await?;
+            if sha2::Sha256::digest(prompt.as_bytes()) != before_compaction {
+                // Aggregate historical counters cannot describe a retained
+                // subset after compaction. Unknown is not a measured zero.
+                retained_tool_result_bytes = None;
+            }
         }
         // GOLD-ADAPT-HARNESS-04 — per-turn input token guard: if the estimated
         // prompt size exceeds the threshold, inject a one-time stop/compact
@@ -760,7 +778,9 @@ where
                 harness_token_nudge_fired = true;
             }
         }
-        current_text = driver.complete(&prompt).await?;
+        current_text = driver
+            .complete_with_tool_attribution(&prompt, retained_tool_result_bytes)
+            .await?;
         let mut extraction = extract_tool_calls(&current_text);
         // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model returned
         // no proper fenced call but the reply looks like free-text XML/JSON,
@@ -783,7 +803,9 @@ where
                 leaked_reply.as_str(),
                 crate::mcp::harness::LEAKED_CALL_NUDGE
             );
-            current_text = driver.complete(&nudge_prompt).await?;
+            current_text = driver
+                .complete_with_tool_attribution(&nudge_prompt, retained_tool_result_bytes)
+                .await?;
             extraction = extract_tool_calls(&current_text);
             response_was_harness_replay = true;
         }
@@ -1705,6 +1727,11 @@ where
         // BEFORE build_next_prompt overwrites `prompt` with the next turn's content.
         let harness_turn_prompt_hash = crate::mcp::harness::prompt_hash(&prompt);
         let harness_turn_prompt_len = prompt.len();
+        retained_tool_result_bytes = retained_tool_result_bytes.and_then(|previous| {
+            tool_result_blocks.iter().try_fold(previous, |total, block| {
+                total.checked_add(u32::try_from(block.as_str().len()).ok()?)
+            })
+        });
         prompt = build_next_prompt(&prompt, &replayed_reply, &tool_result_blocks, &hint_blocks);
         // GOLD-ADAPT-HARNESS-02 — append a per-turn replay record to
         // ~/.neoth/trajectories/<session_id>.jsonl + the .json snapshot.
@@ -4899,6 +4926,7 @@ mod tests {
         responses: Vec<String>,
         cursor: Arc<AtomicUsize>,
         seen_prompts: std::sync::Mutex<Vec<String>>,
+        seen_attribution: std::sync::Mutex<Vec<Option<u32>>>,
     }
 
     impl ScriptedDriver {
@@ -4907,11 +4935,21 @@ mod tests {
                 responses: responses.into_iter().map(String::from).collect(),
                 cursor: Arc::new(AtomicUsize::new(0)),
                 seen_prompts: std::sync::Mutex::new(Vec::new()),
+                seen_attribution: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
 
     impl CompletionDriver for ScriptedDriver {
+        fn complete_with_tool_attribution<'a>(
+            &'a mut self,
+            prompt: &'a str,
+            tool_result_bytes: Option<u32>,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+            self.seen_attribution.lock().unwrap().push(tool_result_bytes);
+            self.complete(prompt)
+        }
+
         fn complete<'a>(
             &'a mut self,
             prompt: &'a str,
@@ -5736,6 +5774,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it() {
+        for compact in [false, true] {
+            let home = test_instance_home();
+            let initial = "x".repeat(10_001);
+            let mut driver = ScriptedDriver::new(if compact {
+                vec!["done", "compact summary", "done"]
+            } else {
+                vec!["done", "done"]
+            });
+            let policy = if compact {
+                crate::context::compaction::CompactionPolicy {
+                    enabled: true,
+                    threshold_tokens: 10_000,
+                    prompt_capacity_tokens: 30_000,
+                    progressive: false,
+                }
+            } else {
+                crate::context::compaction::CompactionPolicy::disabled()
+            };
+            let outcome = run_tool_loop_with_cap(
+                &mut driver,
+                initial,
+                &McpServers::default(),
+                AutonomyLevel::Standard,
+                None,
+                None,
+                &McpToolScope::default(),
+                2,
+                &crate::config::SecurityPolicy::default(),
+                None,
+                crate::mcp::goal_tracker::GoalContext {
+                    goal: None,
+                    grind: Some("continue the bounded work".into()),
+                },
+                false,
+                policy,
+                None,
+                None,
+                &crate::cli::elicitation::ElicitationHandler::Disabled,
+                &crate::config::tools::McpHarnessConfig::default(),
+                home.path(),
+            ).await.unwrap();
+            assert_eq!(outcome.iterations, 2);
+            assert_eq!(
+                *driver.seen_attribution.lock().unwrap(),
+                vec![Some(0), if compact { None } else { Some(0) }],
+                "a summary must never relabel old prompt components",
+            );
+            assert_eq!(driver.cursor.load(Ordering::SeqCst), if compact { 3 } else { 2 });
+            let seen = driver.seen_prompts.lock().unwrap();
+            let last = seen.last().unwrap();
+            if compact {
+                assert!(last.starts_with(crate::context::compaction::SUMMARY_MARKER));
+                assert!(last.len() < 10_001, "compaction must actually replace old content");
+                assert!(seen[1].contains("DENSE SUMMARY:"));
+            } else {
+                assert!(last.starts_with(&"x".repeat(10_001)));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn compact_if_needed_is_noop_under_threshold() {
         use crate::context::compaction::CompactionPolicy;
         let mut driver = ScriptedDriver::new(vec!["MUST NOT BE CALLED"]);
@@ -6405,6 +6505,11 @@ mod tests {
         );
         assert_eq!(outcome.successful_calls, 0);
         assert_eq!(outcome.failed_calls, 3);
+        let attribution = driver.seen_attribution.lock().unwrap();
+        assert_eq!(attribution.len(), 3);
+        assert_eq!(attribution[0], Some(0));
+        assert!(attribution[1].unwrap() > 0);
+        assert!(attribution[2].unwrap() > attribution[1].unwrap());
         let prompts = driver.seen_prompts.lock().unwrap();
         assert_eq!(prompts.len(), 3);
         assert!(

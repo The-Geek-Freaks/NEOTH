@@ -15990,8 +15990,23 @@ pub(crate) async fn run_mcp_dispatch_loop_with_activity(
             prompt: &'b str,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'b>>
         {
+            self.complete_with_tool_attribution(prompt, None)
+        }
+
+        fn complete_with_tool_attribution<'b>(
+            &'b mut self,
+            prompt: &'b str,
+            tool_result_bytes: Option<u32>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'b>>
+        {
             let mut req = self.base.clone();
             req.prompt = prompt.to_string();
+            let attribution =
+                crate::providers::cost_authorization::PromptContinuationBinding::for_request(
+                    &self.base,
+                    &req,
+                    tool_result_bytes,
+                );
             let provider = self.provider;
             // QM-10 Phase 2.5: streaming MCP-loop also consults the
             // breaker. Each tool-call iteration is a fresh provider
@@ -16006,8 +16021,11 @@ pub(crate) async fn run_mcp_dispatch_loop_with_activity(
                         return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                     }
                 };
-                let result = crate::providers::cost_authorization::automated_usage_scope(
-                    provider.complete(req),
+                let result = crate::providers::cost_authorization::prompt_continuation_scope(
+                    attribution,
+                    crate::providers::cost_authorization::automated_usage_scope(
+                        provider.complete(req),
+                    ),
                 )
                 .await;
                 match result {
@@ -19072,6 +19090,206 @@ modes:
             crate::cli::usage::render_prompt_tax_section(None),
             "  prompt tax: unavailable (no measured terminal responses)\n"
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_continuations_record_tool_origins_once_through_real_provider_boundary() {
+        use crate::tokens::budget::{Block, BlockItem, PromptTax};
+        use crate::tokens::prompt_attribution::{PromptAttribution, PromptOrigin};
+
+        struct LoopProvider {
+            replies: Vec<String>,
+            seen: std::sync::Mutex<Vec<Request>>,
+        }
+        #[async_trait]
+        impl Provider for LoopProvider {
+            fn name(&self) -> &'static str { "local_ollama" }
+            fn default_model(&self) -> Option<&str> { Some("fixture-local") }
+            async fn complete(&self, request: Request) -> Result<Completion> {
+                let mut seen = self.seen.lock().unwrap();
+                let index = seen.len();
+                seen.push(request);
+                Ok(Completion {
+                    text: self.replies.get(index).expect("bounded three-call script").clone(),
+                    model: "fixture-local".into(),
+                    input_tokens: Some(11),
+                    output_tokens: Some(7),
+                    ..Default::default()
+                })
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("mcp-origin-tools-count");
+        let mut server = crate::mcp::client::stdio_fixture_config(&counter);
+        server.smart_approve = false;
+        let calls: Vec<_> = [1, 2].into_iter().map(|sequence| {
+            format!("```mcp-tool-call\n{}\n```", serde_json::json!({
+                "server": server.id, "tool": "read",
+                "arguments": {"sequence": sequence, "text": "ä🦀"}
+            }))
+        }).collect();
+        let provider = LoopProvider {
+            replies: vec![calls[0].clone(), calls[1].clone(), "done".into()],
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let base = Request {
+            prompt: "operator question".into(),
+            system: Some("retained policy".into()),
+            model: Some("fixture-local".into()),
+            ..Default::default()
+        };
+        let items = [
+            BlockItem::new(Block::A, "retained policy").with_prompt_origin(PromptOrigin::System),
+            BlockItem::new(Block::E, "operator question").with_prompt_origin(PromptOrigin::User),
+        ];
+        let tax = PromptTax {
+            components: Some(PromptAttribution::from_retained_items(
+                &items,
+                crate::providers::token_cap::request_token_upper_bound(&base),
+            ).unwrap()),
+            ..Default::default()
+        };
+        let wal_path = home.path().join("mcp-origin.wal");
+        let (writer, writer_join) = wal_spawn(wal_path.clone()).unwrap();
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full, Some(writer.clone()), 20_000,
+        ).with_usage_home(home.path())
+         .with_prompt_tax(tax, &base.prompt, base.system.as_deref());
+        let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &provider, authorizer, Some("fixture-local".into()), "test.mcp_continuation",
+        );
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        ).unwrap();
+        let mut budget = crate::mcp::dispatch_loop::CompactionBudget::default();
+        let once = crate::hooks::SessionOnceGuard::new();
+        let outcome = run_mcp_dispatch_loop(
+            &authorized,
+            base.clone(),
+            &crate::mcp::McpServers { servers: vec![server], smart_loading: true },
+            &policy,
+            None,
+            &writer,
+            None,
+            None,
+            &crate::mcp::McpToolScope::default(),
+            4,
+            &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext::empty(),
+            false,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+            crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
+            &crate::config::tools::McpHarnessConfig::default(),
+            &mut budget,
+            None,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            false,
+            Vec::new(),
+            crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default().requested_context_policy().unwrap(),
+        ).await.unwrap();
+        assert_eq!(outcome.iterations, 3);
+        assert_eq!(outcome.successful_calls, 2);
+        assert_eq!(outcome.final_text, "done");
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 2);
+        drop(authorized);
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let seen = provider.seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert!(seen[1].prompt.starts_with(&base.prompt));
+        assert!(seen[2].prompt.starts_with(&seen[1].prompt));
+        let total_bound: u64 = seen.iter().map(|request|
+            u64::from(crate::providers::token_cap::request_token_upper_bound(request))
+        ).sum();
+        let usage = crate::daemon::usage_log::aggregate(home.path(), 0, i64::MAX);
+        assert_eq!(usage.total_call_count, 3);
+        assert_eq!(usage.total_ok_count, 3);
+        assert_eq!(usage.total_input_tokens, 33);
+        assert_eq!(usage.total_output_tokens, 21);
+        let components = usage.prompt_components.unwrap();
+        assert_eq!(components.observed_call_count, 3);
+        assert_eq!(components.request_upper_bound, total_bound);
+        assert!(components.tool_result > 0);
+        assert_eq!(components.user, 3 * base.prompt.len() as u64);
+        assert_eq!(components.system, 3 * base.system.as_ref().unwrap().len() as u64);
+        assert_eq!(components.envelope_residual,
+            3 * u64::from(tax.components.unwrap().envelope_residual()));
+
+        let bytes = std::fs::read(wal_path).unwrap();
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut intents = std::collections::BTreeMap::new();
+        let mut terminals = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            match frame.header.event_type {
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST => {
+                    let value: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                    let id = value["invocation_id"].as_str().unwrap().to_owned();
+                    assert!(intents.insert(id, value).is_none(), "duplicate provider intent");
+                }
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE => {
+                    terminals.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                }
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR => panic!("unexpected provider error"),
+                _ => {}
+            }
+            assert!(frame.header.total_len > 0);
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(intents.len(), 3);
+        assert_eq!(terminals.len(), 3);
+        let mut previous_tool_bytes = 0;
+        let mut expected_tool_bytes = 0u64;
+        for (index, terminal) in terminals.iter().enumerate() {
+            let invocation = terminal["invocation_id"].as_str().unwrap();
+            let intent = intents.remove(invocation).expect("one matching durable intent");
+            assert_eq!(terminal["request_binding_sha256"], intent["request_binding_sha256"]);
+            assert_eq!(terminal["provider"], "local_ollama");
+            assert_eq!(terminal["wire_model"], "fixture-local");
+            assert_eq!(terminal["call_scope"], "test.mcp_continuation");
+            assert_eq!(terminal["input_tokens"], 11);
+            assert_eq!(terminal["output_tokens"], 7);
+            assert_eq!(terminal["prompt_bytes"], seen[index].prompt.len());
+            assert_eq!(terminal["prompt_hash_xxh3"],
+                xxhash_rust::xxh3::xxh3_64(seen[index].prompt.as_bytes()));
+            let counts = &terminal["prompt_tax"]["components"];
+            let tool_bytes = counts["tool_result"].as_u64().unwrap();
+            if index == 0 {
+                assert_eq!(tool_bytes, 0);
+            } else {
+                assert!(tool_bytes > previous_tool_bytes);
+                let appended = seen[index].prompt
+                    .strip_prefix(&seen[index - 1].prompt)
+                    .expect("prior request is retained byte-exact");
+                let (_, results) = appended
+                    .split_once("\n\n[tool results]\n")
+                    .expect("the next request includes a tool result");
+                let rendered_block = results
+                    .strip_suffix("\n\nContinue. Emit more `mcp-tool-call` blocks if you need to, or finish your reply.")
+                    .expect("one result block, no repository hints in this fixture");
+                expected_tool_bytes += u64::try_from(rendered_block.len()).unwrap();
+                assert_eq!(tool_bytes, expected_tool_bytes,
+                    "charge attribution only for the actual rendered result, once");
+            }
+            previous_tool_bytes = tool_bytes;
+            let metadata = terminal["prompt_tax"].to_string();
+            assert!(!metadata.contains("operator question"));
+            assert!(!metadata.contains("retained policy"));
+            assert!(!metadata.contains("fixture-result:"));
+            assert!(terminal["prompt_tax_request_binding_sha256"].is_null());
+        }
+        assert!(intents.is_empty(), "every intent has exactly one terminal");
     }
 
     #[tokio::test]

@@ -57,7 +57,7 @@ Always inspect `scan.complete` and `observations.semantic_decode_complete`. Even
 
 The reader has shared limits of 20,000 recognized records, 8 MiB of recognized payload/segment-name input, 1,000 diagnostics and 16 MiB of serialized output. Limits or authentication/scan errors fail the read before buffered output is published. Provenance mode rejects duplicate JSON keys recursively. Neither mode creates missing WAL keys, repairs JSONL, calls a provider, replays an effect or performs another debit.
 
-The 121-case cost/provenance selection, including six component-reconciliation cases, passed run 41061897452 on producer 6f4dad5e together with 79 document cases, slim Clippy and the CLI export. Workspace Clippy failed on a needless borrow in a test fixture; that one-line repair and the final source still require the full native gate. Root verified the original archives and exact source bindings. This acceptance belongs to that producer; later source changes and native/release qualification require their own evidence. A02 remains open because the supported MCP continuation path still carries tool results as text without typed origin propagation into its existing reservation. Clearing stale attribution is correct but does not close that integration gap.
+The 121-case cost/provenance selection, including six component-reconciliation cases, passed run 41061897452 on producer 6f4dad5e together with 79 document cases, slim Clippy and the CLI export. Workspace Clippy failed on a needless borrow in a test fixture; that one-line repair and the final source still require the full native gate. Root verified the original archives and exact source bindings. This acceptance belongs to that producer; later source changes and native/release qualification require their own evidence. Append-only MCP continuation propagation is implemented in W2651 and requires its own hosted qualification. A02 remains open for the remaining acceptance criteria; the prior121-case proof does not validate this new source.
 
 ## Reconcile observed input without inventing attribution
 
@@ -83,3 +83,11 @@ count. Per-component cache classification remains unknown. Repeated text or
 reused components alone never establish a cache hit. Provider/model/rate evidence
 continues to come from the original bound records; no current-price lookup,
 second debit or prompt collection is introduced.
+
+## Append-only MCP continuation origins
+
+The dispatch loop counts the rendered tool-result bytes that actually enter the next prompt after tool-result compression. A private per-call scope binds that count to the original and final prompt/system hashes. The existing provider authorizer accepts the continuation only when its retained baseline matches and the canonical request-bound increase equals the appended UTF-8 byte count. Original component estimates and envelope residual remain intact; new tool blocks count as tool results and other appended content remains unattributed. These are upper-bound estimates, not measured provider tokens or allocated charges.
+
+Destructive prompt compaction invalidates the continuation. Summary calls explicitly shadow any outer attribution scope. Nested, concurrent, failed and cancelled calls restore scope boundaries. A changed prompt/system binding clears stale metadata; a changed request envelope discards the component estimate. No public provider request field, WAL schema, second reservation or accounting owner is added.
+
+The nine-case addition (seven new, two strengthened) is source-integrated and awaits hosted compilation, runtime and original-artifact admission. Partial known/unknown origins after destructive rewrites, model-specific tokenizer evidence and remaining A02 acceptance are still open.

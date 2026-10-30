@@ -122,6 +122,34 @@ impl PromptAttribution {
         Ok(result)
     }
 
+    /// Extend proven retained content with bytes actually appended by the loop.
+    /// Changed envelope semantics cannot reuse a previous component estimate.
+    pub(crate) fn with_appended_tool_results(
+        mut self,
+        appended_bytes: u32,
+        tool_bytes: u32,
+        final_request_bound: u32,
+    ) -> Result<Self, &'static str> {
+        self.validate()?;
+        if tool_bytes > appended_bytes {
+            return Err("tool bytes exceed appended bytes");
+        }
+        if final_request_bound.checked_sub(appended_bytes) != Some(self.request_upper_bound) {
+            return Err("request envelope changed");
+        }
+        self.tool_result = self
+            .tool_result
+            .checked_add(tool_bytes)
+            .ok_or("tool result attribution overflow")?;
+        self.unattributed = self
+            .unattributed
+            .checked_add(appended_bytes - tool_bytes)
+            .ok_or("unattributed attribution overflow")?;
+        self.request_upper_bound = final_request_bound;
+        self.validate()?;
+        Ok(self)
+    }
+
     /// System, workflow, skill, retrieval, tool result, user, unattributed.
     pub fn counts(&self) -> [u32; 7] {
         [
@@ -213,6 +241,40 @@ impl PromptComponentTotals {
 mod tests {
     use super::*;
     use crate::tokens::budget::{Block, PromptTaxSource};
+
+    #[test]
+    fn appended_tool_results_preserve_known_origins_and_utf8_residual() {
+        let items = [
+            BlockItem::new(Block::A, "policy").with_prompt_origin(PromptOrigin::System),
+            BlockItem::new(Block::E, "ä").with_prompt_origin(PromptOrigin::User),
+        ];
+        let base = PromptAttribution::from_retained_items(&items, 520).unwrap();
+        let first_tool = "🦀";
+        let first = base
+            .with_appended_tool_results(
+                7,
+                u32::try_from(first_tool.len()).unwrap(),
+                527,
+            )
+            .unwrap();
+        assert_eq!(first.counts(), [6, 0, 0, 0, 4, 2, 3]);
+        assert_eq!(first.envelope_residual(), 512);
+        let second = first.with_appended_tool_results(2, 0, 529).unwrap();
+        assert_eq!(second.counts(), [6, 0, 0, 0, 4, 2, 5]);
+        assert_eq!(second, base.with_appended_tool_results(9, 4, 529).unwrap());
+        assert_eq!(base.counts(), [6, 0, 0, 0, 0, 2, 0]);
+    }
+
+    #[test]
+    fn appended_tool_results_reject_invalid_counts_envelope_and_saturation() {
+        let base = PromptAttribution::from_retained_items(&[], 512).unwrap();
+        assert!(base.with_appended_tool_results(1, 2, 513).is_err());
+        assert!(base.with_appended_tool_results(1, 1, 514).is_err());
+        assert!(base.with_appended_tool_results(513, 0, 512).is_err());
+        let full = PromptAttribution::from_retained_items(&[], u32::MAX).unwrap();
+        assert!(full.with_appended_tool_results(1, 1, u32::MAX).is_err());
+        assert_eq!(base.with_appended_tool_results(0, 0, 512).unwrap(), base);
+    }
 
     #[test]
     fn explicit_origin_wins_over_block_and_legacy_source() {
