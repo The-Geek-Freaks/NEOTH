@@ -369,6 +369,7 @@ class CiCadenceContractTests(unittest.TestCase):
             "gold-wave2602-vault-note-recovery.json",
             "gold-wave2604-logical-document-lifecycle.json",
             "gold-wave2641-docx-section-properties.json",
+            "gold-wave2642-docx-numbering.json",
             "gold-wave2601-ci-checkpoint-and-migration-expectation.json",
         )
         expected: list[str] = []
@@ -381,9 +382,9 @@ class CiCadenceContractTests(unittest.TestCase):
             )
             expected.extend(report.get("focusedAdditionalTests", []))
         selection = matrix["wave2604DocumentRegressions"]
-        self.assertEqual(selection["requiredCount"], 62)
-        self.assertEqual(len(expected), 62)
-        self.assertEqual(len(set(expected)), 62)
+        self.assertEqual(selection["requiredCount"], 76)
+        self.assertEqual(len(expected), 76)
+        self.assertEqual(len(set(expected)), 76)
         self.assertEqual(selection["requiredTests"], sorted(expected))
         native = (
             matrix["requiredNativeTests"]
@@ -1329,9 +1330,32 @@ class CiCadenceContractTests(unittest.TestCase):
                     '      echo "=== $(date -u +%FT%TZ) ==="',
                     "      sysctl vm.swapusage || true",
                     "      vm_stat || true",
-                    '      echo "pid ppid cpu_percent rss_kib elapsed role"',
-                    "      ps -axo pid=,ppid=,%cpu=,rss=,etime=,comm= \\",
-                    "        | awk '{ role = $6; sub(/^.*\\//, \"\", role); if (role == \"cargo\" || role == \"cargo-nextest\" || role == \"rustc\" || role == \"clang\" || role == \"ld\") print $1, $2, $3, $4, $5, role }' || true",
+                    "      echo \"pid ppid cpu_percent rss_kib elapsed role crate_name test_harness\"",
+                    "      ps -ww -axo pid=,ppid=,%cpu=,rss=,etime=,ucomm=,args= \\",
+                    "        | awk '{",
+                    "            role = $6",
+                    "            sub(/^.*\\//, \"\", role)",
+                    "            if (role != \"cargo\" && role != \"cargo-nextest\" && role != \"rustc\" && role != \"clang\" && role != \"ld\") next",
+                    "            if (role == \"rustc\") {",
+                    "                if (rustc_seen++ >= 64) next",
+                    "            } else if (other_seen++ >= 16) next",
+                    "            crate = \"-\"",
+                    "            test_harness = \"-\"",
+                    "            if (role == \"rustc\") {",
+                    "                test_harness = \"false\"",
+                    "                candidate = \"\"",
+                    "                for (i = 7; i <= NF; i++) {",
+                    "                    if ($i == \"--test\") test_harness = \"true\"",
+                    "                    if ($i == \"--crate-name\" && i < NF) candidate = $(i+1)",
+                    "                    else if (index($i, \"--crate-name=\") == 1) candidate = substr($i, 14)",
+                    "                }",
+                    "                if (length(candidate) <= 128 && candidate ~ /^[A-Za-z_][A-Za-z0-9_]*$/) crate = candidate",
+                    "            }",
+                    "            print $1, $2, $3, $4, $5, role, crate, test_harness",
+                    "        } END {",
+                    "            if (rustc_seen > 64) print \"rustc_sample_limit\", rustc_seen",
+                    "            if (other_seen > 16) print \"other_process_sample_limit\", other_seen",
+                    "        }' || true",
                     '    } >> "$diagnostic_log"',
                     "    next_snapshot=$((SECONDS + 60))",
                     "  fi",

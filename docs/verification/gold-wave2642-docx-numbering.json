@@ -36,10 +36,11 @@
   "validation": {
     "wholeA03Accepted": false,
     "goldAccepted": false,
-    "hostedFormat": "Exact hosted rustfmt patch from Preflight41044023117 imported; next Preflight pending",
+    "hostedFormat": "Passed on 314cd753 in Preflight41044519770",
     "nativeAccepted": false,
     "localRuntimeExecuted": false,
-    "focusedRuntime": "pending"
+    "focusedRuntime": "pending",
+    "cadenceContracts": "Two stale expectations in Preflight41044519770 repaired: report-derived62 to76 and exact bounded observer literal. Hosted recheck pending."
   },
   "limits": [
     "No numbering.xml/styles.xml resolution, rendered ordinals/bullets, implicit list membership or Word layout validity claim",

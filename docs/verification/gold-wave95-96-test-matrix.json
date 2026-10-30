@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2642_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "status": "W2642_CADENCE_EXPECTATIONS_REPAIRED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 459810,
-    "sha256": "7CAC29741737C458AFF8BA83975BD03F8EB227C12AE1874500FF0051763DB46B"
+    "bytes": 459816,
+    "sha256": "DFC056E67153252658BF99BF7FBB7CFF8FFD5982D692E1B513812B9607D524A1"
   },
   "sourceInputs": 2510,
   "requiredNativeTests": [
@@ -89500,6 +89500,26 @@
       }
     ],
     "note": "Exact hosted rustfmt patch imported from Preflight41044023117 on c800ee54; all five postimage Git blobs verified. Document76+cost115 unchanged; local rustfmt not executed. Final fast/focused acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2642CadenceRepairIntegration": {
+    "base": "314cd753bcd7fd0476de61e8a2a5c8e133c56f1d",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2642-docx-numbering.json",
+        "bytes": 5376,
+        "sha256": "11F9242EADC09F7A18C5CFE015C727F64261BD2AABAF90F4C31395437B5A3B92",
+        "blob": "68def43d23a9256e6b1b02e197f772e11560625c"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 85392,
+        "sha256": "67138541407E235D188B46D35E014157674FB4D0B90D1026CD0DC66616277645",
+        "blob": "791dda37afc5a15ba3c44223f16303bf3a8788aa"
+      }
+    ],
+    "note": "Repair stale document62 count/report union to exact76 and retain exact macOS compile-command assertion with updated observer literal. No feature/test removed; hosted recheck pending; no local Python.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
