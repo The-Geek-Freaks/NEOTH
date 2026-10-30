@@ -85,7 +85,11 @@ impl NumberingProperties {
                 "invalid numbering kind"
             );
         }
-        if self.omissions.iter().any(|item| item.reason == "metadata_limit") {
+        if self
+            .omissions
+            .iter()
+            .any(|item| item.reason == "metadata_limit")
+        {
             ensure!(
                 self.omissions.len() == 1
                     && self.omissions[0].source_range == [0, entry_bytes]
@@ -108,7 +112,10 @@ impl NumberingProperties {
             ensure!(
                 !omission.reason.is_empty()
                     && omission.reason.len() <= 64
-                    && omission.reason.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+                    && omission
+                        .reason
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
                 "invalid numbering omission reason"
             );
             ordered_range(
@@ -117,8 +124,8 @@ impl NumberingProperties {
                 &mut previous_omission_end,
             )?;
             ensure!(
-                self.records.iter().all(|record|
-                    omission.source_range[1] <= record.paragraph_source_range[0]
+                self.records.iter().all(|record| omission.source_range[1]
+                    <= record.paragraph_source_range[0]
                     || omission.source_range[0] >= record.paragraph_source_range[1]),
                 "numbering omission overlaps emitted paragraph"
             );

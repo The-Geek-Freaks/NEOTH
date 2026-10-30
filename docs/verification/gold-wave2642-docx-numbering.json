@@ -36,7 +36,7 @@
   "validation": {
     "wholeA03Accepted": false,
     "goldAccepted": false,
-    "hostedFormat": "pending",
+    "hostedFormat": "Exact hosted rustfmt patch from Preflight41044023117 imported; next Preflight pending",
     "nativeAccepted": false,
     "localRuntimeExecuted": false,
     "focusedRuntime": "pending"
@@ -88,5 +88,13 @@
     ],
     "hostedAccepted": false,
     "performanceFixClaim": false
+  },
+  "hostedFormatReceipt": {
+    "producer": "c800ee54e13c5ff381bc48fc841462ed8afdc240",
+    "run": 41044023117,
+    "artifact": 12971087860,
+    "zipSha256": "5D7CB3E221E3AF04E64444EB8EEBA38E07AE56656599EA5E567E56283893A75A",
+    "postimageBlobsVerified": 5,
+    "localRustfmtExecuted": false
   }
 }

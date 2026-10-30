@@ -19650,3 +19650,5 @@ Der unveraenderte gehostete Vorgaengerlauf41039038367 auf a3e5b071 hat Dokument6
 Die macOS-Compile-Diagnose wird um ausschliesslich bereinigte Crate-Namen und Testmodus erweitert. ucomm trennt Prozessrollen von Pfaden; separate begrenzte Stichproben fuer rustc und andere Compiler verhindern Verdrangen durch Cargo-Zeilen. Runner, ein Build-Job,150-Minuten-Kompilierungsgrenze,240-Minuten-Jobgrenze und saemtliche Tests bleiben unveraendert. Das ist Beobachtbarkeit fuer den bislang unbelegten Langlaeufer, kein nachgewiesener Performancefix.
 
 Bericht: docs/verification/gold-wave2642-docx-numbering.json. Der lokale BSOD-Hold bleibt vollstaendig erhalten; Root integriert ausschliesslich auf main.
+
+W2642 Formatnachtrag: Preflight41044023117 auf c800ee54 meldete ausschliesslich Rust-Formatabweichungen. Root hat den originalen API-/ZIP-digestgebundenen Hosted-rustfmt-Patch fuer genau5 eigene Rust-Dateien uebernommen und alle5 Git-Postimages geprueft. Code Quality auf c800ee54 ist erfolgreich. Erneuter Preflight auf dem formatierten Producer und alle191 fokussierten Laufzeitfaelle bleiben offen; lokal wurde rustfmt nicht gestartet.

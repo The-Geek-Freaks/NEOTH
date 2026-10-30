@@ -1,6 +1,6 @@
 //! Physical explicit numbering references; no style, list-layout, or ordinal inference.
-use serde::Serialize;
 use super::Frame;
+use serde::Serialize;
 
 const MAX_RECORDS: usize = 256;
 const MAX_OMISSIONS: usize = 64;
@@ -104,8 +104,7 @@ pub(super) struct Projector {
 }
 
 fn path_is(stack: &[Frame], names: &[&[u8]]) -> bool {
-    stack.len() == names.len()
-        && stack.iter().zip(names).all(|(frame, name)| frame.is(name))
+    stack.len() == names.len() && stack.iter().zip(names).all(|(frame, name)| frame.is(name))
 }
 
 fn supported_parent_path(stack: &[Frame]) -> bool {
@@ -147,12 +146,16 @@ impl Projector {
         }
         if let Some(candidate) = self.pending.as_mut()
             && current.is(b"p")
-            && candidate.paragraph_depth.is_some_and(|parent| depth > parent)
+            && candidate
+                .paragraph_depth
+                .is_some_and(|parent| depth > parent)
         {
             candidate.reject("nested_numbered_paragraph");
         }
         if let Some(property_depth) = self.property_active_depth {
-            let Some(candidate) = self.pending.as_mut() else { return };
+            let Some(candidate) = self.pending.as_mut() else {
+                return;
+            };
             if depth != property_depth + 1 {
                 candidate.reject("unsupported_numbering_properties");
                 return;
@@ -246,12 +249,20 @@ impl Projector {
                     candidate.reject("missing_num_id");
                 }
             }
-            if self.pending.as_ref().is_some_and(|c| c.paragraph_depth.is_none()) {
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|c| c.paragraph_depth.is_none())
+            {
                 self.finalize(end);
                 return;
             }
         }
-        if self.pending.as_ref().is_some_and(|c| c.paragraph_depth == Some(depth)) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|c| c.paragraph_depth == Some(depth))
+        {
             self.finalize(end);
         }
     }
@@ -269,23 +280,30 @@ impl Projector {
     fn omit(&mut self, reason: &'static str, range: [usize; 2]) {
         self.omitted_observed += 1;
         if self.omissions.len() < MAX_OMISSIONS {
-            self.omissions.push(Omission { reason, source_range: range });
+            self.omissions.push(Omission {
+                reason,
+                source_range: range,
+            });
         } else {
             self.omissions_limited = true;
         }
     }
 
     fn finalize(&mut self, end: usize) {
-        let Some(candidate) = self.pending.take() else { return };
+        let Some(candidate) = self.pending.take() else {
+            return;
+        };
         self.property_active_depth = None;
         if let Some(reason) = candidate.rejected {
             self.omit(reason, [candidate.paragraph_start, end]);
             return;
         }
-        let (Some(properties_end), Some(num_id)) =
-            (candidate.properties_end, candidate.num_id)
+        let (Some(properties_end), Some(num_id)) = (candidate.properties_end, candidate.num_id)
         else {
-            self.omit("incomplete_numbering_properties", [candidate.paragraph_start, end]);
+            self.omit(
+                "incomplete_numbering_properties",
+                [candidate.paragraph_start, end],
+            );
             return;
         };
         if self.records.len() >= MAX_RECORDS {
@@ -297,13 +315,20 @@ impl Projector {
             numbering_properties_source_range: [candidate.properties_start, properties_end],
             num_id,
             level: candidate.level,
-            kind: if num_id == 0 { "numbering_removed" } else { "numbering_reference" },
+            kind: if num_id == 0 {
+                "numbering_removed"
+            } else {
+                "numbering_reference"
+            },
         });
     }
 
     pub(super) fn finish(mut self, scan_complete: bool, entry_bytes: usize) -> Projection {
         if let Some(candidate) = self.pending.take() {
-            self.omit("incomplete_numbering_properties", [candidate.paragraph_start, entry_bytes]);
+            self.omit(
+                "incomplete_numbering_properties",
+                [candidate.paragraph_start, entry_bytes],
+            );
         }
         Projection {
             complete: scan_complete && self.omitted_observed == 0,
@@ -327,7 +352,12 @@ mod tests {
 
     impl Harness {
         fn open(&mut self, name: &[u8], start: usize, value: Val) {
-            self.stack.push(Frame { local: name.to_vec(), word: true, properties: false, start });
+            self.stack.push(Frame {
+                local: name.to_vec(),
+                word: true,
+                properties: false,
+                start,
+            });
             self.projector.begin(&self.stack, start, value, true);
         }
 
@@ -382,7 +412,10 @@ mod tests {
         assert_eq!(projection.omissions[1].source_range, [30, 40]);
         assert_eq!(projection.records.len(), 1);
         assert_eq!(projection.records[0].paragraph_source_range, [50, 60]);
-        assert_eq!(projection.records[0].numbering_properties_source_range, [52, 55]);
+        assert_eq!(
+            projection.records[0].numbering_properties_source_range,
+            [52, 55]
+        );
         assert_eq!(projection.records[0].num_id, 3);
     }
 

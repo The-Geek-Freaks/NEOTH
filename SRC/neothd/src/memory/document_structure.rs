@@ -286,7 +286,10 @@ impl DocumentStructure {
                         .section_properties
                         .as_ref()
                         .is_none_or(|sections| sections.complete)
-                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.complete)),
+                    && self
+                        .numbering_properties
+                        .as_ref()
+                        .is_none_or(|numbering| numbering.complete)),
             "inconsistent document structure completeness"
         );
         ensure!(
@@ -301,7 +304,10 @@ impl DocumentStructure {
                         .section_properties
                         .as_ref()
                         .is_none_or(|sections| sections.ranges.is_empty())
-                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.records.is_empty()),
+                    && self
+                        .numbering_properties
+                        .as_ref()
+                        .is_none_or(|numbering| numbering.records.is_empty()),
                 "unscanned member contains projected tables"
             );
         }
@@ -396,8 +402,12 @@ impl DocumentStructure {
                         "unscanned tail overlaps emitted section"
                     );
                     ensure!(
-                        self.numbering_properties.as_ref().is_none_or(|numbering| numbering
-                            .records.iter().all(|record| record.paragraph_source_range[1] <= start)),
+                        self.numbering_properties
+                            .as_ref()
+                            .is_none_or(|numbering| numbering
+                                .records
+                                .iter()
+                                .all(|record| record.paragraph_source_range[1] <= start)),
                         "unscanned tail overlaps emitted numbered paragraph"
                     );
                 }
@@ -410,7 +420,10 @@ impl DocumentStructure {
                             .section_properties
                             .as_ref()
                             .is_none_or(|sections| sections.ranges.is_empty())
-                    && self.numbering_properties.as_ref().is_none_or(|numbering| numbering.records.is_empty()),
+                        && self
+                            .numbering_properties
+                            .as_ref()
+                            .is_none_or(|numbering| numbering.records.is_empty()),
                     "invalid complete-entry omission"
                 ),
                 _ => anyhow::bail!("unsupported document structure omission scope"),
@@ -709,7 +722,8 @@ mod tests {
         let mut value = v2_structure();
         value["schema"] = serde_json::json!("neoth.document-structure.v3");
         value["parser_version"] = serde_json::json!("docx-physical-numbering/v3");
-        value["scope"] = serde_json::json!("physical-table-section-and-numbering-property-source-ranges");
+        value["scope"] =
+            serde_json::json!("physical-table-section-and-numbering-property-source-ranges");
         value["numbering_properties"] = serde_json::json!({
             "complete": true,
             "records": [{
@@ -724,7 +738,11 @@ mod tests {
     #[test]
     fn numbering_structure_versions_roundtrip_and_enforce_field_presence() {
         let hash = "a".repeat(64);
-        for value in [test_structure_value(&hash,123), v2_structure(), numbering_structure_v3()] {
+        for value in [
+            test_structure_value(&hash, 123),
+            v2_structure(),
+            numbering_structure_v3(),
+        ] {
             let decoded = DocumentStructure::from_value(&value).unwrap();
             assert_eq!(serde_json::to_value(&decoded).unwrap(), value);
             assert_eq!(
@@ -732,14 +750,22 @@ mod tests {
                 decoded
             );
         }
-        for mut value in [test_structure_value(&hash,123), v2_structure()] {
-            value["numbering_properties"] = numbering_structure_v3()["numbering_properties"].clone();
+        for mut value in [test_structure_value(&hash, 123), v2_structure()] {
+            value["numbering_properties"] =
+                numbering_structure_v3()["numbering_properties"].clone();
             assert!(DocumentStructure::from_value(&value).is_err());
         }
         let mut missing = numbering_structure_v3();
-        missing.as_object_mut().unwrap().remove("numbering_properties");
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("numbering_properties");
         assert!(DocumentStructure::from_value(&missing).is_err());
-        for mut value in [test_structure_value(&hash,123), v2_structure(), numbering_structure_v3()] {
+        for mut value in [
+            test_structure_value(&hash, 123),
+            v2_structure(),
+            numbering_structure_v3(),
+        ] {
             value["numbering_properties"] = serde_json::Value::Null;
             assert!(DocumentStructure::from_value(&value).is_err());
         }
@@ -747,16 +773,34 @@ mod tests {
     #[test]
     fn numbering_structure_rejects_invalid_records_metadata_and_bindings() {
         for (pointer, replacement) in [
-            ("/numbering_properties/records/0/kind", serde_json::json!("numbering_removed")),
-            ("/numbering_properties/records/0/num_id", serde_json::json!(0)),
-            ("/numbering_properties/records/0/level", serde_json::json!(9)),
-            ("/numbering_properties/records/0/numbering_properties_source_range", serde_json::json!([10,20])),
-            ("/numbering_properties/records/0/numbering_properties_source_range", serde_json::json!([11,20])),
+            (
+                "/numbering_properties/records/0/kind",
+                serde_json::json!("numbering_removed"),
+            ),
+            (
+                "/numbering_properties/records/0/num_id",
+                serde_json::json!(0),
+            ),
+            (
+                "/numbering_properties/records/0/level",
+                serde_json::json!(9),
+            ),
+            (
+                "/numbering_properties/records/0/numbering_properties_source_range",
+                serde_json::json!([10, 20]),
+            ),
+            (
+                "/numbering_properties/records/0/numbering_properties_source_range",
+                serde_json::json!([11, 20]),
+            ),
             ("/schema", serde_json::json!("neoth.document-structure.v99")),
             ("/parser_version", serde_json::json!("unknown-parser")),
             ("/scope", serde_json::json!("unknown-scope")),
             ("/numbering_properties/complete", serde_json::json!(false)),
-            ("/numbering_properties/omitted_observed", serde_json::json!(1)),
+            (
+                "/numbering_properties/omitted_observed",
+                serde_json::json!(1),
+            ),
         ] {
             let mut value = numbering_structure_v3();
             *value.pointer_mut(pointer).unwrap() = replacement;
@@ -764,7 +808,10 @@ mod tests {
         }
         let mut duplicate = numbering_structure_v3();
         let record = duplicate["numbering_properties"]["records"][0].clone();
-        duplicate["numbering_properties"]["records"].as_array_mut().unwrap().push(record);
+        duplicate["numbering_properties"]["records"]
+            .as_array_mut()
+            .unwrap()
+            .push(record);
         assert!(DocumentStructure::from_value(&duplicate).is_err());
         let mut overlap = numbering_structure_v3();
         overlap["complete"] = serde_json::json!(false);
@@ -775,8 +822,7 @@ mod tests {
         }]);
         assert!(DocumentStructure::from_value(&overlap).is_err());
         let decoded = DocumentStructure::from_value(&numbering_structure_v3()).unwrap();
-        assert!(decoded.validate_against(&"b".repeat(64),123).is_err());
-        assert!(decoded.validate_against(&"a".repeat(64),124).is_err());
+        assert!(decoded.validate_against(&"b".repeat(64), 123).is_err());
+        assert!(decoded.validate_against(&"a".repeat(64), 124).is_err());
     }
-
 }
