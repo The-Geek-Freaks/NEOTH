@@ -406,9 +406,9 @@ class CiCadenceContractTests(unittest.TestCase):
             )
             expected.extend(report.get("focusedAdditionalTests", []))
         selection = matrix["wave2604DocumentRegressions"]
-        self.assertEqual(selection["requiredCount"], 104)
-        self.assertEqual(len(expected), 104)
-        self.assertEqual(len(set(expected)), 104)
+        self.assertEqual(selection["requiredCount"], 107)
+        self.assertEqual(len(expected), 107)
+        self.assertEqual(len(set(expected)), 107)
         self.assertEqual(selection["requiredTests"], sorted(expected))
         native = (
             matrix["requiredNativeTests"]

@@ -162,8 +162,10 @@ rejected. The existing source transaction remains the sole persistence owner:
 reopen/search preserve the projection, failed replacement rolls back, successful
 replacement clears stale metadata, and purge removes it with the source.
 
-This adds explicit physical numbering provenance. Rendered list semantics,
-headings, code-block structure and full A03 acceptance require their own evidence.
+This adds explicit physical numbering provenance. Rendered list labels and
+Markdown-fence parsing are additional semantic/format capabilities. The A03
+requirement does not silently make them prerequisites; acceptance of its physical
+projections and lifecycle still requires evidence from the exact combined source.
 
 ## Explicit code indexing
 
@@ -233,6 +235,6 @@ independently rehash a full source that is unavailable at read time.
 Replacement, explicit purge and automatic retention remove both mapping
 tables through the existing source lifecycle and foreign-key cascades.
 Insertion failures and migration-stamp failures roll back with their source
-transaction. Thirteen range regression cases and the retained retention and
-migration cases await hosted qualification. This slice does not complete
-Markdown code structure or the full A03 acceptance contract.
+transaction. Fourteen range regression cases and the retained staging, retention and
+migration cases await hosted qualification. Markdown code-block parsing is an additional format capability;
+this slice does not yet establish the full A03 runtime acceptance contract.

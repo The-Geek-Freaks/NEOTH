@@ -14,6 +14,7 @@
     "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
     "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
     "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
+    "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
     "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
     "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
     "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure"
@@ -30,13 +31,15 @@
     "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
     "memory::migrations::tests::v3_era_schema_migrates_to_current_target",
     "memory::migrations::tests::v4_era_schema_migrates_to_current_target",
-    "memory::store::tests::fresh_views_database_contains_no_history_journal_tables"
+    "memory::store::tests::fresh_views_database_contains_no_history_journal_tables",
+    "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
+    "cli::proactive::tests::document_reject_after_memory_effect_preserves_applied_claim_and_retry_state"
   ],
   "priorDocumentCasesRetained": 79,
-  "focusedDocumentRequired": 104,
+  "focusedDocumentRequired": 107,
   "focusedCostRequired": 130,
-  "combinedRequired": 234,
-  "portableRegistered": 3200,
+  "combinedRequired": 237,
+  "portableRegistered": 3201,
   "behavior": [
     "Schema52 stores exact half-open UTF8 ranges against each inserted FTS table/rowid and the SHA256 of the submitted full code snapshot",
     "Duplicate chunk text retains distinct ordinals and offsets in BM25, trigram and fuzzy results",
@@ -53,7 +56,7 @@
   },
   "review": {
     "agent": "/root/readonly_usage_review",
-    "method": "Prompt-only exact supplied integration/read validation and regression design",
+    "method": "Prompt-only supplied integration/read validation, regression design and actual logical-owner fixture",
     "result": "No concrete blocking defect apparent",
     "runtimeExecuted": false
   },
@@ -61,7 +64,7 @@
     "Ranges address the exact submitted UTF8 snapshot, not original container bytes, syntax nodes or logical identity",
     "Per-hit reads verify stored chunk hashes and metadata; they cannot independently rehash the unavailable full source",
     "Legacy sources remain unknown until explicitly reindexed",
-    "Markdown fenced code structure and end-to-end A03 acceptance remain separate open work"
+    "Markdown fenced-code parsing and rendered list labels are additional format/semantic capabilities, not silently added mandatory A03 requirements; original A03 still requires exact-producer runtime and product acceptance"
   ],
   "predecessor": {
     "run": 41074447282,
@@ -70,5 +73,47 @@
     "scope": "GC predecessor only"
   },
   "goldCheckboxesClosed": 0,
-  "existingMigrationTestsNewlyRegistered": 4
+  "existingMigrationTestsNewlyRegistered": 4,
+  "acceptanceMap": [
+    {
+      "clause": "tables/list/code/sections, source ranges and parser versions",
+      "implementedScope": "Physical DOCX table, numbering and section projections; exact submitted explicit-code chunks",
+      "reports": [
+        "gold-wave2599-docx-table-ranges.json",
+        "gold-wave2641-docx-section-properties.json",
+        "gold-wave2642-docx-numbering.json",
+        "gold-wave2652-code-ranges.json"
+      ],
+      "currentProducerEvidence": "pending"
+    },
+    {
+      "clause": "logical identity versus content revision and rename/move lineage",
+      "implementedScope": "Explicit logical lifecycle, equal-byte distinct owners, indexed-path rename and guarded revision",
+      "tests": [
+        "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
+        "memory::ctx::logical::tests::logical_register_revise_rename_and_historical_replay_keep_one_current_source"
+      ],
+      "currentProducerEvidence": "pending"
+    },
+    {
+      "clause": "staging abort through existing owner",
+      "tests": [
+        "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
+        "cli::proactive::tests::document_reject_after_memory_effect_preserves_applied_claim_and_retry_state"
+      ],
+      "implementedScope": "Terminal rejection before effects and rejection after a committed effect without destructive reversal",
+      "currentProducerEvidence": "pending"
+    },
+    {
+      "clause": "derived deletion and retry; never claim partial completeness",
+      "implementedScope": "Atomic source/FTS/vocabulary/range deletion and rollback; durable bounded omissions, legacy unknown, fail on corrupt complete mapping",
+      "reports": [
+        "gold-wave2600-document-structure-persistence.json",
+        "gold-wave2602-vault-note-recovery.json",
+        "gold-wave2647-gc-retention.json",
+        "gold-wave2652-code-ranges.json"
+      ],
+      "currentProducerEvidence": "pending"
+    }
+  ]
 }

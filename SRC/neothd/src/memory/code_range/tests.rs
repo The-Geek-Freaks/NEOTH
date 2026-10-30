@@ -416,3 +416,97 @@ fn migration_from_51_rejects_conflicting_range_objects() {
         assert_eq!(retained, 17);
     }
 }
+
+#[test]
+fn logical_code_ranges_follow_rename_revision_rollback_and_purge_owners() {
+    use serde_json::json;
+
+    let dir = tempdir().unwrap();
+    let mut conn = store::open(&dir.path().join("views.db")).unwrap();
+    let registration = json!({
+        "action": "register", "logical_document_id": "code-document",
+        "logical_event_id": "registered", "authorization_epoch": 0,
+        "index": request("logical.rs", "fn logicalquartz() {}")
+    });
+    let first =
+        ctx::logical::apply(&mut conn, &serde_json::to_vec(&registration).unwrap()).unwrap();
+    let first_proof = ctx::search(&conn, "logicalquartz", 10).unwrap()[0]
+        .code_provenance
+        .clone()
+        .unwrap();
+    let peer = json!({
+        "action": "register", "logical_document_id": "independent-document",
+        "logical_event_id": "peer-registered", "authorization_epoch": 0,
+        "index": request("independent.rs", "fn logicalquartz() {}")
+    });
+    let peer = ctx::logical::apply(&mut conn, &serde_json::to_vec(&peer).unwrap()).unwrap();
+    assert_ne!(peer.source_id, first.source_id);
+    assert_ne!(peer.logical_document_id, first.logical_document_id);
+    let peer_proof = ctx::search(&conn, "logicalquartz", 10)
+        .unwrap()
+        .into_iter()
+        .find(|hit| hit.source_id == peer.source_id)
+        .unwrap()
+        .code_provenance
+        .unwrap();
+    assert_eq!(peer_proof.source.text_sha256, first_proof.source.text_sha256);
+
+    let rename = json!({
+        "action": "metadata_rename", "logical_document_id": "code-document",
+        "logical_event_id": "renamed", "authorization_epoch": 0,
+        "expected": {
+            "source_id": first.source_id, "content_revision_id": first.content_revision_id,
+            "current_event_id": first.current_event_id
+        },
+        "new_label": "renamed.rs", "new_file_path": "moved/renamed.rs"
+    });
+    let renamed = ctx::logical::apply(&mut conn, &serde_json::to_vec(&rename).unwrap()).unwrap();
+    assert_eq!(renamed.source_id, first.source_id);
+    assert_eq!(renamed.content_revision_id, first.content_revision_id);
+    let renamed_hit = ctx::search(&conn, "logicalquartz", 10)
+        .unwrap()
+        .into_iter()
+        .find(|hit| hit.source_id == first.source_id)
+        .unwrap();
+    assert_eq!(renamed_hit.label, "renamed.rs");
+    assert_eq!(renamed_hit.file_path.as_deref(), Some("moved/renamed.rs"));
+    assert_eq!(renamed_hit.code_provenance, Some(first_proof));
+
+    let revision = json!({
+        "action": "revise", "logical_document_id": "code-document",
+        "logical_event_id": "revised", "authorization_epoch": 0,
+        "expected": {
+            "source_id": renamed.source_id, "content_revision_id": renamed.content_revision_id,
+            "current_event_id": renamed.current_event_id
+        },
+        "index": request("renamed.rs", "fn revisedzircon() {}")
+    });
+    conn.execute_batch(
+        "CREATE TRIGGER reject_logical_mapping BEFORE INSERT ON code_chunk_ranges
+         WHEN NEW.fts_table='chunks_trigram'
+         BEGIN SELECT RAISE(ABORT,'injected logical mapping failure'); END;",
+    )
+    .unwrap();
+    let before = snapshot(&conn);
+    assert!(ctx::logical::apply(&mut conn, &serde_json::to_vec(&revision).unwrap()).is_err());
+    assert_eq!(snapshot(&conn), before);
+    conn.execute_batch("DROP TRIGGER reject_logical_mapping;")
+        .unwrap();
+    let revised = ctx::logical::apply(&mut conn, &serde_json::to_vec(&revision).unwrap()).unwrap();
+    assert_ne!(revised.source_id, first.source_id);
+    assert_eq!(count(&conn, "code_chunk_ranges", first.source_id), 0);
+    assert_eq!(count(&conn, "code_chunk_ranges", revised.source_id), 2);
+    assert_eq!(count(&conn, "code_chunk_ranges", peer.source_id), 2);
+    assert!(
+        ctx::search(&conn, "revisedzircon", 10).unwrap()[0]
+            .code_provenance
+            .is_some()
+    );
+    assert_eq!(
+        ctx::purge(&mut conn, ctx::PurgeScope::Category("transient")).unwrap(),
+        2
+    );
+    assert_eq!(count(&conn, "code_chunk_ranges", revised.source_id), 0);
+    assert_eq!(count(&conn, "code_chunk_ranges", peer.source_id), 0);
+    assert!(ctx::logical::apply(&mut conn, &serde_json::to_vec(&registration).unwrap()).is_err());
+}

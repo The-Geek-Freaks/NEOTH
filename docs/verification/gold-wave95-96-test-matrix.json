@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2652_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "status": "W2652_LOGICAL_OWNER_COVERAGE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 461464,
-    "sha256": "0C3A2DB25E2D5A8DAF473FD8860A7DBFA82CE37A331F833DFC7191D574EA2885"
+    "bytes": 461463,
+    "sha256": "9FA29DED56AC17322D25AD5B56E22C37675F6391B0284571E5A1D9AD3AEF69AC"
   },
   "sourceInputs": 2519,
   "requiredNativeTests": [
@@ -19129,79 +19129,79 @@
     {
       "test": "memory::code_range::tests::code_range_gc_paths_remove_mapping_rows",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_mapping_insert_failure_rolls_back_replacement",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_purge_modes_remove_mapping_rows",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_range_replacement_removes_old_mappings",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_empty_and_limit_states_are_explicit_after_reopen",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_preserve_unicode_crlf_and_whitespace_bytes",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::code_ranges_retain_supplied_document_provenance_independently",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
       "test": "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure",
       "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
-      "sourceSha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     },
     {
@@ -19226,6 +19226,12 @@
       "test": "memory::store::tests::fresh_views_database_contains_no_history_journal_tables",
       "sourcePath": "SRC/neothd/src/memory/store.rs",
       "sourceSha256": "F0B9816216E261BC3C1862C048BB14C8396191A206CA442BF0E55B8D51746DF4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
+      "sourcePath": "SRC/neothd/src/memory/code_range/tests.rs",
+      "sourceSha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
       "junitClass": "neoth"
     }
   ],
@@ -86219,13 +86225,15 @@
   },
   "wave2604DocumentRegressions": {
     "schema": "neoth.wave2604.document-regression-selection.v1",
-    "requiredCount": 104,
+    "requiredCount": 107,
     "requiredTests": [
       "cli::ctx::logical_tests::logical_cli_actions_allow_defaults_and_reject_explicit_conflicts",
       "cli::ctx::logical_tests::logical_cli_file_request_status_epoch_and_replay_share_one_owner",
       "cli::ctx::logical_tests::logical_cli_invalid_requests_and_identities_never_open_the_store",
       "cli::ctx::logical_tests::logical_cli_stream_limit_accepts_exact_boundary_and_rejects_one_extra_byte",
       "cli::migrate::tests::run_reaches_target",
+      "cli::proactive::tests::document_reject_after_memory_effect_preserves_applied_claim_and_retry_state",
+      "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
       "cli::proactive::tests::document_vault_note_post_effect_recovery_preserves_terminal_state_and_operator_custody",
       "media::document::tests::docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member",
       "media::document::tests::docx_structure_omissions_preserve_text_and_distinguish_container_revisions",
@@ -86264,6 +86272,7 @@
       "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
       "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
       "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
+      "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
       "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
       "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
       "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure",
@@ -86328,7 +86337,7 @@
     ],
     "workflow": ".github/workflows/cli-reference.yml",
     "input": "document_regressions",
-    "scope": "Retained79 document cases plus13 code range cases and8 retention/four migration cases; hosted only"
+    "scope": "Retained79 document cases plus14 code range cases,8 retention/four migration cases and2 existing staging rejection cases;hosted only"
   },
   "wave2604LogicalDocumentLifecycle": {
     "base": "eda3ef0c37d405adab662942977ef2bf0323e6e6",
@@ -90927,7 +90936,7 @@
     "localExecutableValidationRan": false
   },
   "wave2652CodeRanges": {
-    "requiredCount": 13,
+    "requiredCount": 14,
     "requiredTests": [
       "memory::code_range::tests::code_range_gc_paths_remove_mapping_rows",
       "memory::code_range::tests::code_range_mapping_insert_failure_rolls_back_replacement",
@@ -90939,13 +90948,14 @@
       "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
       "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
       "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
+      "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
       "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
       "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
       "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure"
     ],
-    "documentRequiredCount": 104,
+    "documentRequiredCount": 107,
     "costRequiredCount": 130,
-    "combinedRequiredCount": 234,
+    "combinedRequiredCount": 237,
     "schemaVersion": 52,
     "status": "SOURCE_INTEGRATED_HOSTED_PENDING"
   },
@@ -91058,6 +91068,50 @@
       }
     ],
     "note": "Exact original rustfmt ZIP from Preflight41089841541 on b807b771; API+ZIP/member digests and full pre/post Git blobs verified; no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2652LogicalOwnerCoverage": {
+    "base": "4c6be08d10362f7d52ef69a80a33dd9679cb088e",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 54758,
+        "sha256": "7C9AD356E41F5EEBE3FCC50F8265B76F5D25CD7923FD0977FE2668B1C0915C82",
+        "blob": "375c8c1ed16bf3cec51140c48a80e206686551be"
+      },
+      {
+        "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
+        "bytes": 12647,
+        "sha256": "FBA8E72E5C2175D63FF8FB29A4DCED45ABCC8650F1918C3534AA9BD41EA36C92",
+        "blob": "c57bffeba1cdd3ece69891f4473522d90045b4f0"
+      },
+      {
+        "path": "docs/verification/gold-wave2652-code-ranges.json",
+        "bytes": 6869,
+        "sha256": "9E183920EC0DA233B30396A972CFAB0BE61A69A9550FFA4F8B603DB247EA2CE1",
+        "blob": "99d840b0aff3f0759c5414e382b55855af541609"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 86698,
+        "sha256": "19995A8B7C1F9788BC0A7F1D0EBDBD5B4C4C4840118F10F8C9BF0EC7E8EC0D34",
+        "blob": "19c202533e69502e4da91b604f72bc2a6817e0ae"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2738934,
+        "sha256": "1A19B2F39CF42564AC962DE681B50A527E89ED85CADE2E79841A67F9AB8B63E6",
+        "blob": "6138aec6d3ba726cfe5fb9287dc1c1dfad9dc1bb"
+      },
+      {
+        "path": "SRC/neothd/src/memory/code_range/tests.rs",
+        "bytes": 20108,
+        "sha256": "DD18ED023D4DD512C1981D518D8994F4839A56604B772B32B5F318247A8F3D35",
+        "blob": "9b2e8114b2b2299f161ab0b19d7afe126ccd711d"
+      }
+    ],
+    "note": "Exact A03 clause map and logical-code owner fixture;107 document/lifecycle plus130 cost cases;3201 portable registered;local runtime hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
