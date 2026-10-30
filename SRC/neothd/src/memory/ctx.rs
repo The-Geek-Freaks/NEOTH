@@ -195,17 +195,26 @@ fn index_document_in_transaction(
     // Chunk + insert into both FTS tables.
     let chunks = split_chunks(&req.content, &req.content_type);
     let code_source_ranges = if req.content_type == "code" {
-        Some(code_range::insert_source(tx, source_id, &req.content, chunks.len())?)
+        Some(code_range::insert_source(
+            tx,
+            source_id,
+            &req.content,
+            chunks.len(),
+        )?)
     } else {
         None
     };
     let mut total_bytes = 0usize;
     for (idx, chunk) in chunks.iter().enumerate() {
         let start = total_bytes;
-        total_bytes = total_bytes.checked_add(chunk.body.len()).context("ctx byte count overflow")?;
+        total_bytes = total_bytes
+            .checked_add(chunk.body.len())
+            .context("ctx byte count overflow")?;
         let range = if let Some(source) = &code_source_ranges {
-            ensure!(req.content.get(start..total_bytes) == Some(chunk.body.as_str()),
-                "code chunk does not preserve submitted bytes");
+            ensure!(
+                req.content.get(start..total_bytes) == Some(chunk.body.as_str()),
+                "code chunk does not preserve submitted bytes"
+            );
             code_range::chunk_range(source, idx, start, &chunk.body)?
         } else {
             None
@@ -238,8 +247,10 @@ fn index_document_in_transaction(
         bump_vocabulary(tx, &chunk.body)?;
     }
     if let Some(source) = &code_source_ranges {
-        ensure!(chunks.is_empty() || total_bytes == req.content.len(),
-            "code chunks do not cover submitted bytes");
+        ensure!(
+            chunks.is_empty() || total_bytes == req.content.len(),
+            "code chunks do not cover submitted bytes"
+        );
         code_range::validate_inserted(tx, source_id, source)?;
     }
 

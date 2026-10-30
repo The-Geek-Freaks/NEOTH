@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T16:25:14.6408245Z",
-  "validationStatus": "W2652_CODE_RANGES_SOURCE_INTEGRATED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-30T16:28:47.7107537Z",
+  "validationStatus": "W2652_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -8868,13 +8868,13 @@
     },
     {
       "path": "SRC/neothd/src/memory/code_range.rs",
-      "bytes": 11201,
-      "sha256": "A71446B6672DC0785A99820EF67EFC212FDB517B953296F8598E66A0F58AFA21"
+      "bytes": 11975,
+      "sha256": "08B97475B8F27CE9FA67ABAB8DAAF56F1E61142D415008319AC5F110259DE987"
     },
     {
       "path": "SRC/neothd/src/memory/code_range/tests.rs",
-      "bytes": 14817,
-      "sha256": "33242E05E5CD9FD4E98982EA74AA56B0D1D3EAC9AA15E95777505226435A26A6"
+      "bytes": 15863,
+      "sha256": "F4584327ED6FF443D293F15E820D166F7B130F4881C8C6479302C164209ED159"
     },
     {
       "path": "SRC/neothd/src/memory/consolidate.rs",
@@ -8898,8 +8898,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/ctx.rs",
-      "bytes": 78462,
-      "sha256": "1A4C2C49D5424448B45469C797F7DB8C2F8694FE43AE431F92A658BC2002919D"
+      "bytes": 78599,
+      "sha256": "E286458F2CB9F6328DF80C4AB9B2D006A402D4721B5FAD8B9E0B5CA80C929841"
     },
     {
       "path": "SRC/neothd/src/memory/ctx/logical_request.rs",

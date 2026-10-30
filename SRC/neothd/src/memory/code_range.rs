@@ -82,7 +82,10 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 fn valid_digest(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 impl CodeSourceRanges {
@@ -107,18 +110,32 @@ impl CodeSourceRanges {
     }
 
     fn validate(&self) -> Result<()> {
-        ensure!(self.parser_version == CODE_RANGE_PARSER_VERSION, "unknown code range parser");
-        ensure!(valid_digest(&self.text_sha256), "invalid code snapshot digest");
+        ensure!(
+            self.parser_version == CODE_RANGE_PARSER_VERSION,
+            "unknown code range parser"
+        );
+        ensure!(
+            valid_digest(&self.text_sha256),
+            "invalid code snapshot digest"
+        );
         i64::try_from(self.text_bytes)?;
         i64::try_from(self.chunk_count)?;
-        ensure!(self.chunk_count <= self.text_bytes, "code chunk count exceeds text bytes");
+        ensure!(
+            self.chunk_count <= self.text_bytes,
+            "code chunk count exceeds text bytes"
+        );
         match self.coverage {
             CodeRangeCoverage::Complete => {
-                ensure!(self.chunk_count > 0 && self.chunk_count <= MAX_MAPPED_CHUNKS as u64,
-                    "invalid complete code range coverage");
+                ensure!(
+                    self.chunk_count > 0 && self.chunk_count <= MAX_MAPPED_CHUNKS as u64,
+                    "invalid complete code range coverage"
+                );
             }
             CodeRangeCoverage::OmittedLimit => {
-                ensure!(self.chunk_count > MAX_MAPPED_CHUNKS as u64, "invalid code range overflow");
+                ensure!(
+                    self.chunk_count > MAX_MAPPED_CHUNKS as u64,
+                    "invalid code range overflow"
+                );
             }
             CodeRangeCoverage::OmittedEmpty => {
                 ensure!(self.chunk_count == 0, "invalid empty code range coverage");
@@ -139,9 +156,14 @@ pub(crate) fn insert_source(
         "INSERT INTO code_source_ranges
          (source_id,parser_version,text_sha256,text_bytes,chunk_count,coverage)
          VALUES (?1,?2,?3,?4,?5,?6)",
-        params![source_id, value.parser_version, value.text_sha256,
-            i64::try_from(value.text_bytes)?, i64::try_from(value.chunk_count)?,
-            value.coverage.as_str()],
+        params![
+            source_id,
+            value.parser_version,
+            value.text_sha256,
+            i64::try_from(value.text_bytes)?,
+            i64::try_from(value.chunk_count)?,
+            value.coverage.as_str()
+        ],
     )?;
     Ok(value)
 }
@@ -159,7 +181,11 @@ pub(crate) fn chunk_range(
     let range = CodeChunkRange {
         ordinal: u64::try_from(ordinal)?,
         start_byte: u64::try_from(start)?,
-        end_byte: u64::try_from(start.checked_add(body.len()).context("code range overflow")?)?,
+        end_byte: u64::try_from(
+            start
+                .checked_add(body.len())
+                .context("code range overflow")?,
+        )?,
         sha256: sha256(body.as_bytes()),
     };
     validate_range(source, &range, body)?;
@@ -167,18 +193,33 @@ pub(crate) fn chunk_range(
 }
 
 fn validate_range(source: &CodeSourceRanges, range: &CodeChunkRange, body: &str) -> Result<()> {
-    ensure!(range.ordinal < source.chunk_count, "code range ordinal exceeds source");
-    ensure!(range.start_byte < range.end_byte && range.end_byte <= source.text_bytes,
-        "code range exceeds snapshot");
-    ensure!(range.end_byte - range.start_byte == u64::try_from(body.len())?,
-        "code range length does not match hit");
-    ensure!(valid_digest(&range.sha256) && range.sha256 == sha256(body.as_bytes()),
-        "code range digest does not match hit");
+    ensure!(
+        range.ordinal < source.chunk_count,
+        "code range ordinal exceeds source"
+    );
+    ensure!(
+        range.start_byte < range.end_byte && range.end_byte <= source.text_bytes,
+        "code range exceeds snapshot"
+    );
+    ensure!(
+        range.end_byte - range.start_byte == u64::try_from(body.len())?,
+        "code range length does not match hit"
+    );
+    ensure!(
+        valid_digest(&range.sha256) && range.sha256 == sha256(body.as_bytes()),
+        "code range digest does not match hit"
+    );
     if range.ordinal == 0 {
-        ensure!(range.start_byte == 0, "first code range does not start at zero");
+        ensure!(
+            range.start_byte == 0,
+            "first code range does not start at zero"
+        );
     }
     if range.ordinal + 1 == source.chunk_count {
-        ensure!(range.end_byte == source.text_bytes, "last code range does not end at snapshot");
+        ensure!(
+            range.end_byte == source.text_bytes,
+            "last code range does not end at snapshot"
+        );
     }
     Ok(())
 }
@@ -194,8 +235,15 @@ pub(crate) fn insert_chunk(
         "INSERT INTO code_chunk_ranges
          (fts_table,chunk_rowid,source_id,ordinal,start_byte,end_byte,chunk_sha256)
          VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        params![table,rowid,source_id,i64::try_from(range.ordinal)?,
-            i64::try_from(range.start_byte)?,i64::try_from(range.end_byte)?,range.sha256],
+        params![
+            table,
+            rowid,
+            source_id,
+            i64::try_from(range.ordinal)?,
+            i64::try_from(range.start_byte)?,
+            i64::try_from(range.end_byte)?,
+            range.sha256
+        ],
     )?;
     Ok(())
 }
@@ -215,7 +263,8 @@ pub(crate) fn validate_inserted(
     for table in ["chunks", "chunks_trigram"] {
         let count: i64 = tx.query_row(
             "SELECT count(*) FROM code_chunk_ranges WHERE source_id=?1 AND fts_table=?2",
-            params![source_id,table], |row| row.get(0),
+            params![source_id, table],
+            |row| row.get(0),
         )?;
         ensure!(count == expected, "incomplete code range mapping");
     }
@@ -240,8 +289,10 @@ pub(crate) fn from_row(
         let hit_type: String = row.get(4)?;
         let source_type: String = row.get(offset + 11)?;
         let source_chunks: i64 = row.get(offset + 12)?;
-        ensure!(snapshot_id == hit_id && hit_type == "code" && source_type == "code",
-            "code range source does not match hit");
+        ensure!(
+            snapshot_id == hit_id && hit_type == "code" && source_type == "code",
+            "code range source does not match hit"
+        );
         let coverage: String = row.get(offset + 5)?;
         let coverage = match coverage.as_str() {
             "complete" => CodeRangeCoverage::Complete,
@@ -257,9 +308,15 @@ pub(crate) fn from_row(
             coverage,
         };
         source.validate()?;
-        ensure!(source.chunk_count == u64::try_from(source_chunks)?, "code source chunk count changed");
+        ensure!(
+            source.chunk_count == u64::try_from(source_chunks)?,
+            "code source chunk count changed"
+        );
         let range = if coverage == CodeRangeCoverage::Complete {
-            ensure!(mapping_id == Some(hit_id), "missing or mismatched code hit range");
+            ensure!(
+                mapping_id == Some(hit_id),
+                "missing or mismatched code hit range"
+            );
             let range = CodeChunkRange {
                 ordinal: u64::try_from(row.get::<_, i64>(offset + 7)?)?,
                 start_byte: u64::try_from(row.get::<_, i64>(offset + 8)?)?,
@@ -269,20 +326,28 @@ pub(crate) fn from_row(
             validate_range(&source, &range, body)?;
             Some(range)
         } else {
-            ensure!(coverage == CodeRangeCoverage::OmittedLimit && mapping_id.is_none(),
-                "omitted code ranges unexpectedly produced a mapped hit");
+            ensure!(
+                coverage == CodeRangeCoverage::OmittedLimit && mapping_id.is_none(),
+                "omitted code ranges unexpectedly produced a mapped hit"
+            );
             None
         };
         Ok(Some(CodeSearchProvenance { source, range }))
     };
-    decode().map_err(|error| rusqlite::Error::FromSqlConversionFailure(
-        offset, Type::Text, Box::new(std::io::Error::other(error.to_string())),
-    ))
+    decode().map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            offset,
+            Type::Text,
+            Box::new(std::io::Error::other(error.to_string())),
+        )
+    })
 }
 
 #[cfg(test)]
 pub(crate) fn remove_schema_for_legacy_fixture(conn: &rusqlite::Connection) -> Result<()> {
-    conn.execute_batch("DROP TABLE IF EXISTS code_chunk_ranges; DROP TABLE IF EXISTS code_source_ranges;")?;
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS code_chunk_ranges; DROP TABLE IF EXISTS code_source_ranges;",
+    )?;
     Ok(())
 }
 
