@@ -799,6 +799,50 @@ fn provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries() {
     assert!(table.contains("UTF-8 estimates separate"));
     assert!(table.contains("\"unallocated_input_tokens\":100"));
     assert!(table.contains("authenticated_bytes_complete=false"));
+    assert_eq!(
+        json["input_estimator"],
+        "utf8_bytes_plus_request_message_overhead_not_model_tokenizer"
+    );
+    assert_eq!(json.get("tokenizer_version"), Some(&Value::Null));
+    assert_eq!(json.get("model_revision"), Some(&Value::Null));
+    assert_eq!(
+        json["model_identity_semantics"],
+        "wire_model_is_a_recorded_requested_identifier_not_independent_revision_evidence"
+    );
+    assert!(table.contains("tokenizer version is unknown"));
+    assert!(table.contains("independently verified model revision is unknown"));
+
+    let mut current_records = records();
+    current_records[3].2 = terminal(5);
+    let current = collect_after_scan(0, 100, |collector| {
+        feed(collector, &current_records)?;
+        Ok(AuthenticatedPrefixScan {
+            complete: false,
+            boundaries: vec![],
+        })
+    })
+    .unwrap();
+    let current_json: Value =
+        serde_json::from_str(&render(&current, UsageFormat::Json).unwrap()).unwrap();
+    assert_eq!(current_json.get("tokenizer_version"), Some(&Value::Null));
+    assert_eq!(current_json.get("model_revision"), Some(&Value::Null));
+    let group = &current_json["observations"]["groups"][0];
+    let terminal = &group["terminals"][0]["record"];
+    assert_eq!(terminal["wire_model"], "gpt-4o");
+    assert_eq!(
+        terminal["event"]["pricing_basis"]["algorithm"],
+        "neoth.provider-cost.v1"
+    );
+    let reconciliation = &group["component_reconciliation"];
+    assert_eq!(reconciliation["unallocated_input_tokens"], 100);
+    assert_eq!(
+        reconciliation["estimated_input_components_utf8_upper_bounds"]["estimator"],
+        "utf8_byte_upper_bound_v1"
+    );
+    let current_table = render(&current, UsageFormat::Table).unwrap();
+    assert!(current_table.contains("\"wire_model\":\"gpt-4o\""));
+    assert!(current_table.contains("\"algorithm\":\"neoth.provider-cost.v1\""));
+    assert!(current_table.contains("\"unallocated_input_tokens\":100"));
     assert!(
         collect_after_scan(0, 100, |collector| {
             feed(collector, &records())?;

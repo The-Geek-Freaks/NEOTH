@@ -348,6 +348,8 @@ struct Inspection {
     units_and_unknowns: &'static str,
     input_estimator: &'static str,
     tokenizer_version: Option<&'static str>,
+    model_identity_semantics: &'static str,
+    model_revision: Option<&'static str>,
     full_history_complete: bool,
     atomic_latest_snapshot: bool,
     scan: AuthenticatedPrefixScan,
@@ -378,6 +380,8 @@ where
         units_and_unknowns: "plans_estimate_reservations_acquire_provider_counters_observe_frozen_costs_compute_not_invoices_or_balances_null_unknown_zero_known",
         input_estimator: "utf8_bytes_plus_request_message_overhead_not_model_tokenizer",
         tokenizer_version: None,
+        model_identity_semantics: "wire_model_is_a_recorded_requested_identifier_not_independent_revision_evidence",
+        model_revision: None,
         full_history_complete: false,
         atomic_latest_snapshot: false,
         scan,
@@ -437,6 +441,10 @@ fn render(inspection: &Inspection, format: UsageFormat) -> Result<String> {
             writeln!(
                 output,
                 "Prompt components use a UTF-8 upper-bound estimate, not a model tokenizer; tokenizer version is unknown."
+            )?;
+            writeln!(
+                output,
+                "wire_model is the recorded requested model identifier; an independently verified model revision is unknown."
             )?;
             if inspection.scan.boundaries.is_empty() {
                 writeln!(

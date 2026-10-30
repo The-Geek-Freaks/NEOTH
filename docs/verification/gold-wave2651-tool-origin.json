@@ -43,9 +43,20 @@
     "scope": "GC208 and migration4 only; immutable predecessor source does not qualify this change"
   },
   "limits": [
-    "Append-only continuation only; destructive rewrites keep historical attribution unknown",
-    "No measured model-tokenizer allocation, per-component provider money, or inferred cache-hit evidence",
-    "No claim of full A02, native, release, GUI/mobile or Road-to-Gold acceptance"
+    "Destructive rewrites keep unavailable historical attribution unknown; resuming partial-known attribution is a separate expansion",
+    "Provider-measured per-component tokens and charges are unavailable and remain explicitly unallocated",
+    "Model identifier is not independent revision evidence; missing revision and tokenizer version remain unknown",
+    "Native/release and hosted A02 acceptance remain pending; optional GUI/mobile and measured-tokenizer work is not asserted complete"
   ],
-  "goldCheckboxesClosed": 0
+  "goldCheckboxesClosed": 0,
+  "versionDisplay": {
+    "modelIdentifier": "recorded requested wire_model",
+    "modelRevision": "unknown unless independently established",
+    "tokenizerVersion": "unknown; UTF8 estimator is not a model tokenizer",
+    "rateVersion": "retained pricing_basis.algorithm",
+    "remainder": "component_reconciliation.unallocated_input_tokens",
+    "regression": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
+    "reviewer": "/root/a02_tool_origin_design",
+    "hostedAccepted": false
+  }
 }

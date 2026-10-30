@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-30T15:00:47.3222193Z",
+  "capturedUtc": "2026-10-30T15:07:05.0485291Z",
   "validationStatus": "SOURCE_INTEGRATED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -748,8 +748,8 @@
     },
     {
       "path": "docs/COST_PROVENANCE.md",
-      "bytes": 14449,
-      "sha256": "AD3F4922F3A3F5148A466542A1D79DE3B9F54D05428ED958DFD654D09217F968"
+      "bytes": 15400,
+      "sha256": "EFD5287DFE499FA7C0A213F367589B8961C06041A4A1F8D91FA0FC61A222F4AD"
     },
     {
       "path": "docs/CTX_LOGICAL_DOCUMENTS.md",
@@ -4738,8 +4738,8 @@
     },
     {
       "path": "docs/verification/gold-wave2651-tool-origin.json",
-      "bytes": 2953,
-      "sha256": "3DECFC4598C2E553B59410235C30B0B4ABCED18A2E8AF3FAA44DCD74C8D301B4"
+      "bytes": 3725,
+      "sha256": "B3B74A1917ABAAF426E66D12B4AA0F6F460FBD2F0DBE21889143BDDE2F357E6C"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5983,8 +5983,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2734020,
-      "sha256": "5A8AA87179DA6ECF915649915777D001541AA8AE0CB855BD0DE60296351C7023"
+      "bytes": 2735079,
+      "sha256": "7AB68A2E5A2F345E7CF944DF73BB2AA934DA2D2E25FDA09EE625FDF66EFECECB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7383,8 +7383,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
-      "bytes": 20026,
-      "sha256": "35175172DA82CA5D6217BF53227926F7AFA22F6D4B5A63E155B6563AC8B2D1C7"
+      "bytes": 20447,
+      "sha256": "CFC251AC95DBF8EBA4C3E56B52B5B82705BC03DBB8330E836A1C24EDB3BBAC5D"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
@@ -7393,8 +7393,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "bytes": 29880,
-      "sha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D"
+      "bytes": 31850,
+      "sha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs",

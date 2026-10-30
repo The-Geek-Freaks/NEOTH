@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 460921,
-    "sha256": "00741F7683D1D1B84E9A4130B007067E999938D551AE841D16A711368E7A35C6"
+    "sha256": "CCA708B540A22D708CAB6571C5997C2B256106B14212BE0157C503D53EC856A5"
   },
   "sourceInputs": 2516,
   "requiredNativeTests": [
@@ -18727,103 +18727,103 @@
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
@@ -18991,37 +18991,37 @@
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "1C4BAF63E88C1025FCCC4D34907EF6C543CF0D5D43BD8AAE15E99C3040ED7F7D",
+      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
       "junitClass": "neoth"
     },
     {
@@ -90758,6 +90758,44 @@
       }
     ],
     "note": "Original Preflight41076257734 formatter artifact12988385138 verified against b60aceb2 and four exact pre/postimages; local rustfmt not executed. Native41074447282 still only qualifies6d7a83a1.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2651VersionDisplay": {
+    "base": "79293d80e8965170e7409877076f56c499166a77",
+    "sources": [
+      {
+        "path": "docs/COST_PROVENANCE.md",
+        "bytes": 15400,
+        "sha256": "EFD5287DFE499FA7C0A213F367589B8961C06041A4A1F8D91FA0FC61A222F4AD",
+        "blob": "9cb753babcf96443e4863f90206390a562a4cbac"
+      },
+      {
+        "path": "docs/verification/gold-wave2651-tool-origin.json",
+        "bytes": 3725,
+        "sha256": "B3B74A1917ABAAF426E66D12B4AA0F6F460FBD2F0DBE21889143BDDE2F357E6C",
+        "blob": "c320e2929d41275c3d67b9752f4c1b8675b18428"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2735079,
+        "sha256": "7AB68A2E5A2F345E7CF944DF73BB2AA934DA2D2E25FDA09EE625FDF66EFECECB",
+        "blob": "8d9593292038b908a37c11638df49ee3e7e5ab40"
+      },
+      {
+        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance.rs",
+        "bytes": 20447,
+        "sha256": "CFC251AC95DBF8EBA4C3E56B52B5B82705BC03DBB8330E836A1C24EDB3BBAC5D",
+        "blob": "9252c34240171f4cb7b5a2b19a08fb03c689f531"
+      },
+      {
+        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+        "bytes": 31850,
+        "sha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+        "blob": "51e68a60b3909c12cdf2a10b6953389c456a5be6"
+      }
+    ],
+    "note": "Explicit unknown model revision distinct from recorded wire model; existing registered rendering regression verifies historical/current estimator, tokenizer, rate version and component remainder. No additional test identities or WAL/accounting changes.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
