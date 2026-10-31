@@ -14,6 +14,22 @@ The configured vault must already exist. Its subdirectory must be relative and c
 
 Only Created or AlreadyPresent permits the next configured sink to run. Paperless still requires its authenticated exact-original completion receipt before the email can be marked processed. A conflicting email does not erase another email's completed work. A crash-created partial note requires explicit recovery; the cron does not overwrite it. A matching observation does not guarantee that another actor will never edit or remove the file afterward.
 
-The ordinary OCR-to-Obsidian API continues to support deliberate document replacement. These rules apply specifically to the unattended email cron. The shared older CLI/cron seen ledger still uses unscoped legacy keys and can suppress messages across accounts or reused UIDs. This batch neither migrates those keys nor replays historical mail. Account-scoped seen-state recovery, destination-revision changes and the remaining A04 adapter contracts remain open.
+The ordinary OCR-to-Obsidian API continues to support deliberate document replacement. These rules apply specifically to the unattended email cron.
 
-The W2653 source and regression selection are prepared for hosted validation. Local runtime tests remain prohibited by the BSOD hold; source integration alone is not runtime or Gold acceptance.
+## Scoped completion (schema 53)
+
+New seen-state uses the same full mailbox-unit SHA256 as the WAL and note identity. Normalized host, port, case-sensitive account name and INBOX bind the mailbox. A full Message-ID is stable across UID changes; the UID fallback requires the current nonzero UIDVALIDITY and a nonempty UID. Passwords and raw message content are not stored in the completion table.
+
+CLI `neoth email fetch` records **triage**, while the cron records **ingest** only after quarantine or all configured sinks complete. Neither stage completes the other. Read/open/write errors are surfaced; a query failure no longer means unseen, and an ignored insertion is not accepted as completion.
+
+| State | CLI default | Cron |
+| --- | --- | --- |
+| Unseen for this mailbox and stage | Triage | Process through existing sink and WAL gates |
+| Seen for this mailbox and stage | Skip as already seen | Skip as completed |
+| Matching legacy unscoped row | Report `legacy_ambiguous`, skip | Report unknown account/purpose, leave pending; no sink effect |
+
+Schema 52-to-53 creates the new scoped table transactionally. Legacy rows retain their exact keys, UIDs and timestamps; they are neither deleted nor assigned to a guessed account. A colliding schema object or failed version stamp rolls back the migration. A legacy key may have belonged to another account or only to CLI triage, so it cannot prove ingest completion or authorize replay.
+
+Explicit `--include-seen` allows CLI re-triage and records only the scoped triage result. It does not clear the legacy row, unblock cron ingestion or authorize a second Paperless POST. Legacy reconciliation needs independent mailbox/effect evidence and remains a separate explicit recovery task. Destination/rendition revisions and the remaining A04 adapter contracts also remain open.
+
+W2655 source and regression selection are prepared for hosted validation. Local executable validation remains prohibited by the BSOD hold; source integration alone is not runtime or Gold acceptance.

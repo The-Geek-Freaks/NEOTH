@@ -1,0 +1,1075 @@
+{
+  "schema": "neoth.wave2654.hosted-evidence.v1",
+  "producer": "42f5b41a67b425a438c81f5ddeed94fc674dd80c",
+  "run": 41097702678,
+  "attempt": 1,
+  "scope": "Existing W2651/W2652 source only; not W2655 or full native/release acceptance",
+  "artifacts": [
+    {
+      "id": 12999471129,
+      "sha256": "c59718ffeea8d5a764593ed19834c28e5d293b56e00c8811e2977646d493c1e7",
+      "bytes": 322978,
+      "entries": 220,
+      "passed": 107,
+      "sourceBindings": {
+        "docs/verification/gold-wave95-96-test-matrix.json": "2b16a6a5dc2b5380e0fd30014959f25c98514166a6f6baed0c26b459df40ff0c",
+        "docs/verification/gold-wave2599-docx-table-ranges.json": "b7bd9b99b5616537b4746e7803b8b6b51b1d0455b6d8a3ec94b64e5e16c276b5",
+        "docs/verification/gold-wave2600-document-structure-persistence.json": "3e0d5ee95485d83b0ba6d2ce813037dfe444fd0eb001398d4acca4086f355dfc",
+        "docs/verification/gold-wave2602-vault-note-recovery.json": "134031955fd758f0bbdb75e64d11d336348e2eb729108fe511d2934c359415ed",
+        "docs/verification/gold-wave2604-logical-document-lifecycle.json": "b2ce587fdf6406f0efdcaaa448ff352b52c9b7053dcae435908ff561146d8169",
+        "docs/verification/gold-wave2641-docx-section-properties.json": "b40bdaa0e9e507c1f4c15dd056a162582e5dc56f8552e195fe2a7a1a4609bb59",
+        "docs/verification/gold-wave2642-docx-numbering.json": "ead477b9fc8c9010dbf512d94cc2e7437bd578394b98f44b8882d1e0b53ca3fb",
+        "docs/verification/gold-wave2645-code-index-preservation.json": "6abef239e32c46099704cad657d50b27923ed45fb2bb3fee8969f779d2f74d05",
+        "docs/verification/gold-wave2652-code-ranges.json": "9e183920ec0da233b30396a972cfab0be61a69a9550ffa4f8b603db247ea2ce1",
+        "docs/verification/gold-wave2601-ci-checkpoint-and-migration-expectation.json": "d142d4dfc410bd4d71a4542cb7b7c520ad43d5263d8cfdbdd479219cb19d3aab",
+        "SRC/neothd/src/memory/code_range.rs": "08b97475b8f27ce9fa67abab8daaf56f1e61142d415008319ac5f110259de987",
+        "SRC/neothd/src/media/docx_sections.rs": "4b281bbad628a143d57f5820b658029602dd08437f90dc8e32795585b38b559e",
+        "SRC/neothd/src/media/docx_lists.rs": "872a2b0c7d5d45173bf37c6c4bc1b4ee2ccfba37b0befc9b82464db0b92c613d",
+        "SRC/neothd/src/memory/document_numbering.rs": "978bfb5ff422c3c8856aaa674e572f6bdfa1ac174890141929714cf1b8efd490",
+        "SRC/neothd/src/cli/ctx.rs": "8e117ef4cb75a41c343d78dd9bc434f3ec6d4b3064864ec6ee80f2b23e2e6651",
+        "SRC/neothd/src/cli/migrate.rs": "795bbe59c3b8918f53cd49cbc16940e9b0d8e85d539db23d33f8a3dd9f4ef4a6",
+        "SRC/neothd/src/cli/proactive.rs": "1212b6b52c976a641831836048b0061d57ea860e9a798a8b448cadecf8798312",
+        "SRC/neothd/src/media/document.rs": "587433001d63174ec8a90c412b07db5046bf69576116c35a0650cb9eec03be99",
+        "SRC/neothd/src/media/docx_structure.rs": "565410e17f3dd44d3358cd2fb8d27547253e4082cbb8a6535e0c01f269a059ae",
+        "SRC/neothd/src/memory/code_range/tests.rs": "e8226a9f85cf8580d8287cfdae0ac5cae34b7b618a28124137e28ad3b5cdb9d9",
+        "SRC/neothd/src/memory/counterparty_consent.rs": "24ea8138104bd4f486ec7ca4ff7ec329688ff7bfd43e65324ea1df00b2a4051d",
+        "SRC/neothd/src/memory/ctx/logical/tests.rs": "159ccbd7cb2b0777bc8e798b9c02e8ca324cddb41438a7ea506140e7f75e8a2a",
+        "SRC/neothd/src/memory/ctx/logical_request.rs": "51deeffe1326e55c0b44dc38da269414cbde5c6eae70a04cd9474965cd1ccc7a",
+        "SRC/neothd/src/memory/ctx.rs": "e286458f2cb9f6328df80c4ab9b2d006a402d4721b5fad8b9e0b5ca80c929841",
+        "SRC/neothd/src/memory/document_provenance.rs": "9c080fdd5730c7a81d3f0d1b27b47a662d376b2e5e485457393e831699a0561a",
+        "SRC/neothd/src/memory/document_structure.rs": "2ab2b0e5e022e18d2892511929faa11e63f34c1e4d84135f1913a87ba65f6054",
+        "SRC/neothd/src/memory/gc.rs": "35958608a2895d0b11f6ab87ba53e07bc3201797ecb7244854919088e725c3c0",
+        "SRC/neothd/src/memory/migrations/mod.rs": "afa08d8930fd29a25d5c44a8e3e413bdf594d7298a538f4b0f27a1bef48e7712",
+        "SRC/neothd/src/memory/store.rs": "f0b9816216e261bc3c1862c048bb14c8396191a206ca442bf0e55b8d51746df4",
+        ".github/workflows/cli-reference.yml": "7c9ad356e41f5eebe3fcc50f8265b76f5d25cd7923fd0977fe2668b1c0915c82",
+        "SRC/Cargo.lock": "d10d904aee9da564baa18b3d3f0f4e644fe2715fce4f1edcdbf3d633a7a97469",
+        "SRC/Cargo.toml": "f39929bb44951ccbf193b54a3bfd485397476856035fdd4b1a7bcf7327009c25",
+        "SRC/neothd/Cargo.toml": "15aac037ffcfe73b3a54a08d991766facbfc97e8aa90daeb849d0ac7b9e67c58",
+        "SRC/neothd/src/memory/ctx/logical.rs": "19029e9ef4724778ed018d08720b4d2aa064c3ec13ed5e9dd16a5f993438da18"
+      },
+      "cases": [
+        {
+          "test": "cli::ctx::logical_tests::logical_cli_actions_allow_defaults_and_reject_explicit_conflicts",
+          "logSha256": "1440d3e1c578e76526b297cf0cf1a59395b0bec9b5ee147033ec5538a8e03d3a"
+        },
+        {
+          "test": "cli::ctx::logical_tests::logical_cli_file_request_status_epoch_and_replay_share_one_owner",
+          "logSha256": "5c8dcc59f96f2f1b1b6a19b8f33245612c1829f06ee333d7610530ac97f942ca"
+        },
+        {
+          "test": "cli::ctx::logical_tests::logical_cli_invalid_requests_and_identities_never_open_the_store",
+          "logSha256": "b11278f8b590075d5de14efe45c1d3b7284ffbdc5af1086cede325289dca5e35"
+        },
+        {
+          "test": "cli::ctx::logical_tests::logical_cli_stream_limit_accepts_exact_boundary_and_rejects_one_extra_byte",
+          "logSha256": "7babbc708d0d638bcdbda565b820ebd9fa9119f12c415e4455e7da389fc05623"
+        },
+        {
+          "test": "cli::migrate::tests::run_reaches_target",
+          "logSha256": "a92327a31ef3ca23522f95269e06f191e485dcb404c9b28d5595e97590c44946"
+        },
+        {
+          "test": "cli::proactive::tests::document_reject_after_memory_effect_preserves_applied_claim_and_retry_state",
+          "logSha256": "9b0ef127d825a150ddf59a07979ed1d1426e52ac64d9dd6b06fecbfef5c00d35"
+        },
+        {
+          "test": "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
+          "logSha256": "df82e66142081b8b95aaf24ce6ea54411866d36e2c98273e3374e469103bc711"
+        },
+        {
+          "test": "cli::proactive::tests::document_vault_note_post_effect_recovery_preserves_terminal_state_and_operator_custody",
+          "logSha256": "f00954b28773fb550755275531f5b3167ed771b02adcb0e2478cdbee5fe75b53"
+        },
+        {
+          "test": "media::document::tests::docx_structure_metadata_preserves_legacy_text_and_binds_container_and_member",
+          "logSha256": "c8a5430e5201338208de3cb56bca802afd7f28abda0012693533d771eaf775c5"
+        },
+        {
+          "test": "media::document::tests::docx_structure_omissions_preserve_text_and_distinguish_container_revisions",
+          "logSha256": "9e69691fbb612c8a755d0d92375fb6d4585545d042d3b2a13580ebf9713800e1"
+        },
+        {
+          "test": "media::document::tests::non_docx_documents_do_not_claim_docx_structure",
+          "logSha256": "e9b440c780887709de1db47efb3033f80acd0e1923dc2fcd360a141d46d95e37"
+        },
+        {
+          "test": "media::docx_structure::lists::tests::incomplete_entry_tail_discards_overlapping_records_and_orders_omissions",
+          "logSha256": "a69d156b55bf1fffdfbb06383e4405c470e8824386d5aab52213d812e49b5ced"
+        },
+        {
+          "test": "media::docx_structure::lists::tests::later_sibling_invalidates_pending_paragraph_without_leaking_state",
+          "logSha256": "1e8b0a8f6bf60faa0ea5569e82320dc934374ff24f7ee6ca9cb0c980dea4e391"
+        },
+        {
+          "test": "media::docx_structure::lists::tests::nested_numbering_before_or_after_outer_properties_omits_one_whole_paragraph",
+          "logSha256": "4544928d2f9b63fa61375b35b6c10a7126f50f94c459fb555cbb1b3622de2e83"
+        },
+        {
+          "test": "media::docx_structure::lists::tests::nested_paragraph_before_or_after_properties_omits_outer_paragraph",
+          "logSha256": "d19d5ad35e543b855ba19b43aa3f780f64a31eb9999fb5e0bae82e316add0b23"
+        },
+        {
+          "test": "media::docx_structure::lists::tests::record_limit_and_metadata_discard_count_all_omitted_paragraphs",
+          "logSha256": "80259b02bd7842dcd97aff692df6861c6f2ead75f297299bae7d36746fa8dff4"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_binds_exact_physical_ranges_without_inventing_labels",
+          "logSha256": "c90de4fc892ede8b52bd64c29171643a15ba7b9fa205cb6bdcac454b3d0d0270"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_bounds_records_details_and_shared_serialized_metadata",
+          "logSha256": "4217215944f4f3b14d30d47f4e0be5941c6ec30ba0b950a9a214b84726d9afc7"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_incomplete_table_rewinds_previously_emitted_paragraphs",
+          "logSha256": "e45cb640b20da697ac807ef65b665096fa5bdd0e5bf7f2b3b2913514f549ef9d"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_nested_order_and_later_properties_omit_one_outer_paragraph",
+          "logSha256": "5a19776dab6cf4d2644af692cf23f39d76306ae1351fcb73436ee656bd2de18e"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_rejects_ambiguous_values_attributes_and_property_content_whole",
+          "logSha256": "6837fee603e33358d7fa79a895b20c401ef30a5989e0e9eee0ba7a19ae58b364"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_numbering_resolves_alias_default_strict_namespaces_and_attribute_entities",
+          "logSha256": "c0addd8c6fb973384c93d5b8d26c45f8e4ebd6d5df558893b2e1c4cee25976cd"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_apply_independent_work_and_structure_limits_without_partial_tables",
+          "logSha256": "72636469866f4d55cbd3f05c40a86ca636d6220f4c4d96a845ce5c50238cea8e"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_bind_exact_member_bytes_and_preserve_cells_and_paragraphs",
+          "logSha256": "07e3e8302fedbe5cbab5fd449fab840f39574302f94e2b629831acdcbd0ded8f"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_cap_actual_serialized_metadata_including_source_binding",
+          "logSha256": "6768e42b24af30cd51264f8a451298396850fc5b8d82851a77158afb6c6bf955"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_keep_omission_totals_after_diagnostic_cap",
+          "logSha256": "470bbff4a974d80d17f005eee97d0626e58fcfd5f1983462f6560d3df78ddf7b"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_omit_merged_revised_and_offset_tables_whole",
+          "logSha256": "4ca64127e8e0d222c8e78946ea192cebdab8ee3572b6b080bafdb5d2460bf066"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_report_malformed_dtd_entity_and_declaration_boundaries",
+          "logSha256": "fe522bcc12703c0edcc550eacb1b985c643076dba0a0ad263eea88e7a1356c1b"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_resolve_alias_default_and_strict_namespaces_without_foreign_tables",
+          "logSha256": "257beda4f35c417b2a4145e6be8c75968717402c520bf6deb3b393b7b5510f10"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_retain_prior_ranges_but_never_claim_a_complete_malformed_document",
+          "logSha256": "49ebb25fabe6e86933c57ccc0f7d01a6e73c23cb2ddb13de9a6acfbf6c221649"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_ranges_suppress_nested_alternate_and_remapped_tables_then_resume_siblings",
+          "logSha256": "dc2877599efda56a81560356bc2cf8aa89c7e316a0c842db72a820eb97f64100"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_sections_bind_property_containers_without_inventing_layout_or_implicit_sections",
+          "logSha256": "a2ccda704665d0f4e9bd81074694500493aaf758b5450a15d6a4b00e88b3d48a"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_sections_omit_nested_revised_foreign_and_wrong_context_containers_whole",
+          "logSha256": "d80bf8edcf14d4ed323ece34eaab7a052d356e430cce5759b44150adee713bb8"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_sections_preserve_bounded_counts_and_never_complete_an_interrupted_container",
+          "logSha256": "6210342bf444430ceb5901c1db13c7519442dd301fb7c3bcf8ce0bfbbd2d7a78"
+        },
+        {
+          "test": "media::docx_structure::tests::docx_sections_share_the_actual_serialized_metadata_limit_with_tables",
+          "logSha256": "48750642b881664c043cec6d09fbc28bfb0261324a903db6fd6fa36b7d533578"
+        },
+        {
+          "test": "memory::code_range::tests::code_range_gc_paths_remove_mapping_rows",
+          "logSha256": "92cf81b8799dd27c299c222aecff9e5adf12ce932a460671ca04c0dc95187e61"
+        },
+        {
+          "test": "memory::code_range::tests::code_range_mapping_insert_failure_rolls_back_replacement",
+          "logSha256": "5c8e23849812b1cba7ef18357f81ca0baf4e72bb24e2d476e285c9a5947e9fe7"
+        },
+        {
+          "test": "memory::code_range::tests::code_range_purge_modes_remove_mapping_rows",
+          "logSha256": "32e314e6088874db3ecbd877031588d50fd82da6aab4df7098e9739655d95e64"
+        },
+        {
+          "test": "memory::code_range::tests::code_range_replacement_removes_old_mappings",
+          "logSha256": "5ee3323dac6e7381df7125fb163ba34e84dd807d80b5539b86b435ae4accd2d1"
+        },
+        {
+          "test": "memory::code_range::tests::code_ranges_empty_and_limit_states_are_explicit_after_reopen",
+          "logSha256": "c242f88a120620d24448ed2ec2b278b7449e840c4c65a4356f43bbc1146bbc6f"
+        },
+        {
+          "test": "memory::code_range::tests::code_ranges_preserve_unicode_crlf_and_whitespace_bytes",
+          "logSha256": "637c6017b8ccbddf338c2f2455d93cbb2bfd00840bb14242a70c4080ff4d573c"
+        },
+        {
+          "test": "memory::code_range::tests::code_ranges_retain_supplied_document_provenance_independently",
+          "logSha256": "175c1dc99583b73a68b9392dc69c84cb64d9805faa4997b12af289bc6d2a48b4"
+        },
+        {
+          "test": "memory::code_range::tests::corrupt_or_missing_code_hit_mappings_are_errors_not_legacy",
+          "logSha256": "c3f5c1d40a207913fbf27ba7228e57a59ccc2bab75e574c3e9dfb3048f00b4e3"
+        },
+        {
+          "test": "memory::code_range::tests::cross_source_code_mapping_is_rejected_before_returning_hits",
+          "logSha256": "342c9410b85c97cd5f10c569585dd409a96bcd4e321d417c91e4733ef90564b1"
+        },
+        {
+          "test": "memory::code_range::tests::duplicate_code_chunks_keep_distinct_offsets_in_all_search_modes",
+          "logSha256": "d1b6bb51aaf668b2452deb1aa60c46e165cfbad4e8bc03167b93baca38692652"
+        },
+        {
+          "test": "memory::code_range::tests::logical_code_ranges_follow_rename_revision_rollback_and_purge_owners",
+          "logSha256": "532ca1e4d01b50f41beb43b1b15d825e07156509de1bb4f32609a341640efb57"
+        },
+        {
+          "test": "memory::code_range::tests::migration_from_51_keeps_legacy_hits_unknown_and_new_hits_mapped",
+          "logSha256": "0560c35688525a12214bec66a405059c4fdcaaf3dfac26f19c4db6bea342c961"
+        },
+        {
+          "test": "memory::code_range::tests::migration_from_51_rejects_conflicting_range_objects",
+          "logSha256": "c29a2b69b759e7a1f4c80617718fce2476fde03442a98d432814f645beb251fd"
+        },
+        {
+          "test": "memory::code_range::tests::migration_from_51_rolls_back_tables_and_stamp_on_failure",
+          "logSha256": "dfdd05d0efb6ae345ab6a182e00b8587c9a81da2b04bf2c25957073ec8e71183"
+        },
+        {
+          "test": "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+          "logSha256": "b86d650d87b4c0731414cfda95a5188e2641e0eecbee9410a4ebcc7e7e553eb5"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_conflicting_event_label_and_legacy_replacement_preserve_every_projection",
+          "logSha256": "15959a8e1f553feeca567fabb54583e51178224fb376bb95bfba4767c5ccc34e"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_purge_epoch_write_failure_and_exhaustion_roll_back_all_deleted_rows",
+          "logSha256": "5c3634788bddf0be089fcfa3c9ba76dc77359c8fb2c01d972acb58d1528ca27e"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_receipt_and_rename_failures_roll_back_source_fts_vocabulary_and_ledger",
+          "logSha256": "b921f186e4e2d1d8439fdf4fb66a61d3379d109a7077530090d0480eb0727566"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_register_revise_rename_and_historical_replay_keep_one_current_source",
+          "logSha256": "ad2036a2ca0d873c48b30336f6654fcc3c659a7c1f98a3b47b7daa53cfa796fe"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_source_category_and_all_purge_reject_old_replay_without_resurrection",
+          "logSha256": "64a71a5e622d03ac14429c83d72a2e8a100a51cfdf9c17ca4a66b8ceda2b0631"
+        },
+        {
+          "test": "memory::ctx::logical::tests::logical_two_connections_reject_stale_guard_even_when_content_revision_is_unchanged",
+          "logSha256": "3a3b02c1416ce1df7e423c317209775e7356bbeb712baf4d08bfa2548ca4add7"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_canonicalization_sorts_nested_objects_and_separates_fields",
+          "logSha256": "6b0d02321d00bc2049db20d54e2a345bf27effe8078fb861391fbd961cf3a30d"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_content_limit_and_epoch_overflow_fail_before_effects",
+          "logSha256": "772ac500bb77c13ba1c272a44a40cd214bc93c1fb4c2e4b449ce13cb576226e9"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_digest_binds_each_semantic_field_and_independent_event",
+          "logSha256": "85cd4fdd5d0d9af553d2b6f5feceee2987721ba4f2ba3c90544ff8ecbd065c6a"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_identity_validation_precedes_provenance_hash_checks",
+          "logSha256": "c8708482bb5d6ba2541f8e3a83184f2334592ea05ede32c4e675781f57c6a7b3"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_options_normalize_null_but_preserve_present_empty",
+          "logSha256": "02f9de9a687c6aae16df2918275ee8a8cbe01d150b2e71fe7552ef5c87fc311c"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_raw_container_remains_unknown_without_provenance",
+          "logSha256": "e560733637531c1f85750aa1e681616baf3097d9233340e1400db8048354efd1"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_rename_has_no_content_and_counts_lineage_once",
+          "logSha256": "ed1c35d0007e076184693c08bcb4928695f2f9763f42ed6a4b82c733866829dd"
+        },
+        {
+          "test": "memory::ctx::logical_request::tests::logical_wire_rejects_unknown_outer_index_and_provenance_fields",
+          "logSha256": "746d4914b952f700edf1a1973b484aad30d95a98b82e5db59a200ea94ca53970"
+        },
+        {
+          "test": "memory::ctx::tests::corrupt_or_orphaned_persisted_structure_never_becomes_an_unbound_hit",
+          "logSha256": "e5aa3efc03e99301e19de05cde510b5f2c507e480901336660bdee852827398c"
+        },
+        {
+          "test": "memory::ctx::tests::document_structure_survives_reopen_and_all_search_modes_as_source_ranges",
+          "logSha256": "158bbd4e1fad57a3e91bc544d79a94153cf12c570e803946e71973cd1d245e7c"
+        },
+        {
+          "test": "memory::ctx::tests::explicit_code_chunks_preserve_hash_lines_and_source_bytes",
+          "logSha256": "b46e788851ad2cdc3d32d5ce7195384f655cad1642f819995001ce3e278be283"
+        },
+        {
+          "test": "memory::ctx::tests::explicit_code_chunks_preserve_unicode_caps_and_whitespace",
+          "logSha256": "64ec8da919f931068bb4bf90a48741da49b675230661d5a334d667f4d14ff205"
+        },
+        {
+          "test": "memory::ctx::tests::explicit_code_index_reopen_and_failed_replacement_retain_both_indexes",
+          "logSha256": "42162338f207c9ef1803cc54ade6b9be02bc808158b8687b50f80bf539cb0ff6"
+        },
+        {
+          "test": "memory::ctx::tests::numbering_structure_v3_reopen_replacement_rollback_and_purge_use_existing_owner",
+          "logSha256": "faaf7cb73e1c156199ed43d2c55d33ad29a000740707d28383fcb32f07873e4a"
+        },
+        {
+          "test": "memory::ctx::tests::repeated_source_structure_counts_against_the_search_payload_budget",
+          "logSha256": "bec63e3714002cde01675773114e96b09195313e7a6708e24f93181baafc3f6b"
+        },
+        {
+          "test": "memory::ctx::tests::section_structure_v2_survives_reopen_and_transactional_failed_replacement",
+          "logSha256": "fab3faa0259f7c78bc607a8cd47937e08daae0c6afaa0c949ee5dd465fae9f51"
+        },
+        {
+          "test": "memory::ctx::tests::structure_replacement_failure_and_purge_follow_the_existing_source_transaction",
+          "logSha256": "70a607a3790e4ca4455aaf646a50c4c4ac765f5e1903a385c034d777a1e3c86f"
+        },
+        {
+          "test": "memory::ctx::tests::upgraded_v46_store_indexes_provenance_and_reopens_with_legacy_rows_intact",
+          "logSha256": "e855dab896626dec9492136239a8f5083371db21d2e8b4293a0d337a07cb62db"
+        },
+        {
+          "test": "memory::ctx::tests::v48_store_reopens_with_nullable_structure_and_preserved_existing_provenance",
+          "logSha256": "0286bf94c77fb64c12e3e8926c6d7c172a3034f77a08478c8c976a20b8651346"
+        },
+        {
+          "test": "memory::document_provenance::tests::document_metadata_retains_only_source_bound_docx_structure",
+          "logSha256": "8ca2add6289b0f97e1c4b2007053f6761bfa0cbf155d25835fdb965fb113b4b9"
+        },
+        {
+          "test": "memory::document_provenance::tests::legacy_provenance_json_defaults_to_no_structure_without_fabricating_ranges",
+          "logSha256": "f9600b87c51494cc208af8b8a05909cddfaec823ca587f6a459aadbb37b32239"
+        },
+        {
+          "test": "memory::document_structure::tests::numbering_structure_rejects_invalid_records_metadata_and_bindings",
+          "logSha256": "234262365ad9df248bb3c91bc17975071b9b3108999bfd5780a24a619a6c9637"
+        },
+        {
+          "test": "memory::document_structure::tests::numbering_structure_versions_roundtrip_and_enforce_field_presence",
+          "logSha256": "72097f0b27a43d3852133f9aab362a5d240118987234b60b7d10349980120d88"
+        },
+        {
+          "test": "memory::document_structure::tests::section_structure_rejects_unknown_contexts_ranges_and_false_completeness",
+          "logSha256": "eb09b0ef7c7b68f325a4a18fa484e8f4097b00fd95b8f6f36cdfd6efde1f73b8"
+        },
+        {
+          "test": "memory::document_structure::tests::section_structure_v2_roundtrips_without_reinterpreting_historical_v1",
+          "logSha256": "5b94072b6d984701919c4015d05af8ec42c923b3686a2ccf4795478c8d49dc9a"
+        },
+        {
+          "test": "memory::document_structure::tests::structure_admits_bounded_incomplete_members_and_zero_length_eof_tail",
+          "logSha256": "db44fc9566f426fdf101332eab1d5430eb9daa908cc0a3567732f95fd9da4222"
+        },
+        {
+          "test": "memory::document_structure::tests::structure_checks_actual_json_and_global_collection_limits",
+          "logSha256": "4753e2913a0f734031c59c380f6e3d542fcbebd7e49e6ca1055998f715a4f167"
+        },
+        {
+          "test": "memory::document_structure::tests::structure_enforces_row_cell_and_paragraph_caps_across_parent_collections",
+          "logSha256": "7fc8775183b293b831b1d4eb37520cdba78b7d46f1e383d4e484ddd48fe71832"
+        },
+        {
+          "test": "memory::document_structure::tests::structure_rejects_unknown_fields_bad_coordinates_and_inconsistent_completeness",
+          "logSha256": "d511f4ebf2b196ac17fd57ef01a2eab76b03ab0e0056e1fb33bd929007f329e7"
+        },
+        {
+          "test": "memory::document_structure::tests::structure_roundtrip_retains_source_ranges_and_rejects_other_source_binding",
+          "logSha256": "7d16eaaf08208e4bf1c4da7e5fc895972145ea081de772e9a17e3b5a42ae51fb"
+        },
+        {
+          "test": "memory::gc::tests::both_gc_paths_protect_current_and_event_references_without_source_markers",
+          "logSha256": "bc35c03106d7ec7654dfe728bf464c2def4306f678b785bec88b5361e2e0bbe5"
+        },
+        {
+          "test": "memory::gc::tests::corrupt_vocabulary_rolls_back_both_gc_paths",
+          "logSha256": "41dc9be188a73a65c0421770141de2d623ca74b8b8cfcbd6fb67825bb86e40f7"
+        },
+        {
+          "test": "memory::gc::tests::ignored_source_delete_rolls_back_entire_gc_batch",
+          "logSha256": "38c6faa28e223cd7c6d956f0df21df874670bd4f519af3a556ecbfb9be847246"
+        },
+        {
+          "test": "memory::gc::tests::size_cap_skips_oldest_managed_source_and_reports_actual_removals",
+          "logSha256": "8faf83d113a163823f4a0459ba364c326abf1fea296ca6956268f7fa58bab42f"
+        },
+        {
+          "test": "memory::gc::tests::source_delete_failure_rolls_back_both_gc_paths_and_retry_succeeds",
+          "logSha256": "5515d009d872d5f3e1c27db7033ce43aa8f3b57159be04129c15b14a153db31c"
+        },
+        {
+          "test": "memory::gc::tests::ttl_preserves_managed_document_and_reconciles_vocabulary_and_fts",
+          "logSha256": "c5c4a1853f97b258c95e8e7fb1675ad51690c94af0911b45114737fa954e6f5f"
+        },
+        {
+          "test": "memory::gc::tests::v50_gc_vocabulary_drift_is_repaired_on_open_and_not_rebuilt_again",
+          "logSha256": "d10eaadaa04512705b440d78fc8b999d01f4bacaaa4c833719bd57b02a721885"
+        },
+        {
+          "test": "memory::gc::tests::v50_to_v51_failed_rebuild_rolls_back_vocabulary_and_version_then_retries",
+          "logSha256": "35da2c7c88dd8317707b9ca58b1336bcca8c372dd1ab0dc2143ee83bd64f0cc7"
+        },
+        {
+          "test": "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
+          "logSha256": "6faaa8126b34ab6b20f16e4a364a7d8539023a686c512da05af0f68abc91fc48"
+        },
+        {
+          "test": "memory::migrations::tests::v3_era_schema_migrates_to_current_target",
+          "logSha256": "ad92ec8046780e8e4e12b71ce76d41812d870a434cb46fcdac6157942633acc6"
+        },
+        {
+          "test": "memory::migrations::tests::v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens",
+          "logSha256": "cf1644ad21e3f83fb332d5f6aaddc0978091af163ae79fd2f2fc47e53281b23d"
+        },
+        {
+          "test": "memory::migrations::tests::v47_fresh_and_migrated_sources_have_the_same_column_contract",
+          "logSha256": "8f190e02860cb86b056d7f608e06443b9f0ff7887339f92e2d2996430e2b38a5"
+        },
+        {
+          "test": "memory::migrations::tests::v48_to_v49_requires_the_source_owner_and_rejects_column_collision",
+          "logSha256": "ce12b77c5d99093ec0ac0cbd44b55f4c0db603d1f176e22ffef86ffde4f89c0b"
+        },
+        {
+          "test": "memory::migrations::tests::v48_to_v49_retains_legacy_rows_and_matches_fresh_source_columns",
+          "logSha256": "0424611e72025f14af987830b8ae6954c08c174f1a3746353557fee6dc5bf90c"
+        },
+        {
+          "test": "memory::migrations::tests::v48_to_v49_version_write_failure_rolls_back_the_column_and_retries",
+          "logSha256": "e3e0ee11e57b07bc82252dfb89a32a4c5f520973f3fcc7295e314a97591f2b14"
+        },
+        {
+          "test": "memory::migrations::tests::v49_to_v50_preserves_unbound_sources_and_matches_fresh_logical_contract",
+          "logSha256": "5dcff69a3b2fd67757bae19401ca00b5825433d30587ed28ce5e3233c6ec5a80"
+        },
+        {
+          "test": "memory::migrations::tests::v49_to_v50_rejects_missing_owner_columns_and_schema_object_collisions",
+          "logSha256": "25ca1935722d0c0bdf059c5ba7fdbca767c073a2d689a90d96ac03db9cb2dd1e"
+        },
+        {
+          "test": "memory::migrations::tests::v49_to_v50_version_failure_rolls_back_columns_objects_and_retries",
+          "logSha256": "791fedce4b792d304463e479b8445c59a6c00c2d6f4cabc9f324f64cd0431336"
+        },
+        {
+          "test": "memory::migrations::tests::v4_era_schema_migrates_to_current_target",
+          "logSha256": "cd77ce1076f73b15a2dd6d89f8b4ae7e63870d45bc50f6424c28a9116f8f13f3"
+        },
+        {
+          "test": "memory::store::tests::fresh_views_database_contains_no_history_journal_tables",
+          "logSha256": "77ef0b0800f8af9a0939540fe714c1e88fae5a854c554c0bbc0c2b09b32d1ec2"
+        },
+        {
+          "test": "memory::store::tests::legacy_history_migration_never_reopens_a_swapped_views_path",
+          "logSha256": "857f04716fe76fa50ee9029f1b8f2d570224469164972e222acceb4dc01e82fd"
+        }
+      ]
+    },
+    {
+      "id": 12998922989,
+      "sha256": "e438d93edf5c5c61aac3f43b817a2c1340c50343a3b220687f8591c2f9e16038",
+      "bytes": 443035,
+      "entries": 266,
+      "passed": 130,
+      "sourceBindings": {
+        "docs/verification/gold-wave95-96-test-matrix.json": "2b16a6a5dc2b5380e0fd30014959f25c98514166a6f6baed0c26b459df40ff0c",
+        "docs/verification/gold-wave2603-terminal-usage-replay.json": "d29f623c9be84c453e88972575c80093b721597784c7df0c9d8fc69979eea186",
+        "docs/verification/gold-wave2609-price-basis.json": "e081711fb61f7fbf8425b8c98af89ad3414be20164a112bc4f145c1653898976",
+        "docs/verification/gold-wave2614-prompt-components.json": "b676851514a275f0ca535915c9333514b4e919a33262eed91922544de7d5d685",
+        "docs/verification/gold-wave2617-authorization-price-bound.json": "adcbc3dff0693fb572c598e88e5d7945b4623bde49c4cfcaef9af4784b43bc18",
+        "docs/verification/gold-wave2634-budget-acquisition.json": "2d2bd7d8d28be2eed18a9f15a3145ad456c2cd5183030ecbe591806e15e55528",
+        "docs/verification/gold-wave2637-acquisition-reader.json": "02191c7dafba3a2d19e549b42b4c9055bf269f5b69bd97168608f381c33dd8ac",
+        "docs/verification/gold-wave2640-provenance-reader.json": "6e1be11ec7f481ceaddddb63cb4add62ee6737bcc8bc3551f1c74221fc1e9350",
+        "docs/verification/gold-wave2646-component-reconciliation.json": "11097a3f48a254c297c0240e8f87972cd566ef00e26f6c068b82e9f1e825b745",
+        "docs/verification/gold-wave2651-tool-origin.json": "b3b74a1917abaaf426e66d12b4aa0f6f460fbd2f0dbe21889143bdde2f357e6c",
+        "SRC/neothd/tests/fixtures/mcp_stdio_fixture.py": "310b21a6754bfc1feacd55ad4426390f33affae02468986c8296c42f1d1c8b98",
+        "SRC/neothd/src/mcp/client.rs": "b1cdf8f163f6f0b534aad935f3d60a33807be135745961a2847a285795500d55",
+        "SRC/neothd/src/context/compaction.rs": "f3e49ef6d7480593e88ea7143be43f8c345e6acbdbc01b1526747586b624bc02",
+        "SRC/neothd/src/cli/chat.rs": "603d4b6e60bfb2238f03ad7c3661df1299de4c95ffd208016d01d638eadcc86d",
+        "SRC/neothd/src/cli/usage_acquisitions/collector.rs": "fd35be916e533de29de3fa994aee87aac91138ae65ebc28f7b1214bc57d6cce2",
+        "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs": "2fbaa13f9cdf373109f6774c2d34833e47d206a433084624b9ffb877b31380a6",
+        "SRC/neothd/src/cli/usage_acquisitions.rs": "e93a6579ac52be568bc18be94826970d96df40bcf4a41ede470208f7e0a29a92",
+        "SRC/neothd/src/daemon/capability_decay.rs": "3001b39ce305cfa3e99cff5023ba0f021645a2b11ef53816f5c2cd891a4dda02",
+        "SRC/neothd/src/daemon/usage_log.rs": "ec38b4a11ec619e148ae72fe7214c58394e1a5cea1c7e94d8cc7c4860f8b17c2",
+        "SRC/neothd/src/mcp/dispatch_loop.rs": "d5a2d0eac7805b2be6654f9ab9eff3ca7de33fc0ea50da75bd01cd3dff8cad88",
+        "SRC/neothd/src/pipeline/enriched_request.rs": "02d1377eee46facd07482915a038b6db600c492602b46da5c1e7d47725837bf4",
+        "SRC/neothd/src/providers/cost.rs": "9a86e6def67cfba631c5c49873d44540c121449a758f1319566b3e82fd1b0df3",
+        "SRC/neothd/src/providers/cost_authorization.rs": "9edd2fca55cc94f90ff9e310687bc86881a68f5853443f0992482a8f6f98ce77",
+        "SRC/neothd/src/providers/pricing_basis.rs": "d485dc838562600ec7b917621d305bffd1d98b369db24c2a43d81bf80515ef19",
+        "SRC/neothd/src/tokens/prompt_attribution.rs": "ef9a3c31c04c57c134a8af5712fea98031f4801db7edab140fc6e0ac5aee823e",
+        ".github/workflows/cli-reference.yml": "7c9ad356e41f5eebe3fcc50f8265b76f5d25cd7923fd0977fe2668b1c0915c82",
+        "SRC/Cargo.lock": "d10d904aee9da564baa18b3d3f0f4e644fe2715fce4f1edcdbf3d633a7a97469",
+        "SRC/Cargo.toml": "f39929bb44951ccbf193b54a3bfd485397476856035fdd4b1a7bcf7327009c25",
+        "SRC/neothd/Cargo.toml": "15aac037ffcfe73b3a54a08d991766facbfc97e8aa90daeb849d0ac7b9e67c58",
+        "SRC/neothd/src/providers/mod.rs": "34a75a8892eab90053f670d744c9590c8bcec5abbbbe7dff395389fcc3c1a87f",
+        "SRC/neothd/src/tokens/budget.rs": "fe949e70608f87df08b11d1ccbf70d274c3eacb6e6910b3f9a4bfa01897558dd",
+        "SRC/neothd/src/tokens/mod.rs": "b581a2b18dfeae410a8e8dcfbe690c25721ccf29250d8e90f816e4400ba40815",
+        "SRC/neothd/src/cli/usage.rs": "202ac755c1efd06721b89804dfdda4658b654d0123e6117f2e3fe210476f66ab",
+        "SRC/neothd/src/providers/token_cap.rs": "b5573494e5dc8a252c31d8f631963e18c3377470c6132d17af2ef9877ca455ee",
+        "SRC/neothd/src/council/daily_budget.rs": "7eb658fdc94efa4142afe8036624729812f6e308451c4cf8b08720b4f0fa5862",
+        "SRC/neothd/src/cluster/budget_raft/service.rs": "92c5b0e36b98c9a320dd202411cb04c8ecded614a1692eea9d9876c7629ed3ce",
+        "SRC/neothd/src/wal/writer.rs": "3d9f39bc4fd3dd3c8c8f1c6fcf98aaff045cee09ab03ddaf408d6dfe81c5003a",
+        "SRC/neothd/src/wal/events.rs": "98f8662b0953ff3fd6a66f2d0c28dc0b3ad52cca8f13cd2d5ed706cd8cd07b14",
+        "SRC/neothd/src/wal/scan.rs": "36515c1b65c36fb1b056e0de62429f0e1b4bfa587ad71218dd954a0fbf05684e",
+        "SRC/neothd/src/cli/mod.rs": "7a8f29187de12a6c04d4e3c08c60b69957bef0e946755f6f7edfe749bd7dde83",
+        "SRC/neothd/src/cli/usage_acquisitions/provenance.rs": "cfc251ac95dbf8eba4c3e56b52b5b82705bc03dbb8330e836a1c24edb3bbac5d",
+        "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs": "a6b9f4eff17795624d10bbfdbe923e53f8a15f5a03cc9d8458229977d7ce383a",
+        "SRC/neothd/src/cli/usage_acquisitions/provenance/unique_json.rs": "52712ebcece221ab31f4377de1a398a51675375f216b1db91514c686f5d10ccf",
+        "SRC/neothd/src/cluster/budget_raft/service_tests.rs": "17425c5c9b8d747d662592145e88812ce63cfcd5bf3b85b10ae3ee1ce0776ddc"
+      },
+      "cases": [
+        {
+          "test": "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
+          "logSha256": "4ee2c32ec1c893d16efb1bdbc8fcde01f590cd667011f52a17a84dddf228ad5f"
+        },
+        {
+          "test": "cli::chat::tests::mcp_continuations_record_tool_origins_once_through_real_provider_boundary",
+          "logSha256": "938cd8962ad144e9cf0aa976bb3d83bb143f577f8423b3276a2d04c5cea88940"
+        },
+        {
+          "test": "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
+          "logSha256": "7f0b38070268afb2a2f081057593de7c40f11e1e52bbd51273a15f8742ee7e8c"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::all_null_is_malformed",
+          "logSha256": "25af12f818894a77d09a531dad4d75539d5e6efa642a06a4f0a18d97ad7ced18"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::binding_provider_and_model_mismatches_are_observed_conflicts",
+          "logSha256": "16dfc4a1aa2d43a9c518e16b4b1d830366673b0cc5a9b864e41bef48290d49e9"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::conflict_outside_window_remains_visible",
+          "logSha256": "c31f7d37b0d15d9eb4bb10675afbf976857606d9c0432b7a0978d99a75d0342c"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::diagnostic_and_location_limits_poison_future_readout",
+          "logSha256": "d1f174f2565ee503304a4c0ab261331f0d8624bfc5b4ee17bb3834d8048aeeef"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::duplicate_known_json_keys_are_malformed",
+          "logSha256": "b9eac4d8ad7135a26f0020b7eab5716328fc23e08e6eb7ec6a0b0400880a23f4"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::explicit_zero_and_null_are_preserved",
+          "logSha256": "cd1cf169c6676e50436d0d044b85a3a4c12e2add22f2dc1cfe38867eb19a3210"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::identical_occurrences_are_duplicates",
+          "logSha256": "eaa6d7b7d362a5fe0ee8f6d799a8b1e5c5d89f16b7586d08b8146e6426f1290a"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::legacy_request_is_unknown",
+          "logSha256": "4cfa0d989a56952f15b39f166a3c1fa27cb503158a3946de1a808c225c5dfff2"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::legacy_request_without_schema_is_unknown",
+          "logSha256": "56226aed6184cf60089378def5d8cee6249e5d03fda7714cbda93bfbf9016bcd"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::missing_nullable_is_malformed",
+          "logSha256": "b74e20a8cfc650966ed204b225b5852cfe589da581a738f39905bb26612be441"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::noncanonical_identity_hashes_are_rejected_not_misreported_as_conflict",
+          "logSha256": "6cc24c6711c717a687676d9a04b9845f9444e352c7971954a867a8643f051b7c"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::record_and_byte_limits_poison_future_readout",
+          "logSha256": "63d49c0b50577d140b7b8b1f5ec0ded64ae6228cc2fb780e725d19e32eca68c4"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::single_compatible_pair_matches_without_retaining_request_extras",
+          "logSha256": "2f4b10b08b94d580aa430f7da4fa99b5985e6e63ba1a461c7a34165e04eea608"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::timestamp_only_divergence_explains_conflict_without_claiming_budget_discrepancy",
+          "logSha256": "2179d72f502c1a4571dd8e53038457003e96e71823e46d0983580619c1ffd7e4"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::union_window_includes_context_and_endpoints",
+          "logSha256": "bc1cf1209a4fa014900bd89fd8a3fc3b0665cea91a0e5543d9ccb09ec56781f1"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::unmatched_records_are_explicit",
+          "logSha256": "9812a501df644f11e2e1d9d7f75bd3769a587000bd4ceba9d0afec8df6d1bd01"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::unsupported_schema_is_explicit_before_current_field_types",
+          "logSha256": "d1a42be7e3efdbc8bf7cecf878e65b08044ffb0fd435c86ea53325163d181fa9"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::wrong_types_and_extra_fields_are_malformed_without_payload_leak",
+          "logSha256": "22d1ab01a0a470987b42c7d6330b43ae45f25c944205024f10bac60d5a1d3ed4"
+        },
+        {
+          "test": "cli::usage_acquisitions::collector::tests::zero_nested_amounts_are_valid",
+          "logSha256": "b59bf4f3549f574d251d66e6f2ac719408c14483e9e731062e9020eeb98c9cd2"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
+          "logSha256": "d99bda83af713ed345c8683a242c606956c8698a5be69751c150a6b55927121b"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
+          "logSha256": "583f777dd6d1b3e8164f46b19fa06db2b6bf3607c5cd7f5799a392d8ad335738"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
+          "logSha256": "2c13307379d8a3d850fbc0afb28468a6e0a5b761887748d3197bac883e9d2224"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
+          "logSha256": "9e8e02ad3cfc2b12d1aa64c5cbac222a9fec58227a2c7a3a090206eacd9a13b2"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
+          "logSha256": "ebf38399079059654ddc936747a8c39c7a41613dfeb3962408149d8b55a976f7"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
+          "logSha256": "10af0653db6ece8b1881798fa2c3c6639e2b66f397e451b8af63b1edbb70a487"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
+          "logSha256": "9969214d88a69ee713dde51d0c499ca8a33c96b7075d613f5cef27bd625a4167"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
+          "logSha256": "5c7c6f82308c6a35a8807c2634e5ed4d1be0af17be369b6e01f5a03522a5628b"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
+          "logSha256": "ac8b33292bfac9a6368f8616b3007f7921d387e198a61cdbc1dde6db2b0c6169"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
+          "logSha256": "284d4ff5794220eee389b6bb3a6f4bf4f20bb9b6bcea583cc986c8a1ce337d24"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
+          "logSha256": "54ce53d8c22752b124a61c923cc29d66e63165116dde4fa5339978f77a2f152f"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
+          "logSha256": "6d6daaf022fff77467bfc5b2cf2baf9daa3979a82759fd8b97ba669b00f35c84"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
+          "logSha256": "9b68a6f2e49fe0802e90b8eae090cc970deba31139d3bd233d244bcaacc49855"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
+          "logSha256": "b1b8819ded07f2225304445a4bbc86d8967caec23aa1548db55acb6946b2c8f5"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
+          "logSha256": "15683a33f89c04f6ad786d91f7d8a8086502b85dc74cf87b23e6bb599cb793a8"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
+          "logSha256": "1918e093f5ee4abd3157351fb012e4f47d81812fb50425fdee46e9b0d06ec8c5"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
+          "logSha256": "cbdfc83c86ca127c382e1abb4866d897e156b4baf210753cc00134fa0a890eda"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
+          "logSha256": "fd5be1331cec604397d16196055214ee258ad97fff70c2239b67027979544813"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
+          "logSha256": "a4d0ecfa68faddd2f6e5a876d164c5264d33823e33f48f8611076df2971325f6"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
+          "logSha256": "93ab6c8b3f691f70bc34f9f533ed7afc237aead05600c3d7eec1786c360a3583"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
+          "logSha256": "e20bb2a51616d6ef2c283f979ddb0fcbb430addc8889e783dfe207010bf87e6d"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
+          "logSha256": "c7c3350f785ae47872c32ea4ae917913102fad77f2556986b12a7098569e833a"
+        },
+        {
+          "test": "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
+          "logSha256": "8c716ec91285fab5189baace1cbba3bf49a01a6450dc836455d74c4c58ddb041"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::absent_home_retains_unknown_history_without_creating_files",
+          "logSha256": "f94a58911d184dde48bfcef04fb964852c3325ec968c8d905c95be0918a9c787"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::changed_verification_key_returns_no_inspection",
+          "logSha256": "c5b96646c78055e699d2e41f1c3d1e2848816217a489ffdbba34aea825fe62a5"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::cli_mode_defaults_and_currency_conflict_are_explicit",
+          "logSha256": "2fe8a1c8151e0ec1bf23e7a2a35b347c50c129d8b294c3c329b32f008f290251"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::default_window_uses_checked_subtraction",
+          "logSha256": "a0e32dc21fca452a72a07b2b1de7804bf0dc9c7c73744d3c4f247238ae789e56"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::error_after_valid_callback_discards_all_buffered_observations",
+          "logSha256": "71b9ccdb2cdc41a31c98386cd7fa05dcedda30835b998d298a3d4d1d5880d0e7"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::explicit_window_never_reads_the_clock_and_keeps_inclusive_bounds",
+          "logSha256": "a72b9894c7d399f79e72ffc98024df59c4e1df9d73efc5df37ed11fe2418c943"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::incomplete_prefix_does_not_turn_unseen_acquisition_into_zero",
+          "logSha256": "f33432542507d29dee06878d9ae9538d1471b693d4faa01c22d5b7679983de1a"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::output_limit_is_enforced_before_extending_the_buffer",
+          "logSha256": "01fd7b6ad82f2a37a837b9cf48b2714acdebd435645385059749d98720138f7a"
+        },
+        {
+          "test": "cli::usage_acquisitions::tests::real_authenticated_wal_binds_observations_and_leaves_home_unchanged",
+          "logSha256": "d5a4ae9c318aba04e03a1aa6bfe87357c4d131ddf428e44a330a1d9a45f3f2d6"
+        },
+        {
+          "test": "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback",
+          "logSha256": "1c8a121b3aafc675a9c0fe2506ae15876676850b57586886c6207b564a8ed9c5"
+        },
+        {
+          "test": "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
+          "logSha256": "147b74552dae812e58763f461e482ecb9afd59f2f7a470f4becf780413100974"
+        },
+        {
+          "test": "daemon::usage_log::tests::legacy_terminal_and_snapshot_reject_component_key_even_null",
+          "logSha256": "d5b216f491f83025bcbd18370b7d813a65a2c4f379eeb2ac84d470e7fd6ab6ba"
+        },
+        {
+          "test": "daemon::usage_log::tests::mixed_component_usage_rollup_keeps_missing_and_zero_distinct",
+          "logSha256": "fbecaf5d0c257178aea5fb685faf42384753942a76392b978c9e1b88aa2f450a"
+        },
+        {
+          "test": "daemon::usage_log::tests::retained_terminal_preserves_unknown_zero_and_existing_rejection_boundary",
+          "logSha256": "9da858454b35b34bd0559015fbbeac46d36652b736ba9e1ac9e22b7bac66c356"
+        },
+        {
+          "test": "daemon::usage_log::tests::retained_terminal_v2_keeps_observed_tokens_without_current_price_projection",
+          "logSha256": "10b9560fd4ec01365e05e15dd158c76f97a577719f8dd6202b0c800c3efa7b46"
+        },
+        {
+          "test": "daemon::usage_log::tests::retained_terminal_versions_preserve_frozen_amount_bits_basis_and_components",
+          "logSha256": "44d3357047ff4ff78d1cb19f174739110274269d9ca0f3b9303bb6b133dfe1d7"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_keeps_unknown_amounts_distinct_from_known_zero",
+          "logSha256": "73bda2b2926fe48b209e9eec3e77a021cabb86c798f792d5d7d330e8bdbfbc52"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_preserves_original_amount_bits_instead_of_current_rates",
+          "logSha256": "18b6d33ba218f2030e865c47ef47c02a91b16430ecc41a2dcbc436ac4c0f9a3f"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_refuses_outer_identity_usage_and_context_mismatches",
+          "logSha256": "ad7956ea81c4a958e6322567e4d04826c4953e0a556212d05d67ca4fc6066723"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_rejects_invalid_amount_bits_and_competing_decimal_values",
+          "logSha256": "b3649d9e6f8efe1560532663290a9e4bdb4355a99ddfbdc4c13de850f3dd57d3"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_requires_complete_snapshot_and_refuses_mixed_versions",
+          "logSha256": "9c10866fd88d4cd5e6395a2b54913020b60a097697009e1666f087aa9121233b"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v3_wal_repair_is_once_and_rejects_conflicting_amounts",
+          "logSha256": "60c4be00554626adf10a2263910563c1c2225863c2791a3abbeac456589fae42"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_cache_only_measurement_retains_its_exact_basis",
+          "logSha256": "f20a1eeb4c9ccadf663d3ead4ce21dd05175e335fc88cf49775f1a4c952ab366"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_keeps_unavailable_basis_distinct_from_free_zero",
+          "logSha256": "797d265ad4203d41ef611894fd83587a742efa9d5137ab9fe4e2eedc562bf93e"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_preserves_historical_price_basis_without_current_lookup",
+          "logSha256": "2a6984834b2d633e09ab2053f09a82db29114c23a26c2a602a9ceeb2d0461911"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_rejects_outer_basis_and_model_mismatches",
+          "logSha256": "c6d9e617780daa6b5fca56cfb964514fbf4614a3e23f8e4b83482f45eb63a0d9"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_requires_complete_basis_and_refuses_mixed_versions",
+          "logSha256": "15106e3b95af581f86668682e53f3ba8659edc436d97f9819f914fc46417654f"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v4_wal_repair_is_once_and_rejects_conflicting_basis",
+          "logSha256": "505f269917b8add9961749215e95f98649cdaa7cf40b2e0d537d526333200d03"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v5_component_replay_preserves_estimates_without_price_lookup",
+          "logSha256": "884f49f57f52af588bf41bc4063d94c4b0eba010d064cb7d6b87568496c70cd3"
+        },
+        {
+          "test": "daemon::usage_log::tests::terminal_v5_rejects_mixed_versions_component_drift_and_missing_fields",
+          "logSha256": "2d7b99d9fd7d4a89811387a04cd462bd6684e6c9be21d1f08b6c45c00275c1a1"
+        },
+        {
+          "test": "mcp::dispatch_loop::tests::loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it",
+          "logSha256": "546f493860be3a4094c3d98e363c7d282d6c009fab160e41d8e588c5eafb9931"
+        },
+        {
+          "test": "mcp::dispatch_loop::tests::manifest_scan_without_wal_survives_feedback_but_never_issues_a_permit",
+          "logSha256": "b49b6dbc93e4b2e734e461e62889f7cff9fff739b480dab7f296e7979eabd33b"
+        },
+        {
+          "test": "pipeline::enriched_request::tests::enriched_producers_label_components_independently_of_authority",
+          "logSha256": "0de52416809374da2ec812239d1244fe82d7da55715e96c368c5b10308d1cf67"
+        },
+        {
+          "test": "providers::cost::authorization_price_observation_tests::bound_observation_keeps_unknown_price_distinct_from_local_zero",
+          "logSha256": "c95d479284e4010ca64ee4594943367c3cb470b443ab2dc07345eabdf2a05cae"
+        },
+        {
+          "test": "providers::cost::authorization_price_observation_tests::bound_observation_preserves_missing_empty_and_nonempty_systems",
+          "logSha256": "4e68f71c69916c04f56d463feeeb44c03dcca52facbd25b7eb6014b7725e21e4"
+        },
+        {
+          "test": "providers::cost_authorization::tests::append_only_continuation_reaches_leaf_with_exact_components",
+          "logSha256": "dc84818b00f5c4e00b5df474a48be24d6e1b3921c61531fefcb920645ae9fe82"
+        },
+        {
+          "test": "providers::cost_authorization::tests::authorization_id_and_binding_match_cost_and_permission_frames",
+          "logSha256": "0d7e1df067bf6fb619e09a1fbd1aab21cd99018d47a81732c1a30b8b0b200ccc"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_absent_scopes_preserve_old_lifecycle_frames",
+          "logSha256": "fe3447b83a6c3da009b0f77f87b470ebd79e2079146945f9204c4d154054d796"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_cancellation_waits_for_ack_before_terminal_and_rolls_back_daily",
+          "logSha256": "0308260d379278dce08d6e46d44cec7669c004d43cc8002b917f67ea9831e10b"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_cluster_cancellation_settles_unknown_full_bound",
+          "logSha256": "282f7dbd589d4f26e1ed20dfcce51a87e32659f4cf70308645f3b818dc17cc82"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_cluster_terminal_write_failure_keeps_claim_outstanding",
+          "logSha256": "8231a31d64f1fc6229353b0e4f16c2e8449d744254b03b33501968a19f53c7ec"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_join_failure_after_durable_append_attempts_existing_terminal",
+          "logSha256": "880d95876d222d7ab6b2838eca0bd98f185adf490aa595eb3bdc1908920a34c9"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_observes_zero_operation_cost_without_second_debit",
+          "logSha256": "975df96670618fbaa553e809f123f9d53f0d60ec6fe6e7d214973e500cba0759"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_records_actual_daily_and_operation_units",
+          "logSha256": "925d8f274a9982b4973e307feb53680389d57e084e9f06df724a276d95fa24a1"
+        },
+        {
+          "test": "providers::cost_authorization::tests::budget_acquisition_write_failure_blocks_permit_and_preserves_operation_charge",
+          "logSha256": "e2991d3538d8f85e16912f41b0f7386abe243ca3215635ce4747956ac82a1757"
+        },
+        {
+          "test": "providers::cost_authorization::tests::cluster_budget_no_quorum_blocks_before_raw_provider_dispatch",
+          "logSha256": "d168196de5d47851af10e6799709e5085f6a70d78b7bf05fd0a525fa26a30477"
+        },
+        {
+          "test": "providers::cost_authorization::tests::cluster_budget_quorum_leaf_dispatches_exactly_once",
+          "logSha256": "f65ae8e2c27abd279517da9bfccb5a6711c0c18ea3165260b9083f06f6109cee"
+        },
+        {
+          "test": "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
+          "logSha256": "2eced1d9557e000eef2066a2b98516ddf90f738331bbd59930f20ed815cc0417"
+        },
+        {
+          "test": "providers::cost_authorization::tests::cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch",
+          "logSha256": "b4b37657cdddd260020c992f8c685763c4a6ad8acf92f22ede37995dc2f9d84f"
+        },
+        {
+          "test": "providers::cost_authorization::tests::continuation_rejects_changed_bytes_baseline_and_envelope",
+          "logSha256": "52881479c33d24f19624a0e9982dbf5e55bcd0c0f22d84441759a62b045dcb37"
+        },
+        {
+          "test": "providers::cost_authorization::tests::continuation_scopes_restore_nested_concurrent_and_cancelled_calls",
+          "logSha256": "920792dd47bc4b2ee73034d61708ef221abce45b02518974c5210abaef1a3614"
+        },
+        {
+          "test": "providers::cost_authorization::tests::cost_wal_failure_blocks_dispatch",
+          "logSha256": "ddaa6862e0176711518e1c8ed04e2fa9827b68d874e0b39753c0b6cc76d7eda2"
+        },
+        {
+          "test": "providers::cost_authorization::tests::default_claude_full_is_not_structurally_disabled_or_given_a_fake_cap",
+          "logSha256": "b323d0c6db81b902784670a98429c5ec64d8be3644a9f5e2ea80ae21c41731ef"
+        },
+        {
+          "test": "providers::cost_authorization::tests::finite_token_cap_with_unknown_price_never_claims_a_eur_upper_bound",
+          "logSha256": "4493d9bc34f4d7ec2ee1bdd9c298b58bbeff0e8d4afe353fbf7bb89307234e70"
+        },
+        {
+          "test": "providers::cost_authorization::tests::missing_cost_wal_also_blocks_unknown_bound_dispatch_at_full",
+          "logSha256": "8535bc142ea799cba02c05ddfcd9c2f9f61611aa209a34242d58c1aeee9797a8"
+        },
+        {
+          "test": "providers::cost_authorization::tests::missing_cost_wal_blocks_cloud_dispatch",
+          "logSha256": "251198b8466673179eeabbf9e93acc87e653e4b68462cc4446eb5f84cbac9ec3"
+        },
+        {
+          "test": "providers::cost_authorization::tests::only_canonical_local_providers_bypass_paid_call_gate",
+          "logSha256": "5fab0b009a145c9bc8ee0e1bf07ae87a70950d6d2aadaaca9f69bcbf41fdf313"
+        },
+        {
+          "test": "providers::cost_authorization::tests::operation_budget_daily_rejection_precedes_and_preserves_operation_quota",
+          "logSha256": "02846523f93d8c5014a71a74a6e5a7935804755e165b97b36df476a405a93e77"
+        },
+        {
+          "test": "providers::cost_authorization::tests::operation_budget_rejection_rolls_back_daily_pre_dispatch_reservation",
+          "logSha256": "576f1cb9fd107226d4c2520642ce1d232e2f3be5803fdadc8cacc7c347e7d540"
+        },
+        {
+          "test": "providers::cost_authorization::tests::operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch",
+          "logSha256": "89cbcd826fe9a36b818163bd59da3d3785400b71c04ba47e0fcc32afbb36b23b"
+        },
+        {
+          "test": "providers::cost_authorization::tests::operation_budget_uses_transport_bound_not_billing_reserve",
+          "logSha256": "9a11ccf38dcbec470cf1d4bd874e228815e9ce1bf804b87a78ded4a5d82565eb"
+        },
+        {
+          "test": "providers::cost_authorization::tests::operation_plan_rejects_mismatched_frozen_price_envelope",
+          "logSha256": "7347cc54b5112a1a4963fbc3a0b526866083ffb9e988da1874477b8ee1af6117"
+        },
+        {
+          "test": "providers::cost_authorization::tests::permission_grant_wal_failure_after_cost_frame_blocks_dispatch",
+          "logSha256": "b8431e21d58254a6753643851d5a3b52b0a91aea10f972954c179cce123a11ed"
+        },
+        {
+          "test": "providers::cost_authorization::tests::post_dispatch_future_drop_records_client_abandoned_and_indeterminate",
+          "logSha256": "90512dba1b062a146a9ac15099c9b785c0edf6f52af4599e63558aa936ff2504"
+        },
+        {
+          "test": "providers::cost_authorization::tests::prompt_components_bind_model_and_stop_envelope_before_ticket",
+          "logSha256": "2a0b8fb152c6a1a4836ab756695d29a17523527c0264a7faedde85e4e094fad4"
+        },
+        {
+          "test": "providers::cost_authorization::tests::terminal_v5_wal_repairs_components_idempotently_without_provider_replay",
+          "logSha256": "c26c606dcd8e6347f8c3aae0ae03eccb40d0d1704efe28f1fe1e2cd3fdfbdddf"
+        },
+        {
+          "test": "providers::cost_authorization::tests::terminal_wal_repairs_missing_usage_projection_idempotently",
+          "logSha256": "01130ec45a0e906c2b5a4436e8ea10ba53bd76f161f7f40742904c527e1ba182"
+        },
+        {
+          "test": "providers::cost_authorization::tests::unknown_bound_full_fail_closed_proceeds_and_is_audited",
+          "logSha256": "ac3a973195419d4bf5eef09801436c89bfe5cfd9758c970fa98a49cd348100a0"
+        },
+        {
+          "test": "providers::cost_authorization::tests::unknown_bound_standard_channel_approval_proceeds_and_is_audited",
+          "logSha256": "96a25f0df1c221db046d8762334dc125539656044ce41ab56ac3b72fe6bbbc97"
+        },
+        {
+          "test": "providers::cost_authorization::tests::unknown_bound_standard_fail_closed_audits_then_blocks_before_dispatch",
+          "logSha256": "59987b939aa2bd7e7e6396c2756c4e874609f4d8a3f26eeec599361aaafd6f5a"
+        },
+        {
+          "test": "providers::cost_authorization::tests::wal_and_paid_gate_use_each_leaf_output_ceiling",
+          "logSha256": "c868d4b978551a65bd0297513515612db05956fa8f92b411d881210e9db04361"
+        },
+        {
+          "test": "providers::pricing_basis::authorization_bound_tests::frozen_bound_keeps_synthetic_and_zero_prices_without_table_lookup",
+          "logSha256": "8fba821f36d57cecec3994302a2b0774231921d861fbc04a7c61f3dd2ab5d0b3"
+        },
+        {
+          "test": "providers::pricing_basis::authorization_bound_tests::frozen_bound_preserves_exact_legacy_arithmetic_and_roundtrip",
+          "logSha256": "3e1dd1a3a5c2fe0d6cc53241e1a04b09f76a2e9e0a4cd4c525c102d444b161a0"
+        },
+        {
+          "test": "providers::pricing_basis::authorization_bound_tests::frozen_bound_rejects_tampered_inputs_identity_and_policy",
+          "logSha256": "ace700484f3df9aa4e956536c57aad85c7579831611197c145efa9cacd38ea1c"
+        },
+        {
+          "test": "providers::pricing_basis::tests::price_basis_rejects_invalid_rates_even_with_matching_digest",
+          "logSha256": "e000ad4693e8b574ccab1fb7c8557ddd9bf7aefa1a6df222711f3a1eaf448b82"
+        },
+        {
+          "test": "providers::pricing_basis::tests::price_basis_rejects_tampered_rates_policy_and_identity",
+          "logSha256": "391a6de1cd4b9c8aac2542827958bd07798122b56b332c8630cd37dca9786e4d"
+        },
+        {
+          "test": "providers::pricing_basis::tests::price_basis_roundtrip_preserves_exact_row_and_policy",
+          "logSha256": "5e2b68698f03bb71bd52b4be96325692c8df4dba27623820597eaab8d7bf8960"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::appended_tool_results_preserve_known_origins_and_utf8_residual",
+          "logSha256": "833a2e46e615333cefcab1d5b3e85a76031a8850bef7237851a67e1cb22875c0"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::appended_tool_results_reject_invalid_counts_envelope_and_saturation",
+          "logSha256": "fcf2b8e97c7a55e363e705f7ab5e1148d2eb4efa9609e76d76d8a10943b8f14e"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::explicit_origin_wins_over_block_and_legacy_source",
+          "logSha256": "d6f3f7da2a576f3d4baaec1ff96bb87d02884a6011e23a5bd05d03b9d9b47f95"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::rejects_stale_estimates_overflow_and_unknown_estimator",
+          "logSha256": "c57fd2ab8cd340c9e942e391fe0ecdcf8afd221d3d5e166a2403ca9cec695970"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::retained_unicode_unlabeled_and_residual",
+          "logSha256": "1b5ae0ec27e3b98065e30c5b3579acbeb568cd53814be28a75cfa2ec0d6af781"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::rollup_overflow_preserves_previous_totals",
+          "logSha256": "0268305ce1d40b627e70a735123ab775e2f2f35e966a428cbc168ef22ab58a2d"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::serde_roundtrip_rejects_bad_total_and_unknown_fields",
+          "logSha256": "d3f73c71b0b2db57ad36b3f1ece944b15150eab93b66d84c580c6047712f96c5"
+        },
+        {
+          "test": "tokens::prompt_attribution::tests::seven_origins_survive_truncation_and_user_rewrites_lose_provenance",
+          "logSha256": "e2b141ec220d9190a2fca2e3ad4901a056130e736a9dce12621de84f5e4c8f90"
+        }
+      ]
+    },
+    {
+      "id": 12998789107,
+      "sha256": "3590df14bb2e8446898faede1ef138cd8543f3df0baf3a710d5684a29eabfb84",
+      "bytes": 92122,
+      "entries": 3,
+      "generatedCliEqualsCommitted": true
+    }
+  ],
+  "slimClippy": "skipped",
+  "workspaceClippy": "success",
+  "typeCheck": "success",
+  "nativePredecessor": {
+    "run": 41074447282,
+    "producer": "6d7a83a1d05728edfb8a75e59036f062b1cf5fe6",
+    "apiConclusion": "success",
+    "jobs": 22,
+    "rawNativeArtifactsAdmitted": false
+  },
+  "goldCheckboxesClosed": 0
+}

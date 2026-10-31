@@ -1,0 +1,116 @@
+{
+  "schema": "neoth.wave2655.scoped-email-completion.v1",
+  "base": "42f5b41a67b425a438c81f5ddeed94fc674dd80c",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_INTEGRATED_HOSTED_PENDING",
+  "tests": [
+    {
+      "test": "email::seen_store::scoped::tests::scoped_completion_separates_accounts_hosts_ports_and_case_sensitive_users",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_triage_never_completes_ingest_and_ingest_never_completes_triage",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_legacy_ambiguity_survives_explicit_retriage_without_ingest_authority",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_query_and_write_errors_never_become_unseen_or_completed",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_completion_reopens_idempotently_without_rewriting_first_timestamp",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_v52_migration_preserves_legacy_bytes_without_claiming_an_account",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_v52_migration_rejects_colliding_schema_without_adopting_rows",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::scoped_v52_migration_rolls_back_table_and_stamp_then_retries",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_seen_filter_separates_accounts_epochs_and_triage_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "requiresImapFeature": true
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_legacy_ambiguity_blocks_only_its_unit_without_claiming_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "requiresImapFeature": true
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_scoped_ledger_error_aborts_filter_and_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "requiresImapFeature": true
+    }
+  ],
+  "existingContractsAdded": [
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_seen_filter_uses_durable_message_id_key",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "requiresImapFeature": true
+    },
+    {
+      "test": "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "memory::migrations::tests::v3_era_schema_migrates_to_current_target",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "memory::migrations::tests::v4_era_schema_migrates_to_current_target",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "requiresImapFeature": false
+    },
+    {
+      "test": "memory::store::tests::fresh_views_database_contains_no_history_journal_tables",
+      "sourcePath": "SRC/neothd/src/memory/store.rs",
+      "requiresImapFeature": false
+    }
+  ],
+  "paperlessRequired": 52,
+  "portableRegistered": 3219,
+  "behavior": [
+    "Preserve existing mailbox-unit SHA256 identity and distinct Message-ID versus UIDVALIDITY/UID fallback",
+    "Separate triage and ingest completion at both production callers",
+    "Retain legacy rows as explicit ambiguity; re-triage grants no ingest replay",
+    "Propagate query/write/ignored-insert failure and preserve independent units",
+    "Transactional schema53 with collision rejection, old-row preservation and stamp rollback"
+  ],
+  "validation": {
+    "localRuntimeExecuted": false,
+    "hostedRuntimeAccepted": false,
+    "wholeA04Accepted": false,
+    "goldAccepted": false
+  },
+  "remaining": [
+    "Explicit evidence-based legacy mailbox/effect reconciliation",
+    "Destination/rendition approval revisions and other A04 adapter acceptance",
+    "Fresh hosted format, core/IMAP runtime and native qualification"
+  ],
+  "goldCheckboxesClosed": 0
+}

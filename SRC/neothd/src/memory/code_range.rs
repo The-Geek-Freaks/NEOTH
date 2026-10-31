@@ -345,8 +345,12 @@ pub(crate) fn from_row(
 
 #[cfg(test)]
 pub(crate) fn remove_schema_for_legacy_fixture(conn: &rusqlite::Connection) -> Result<()> {
+    // These fixtures model v51 or earlier, including full reopen/migration.
+    // Remove later schema objects as well; a lowered stamp alone is not a
+    // historical database and must fail the migration collision guard.
     conn.execute_batch(
-        "DROP TABLE IF EXISTS code_chunk_ranges; DROP TABLE IF EXISTS code_source_ranges;",
+        "DROP TABLE IF EXISTS idx_email_seen_scoped; \
+         DROP TABLE IF EXISTS code_chunk_ranges; DROP TABLE IF EXISTS code_source_ranges;",
     )?;
     Ok(())
 }

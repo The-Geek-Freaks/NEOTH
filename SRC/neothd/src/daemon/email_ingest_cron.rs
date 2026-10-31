@@ -303,15 +303,7 @@ fn paperless_mail_key(
     email: &crate::email::inbound::InboundEmail,
     uid_validity: u32,
 ) -> Result<String> {
-    if let Some(message_id) = email
-        .message_id
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(format!("message-id:{message_id}"));
-    }
-    anyhow::ensure!(uid_validity > 0, "IMAP UID fallback requires UIDVALIDITY");
-    Ok(format!("uidvalidity:{uid_validity}:uid:{}", email.uid))
+    crate::email::seen_store::scoped::mail_key(email, uid_validity)
 }
 
 #[cfg(any(test, feature = "imap_fetch"))]
@@ -395,7 +387,14 @@ pub async fn run_email_ingest_tick(
     // the ledger cannot be opened or queried.
     let seen_conn = crate::memory::store::open(&neoth_home.join("views.db"))
         .context("email_ingest_cron: open durable email seen-state")?;
-    let (emails, skipped_seen) = filter_unseen(&seen_conn, fetched)?;
+    let (emails, skipped_seen, legacy_ambiguous) =
+        filter_unseen(&seen_conn, &imap_cfg, uid_validity, fetched)?;
+    if legacy_ambiguous > 0 {
+        warn!(
+            legacy_ambiguous,
+            "email_ingest_cron: legacy completion has unknown account/purpose; reconciliation required"
+        );
+    }
 
     if emails.is_empty() {
         info!(
@@ -471,7 +470,7 @@ pub async fn run_email_ingest_tick(
                             "email_ingest_cron: quarantined by email triage"
                         );
                         quarantined += 1;
-                        mark_processed_email(&seen_conn, email, now_unix)?;
+                        mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
                     }
                     Err(_) => {
                         warn!(
@@ -517,7 +516,7 @@ pub async fn run_email_ingest_tick(
                         "email_ingest_cron: quarantined (HIGH findings)"
                     );
                     quarantined += 1;
-                    mark_processed_email(&seen_conn, email, now_unix)?;
+                    mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
                 }
                 Err(_) => {
                     // Quarantine write failed — log but do NOT forward.
@@ -599,7 +598,7 @@ pub async fn run_email_ingest_tick(
                                 "email_ingest_cron: SC-16 rejection persisted in quarantine"
                             );
                             quarantined += 1;
-                            mark_processed_email(&seen_conn, email, now_unix)?;
+                            mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
                         }
                         Err(_) => {
                             warn!(
@@ -678,7 +677,7 @@ pub async fn run_email_ingest_tick(
                 "email_ingest_cron: no Paperless or Obsidian sink configured — item remains pending"
             );
         } else if all_configured_sinks_succeeded {
-            mark_processed_email(&seen_conn, email, now_unix)?;
+            mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
         }
     }
 
@@ -730,45 +729,46 @@ fn sanitize_doc_id(uid: &str) -> String {
         .collect()
 }
 
-/// Remove messages already completed by an earlier cron tick.
+/// Remove completed and legacy-ambiguous units before any sink side effect.
+/// The counters distinguish proven completion from blocked unknown history.
 #[cfg(feature = "imap_fetch")]
 fn filter_unseen(
     conn: &rusqlite::Connection,
+    cfg: &ImapConnectionConfig,
+    uid_validity: u32,
     emails: Vec<InboundEmail>,
-) -> Result<(Vec<InboundEmail>, usize)> {
+) -> Result<(Vec<InboundEmail>, usize, usize)> {
+    use crate::email::seen_store::scoped::{self, Identity, Purpose, SeenState};
+
     let mut unseen = Vec::with_capacity(emails.len());
     let mut skipped = 0usize;
+    let mut ambiguous = 0usize;
     for email in emails {
-        if crate::email::seen_store::is_seen(conn, email.dedup_key()).with_context(|| {
-            format!(
-                "email_ingest_cron: query seen-state for {}",
-                email.dedup_key()
-            )
-        })? {
-            skipped += 1;
-        } else {
-            unseen.push(email);
+        let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &email, uid_validity)?;
+        match scoped::state(conn, &identity, Purpose::Ingest)? {
+            SeenState::Seen => skipped += 1,
+            SeenState::LegacyAmbiguous => ambiguous += 1,
+            SeenState::Unseen => unseen.push(email),
         }
     }
-    Ok((unseen, skipped))
+    Ok((unseen, skipped, ambiguous))
 }
 
-/// Commit completion only after the message is safely quarantined or every
-/// configured sink succeeded. A failed ledger write aborts the tick loudly;
-/// silently continuing would re-run external side effects on the next tick.
+/// Commit only after quarantine or all configured sinks completed. A failed
+/// ledger write aborts the tick; it must never silently permit another effect.
 #[cfg(feature = "imap_fetch")]
 fn mark_processed_email(
     conn: &rusqlite::Connection,
+    cfg: &ImapConnectionConfig,
+    uid_validity: u32,
     email: &InboundEmail,
     now_unix: i64,
 ) -> Result<()> {
-    crate::email::seen_store::mark_seen(conn, email.dedup_key(), Some(email.uid.as_str()), now_unix)
-        .with_context(|| {
-            format!(
-                "email_ingest_cron: persist seen-state for {}",
-                email.dedup_key()
-            )
-        })
+    use crate::email::seen_store::scoped::{self, Identity, Purpose};
+
+    let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, email, uid_validity)?;
+    scoped::mark(conn, &identity, Purpose::Ingest, now_unix)
+        .context("email_ingest_cron: persist scoped completion")
 }
 
 // ---------------------------------------------------------------------------
@@ -982,6 +982,69 @@ mod tests {
     }
 
     #[cfg(feature = "imap_fetch")]
+    fn seen_test_config(user: &str) -> ImapConnectionConfig {
+        ImapConnectionConfig {
+            host: "imap.example.com".into(),
+            port: 993,
+            username: user.into(),
+            auth: AuthMethod::PasswordPlain { password: "unused-fixture".into() },
+            use_tls: true,
+        }
+    }
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_seen_filter_separates_accounts_epochs_and_triage_completion() {
+        use crate::email::seen_store::scoped::{self, Identity, Purpose};
+
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let alice = seen_test_config("alice");
+        let bob = seen_test_config("bob");
+        let mail = vault_identity_email("7", None);
+        let id = Identity::inbox(&alice.host, alice.port, &alice.username, &mail, 1).unwrap();
+        scoped::mark(&conn, &id, Purpose::Triage, 100).unwrap();
+        let (fresh, seen, ambiguous) = filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
+        assert_eq!((fresh.len(), seen, ambiguous), (1, 0, 0));
+        mark_processed_email(&conn, &alice, 1, &fresh[0], 101).unwrap();
+        let (fresh, seen, ambiguous) = filter_unseen(&conn, &alice, 1, fresh).unwrap();
+        assert_eq!((fresh.len(), seen, ambiguous), (0, 1, 0));
+        for (cfg, epoch) in [(&bob, 1), (&alice, 2)] {
+            let (fresh, seen, ambiguous) =
+                filter_unseen(&conn, cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
+            assert_eq!((fresh.len(), seen, ambiguous), (1, 0, 0));
+        }
+    }
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_legacy_ambiguity_blocks_only_its_unit_without_claiming_completion() {
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let cfg = seen_test_config("alice");
+        crate::email::seen_store::mark_seen(&conn, "<legacy>", Some("7"), 100).unwrap();
+        let legacy = vault_identity_email("7", Some("<legacy>"));
+        assert!(mark_processed_email(&conn, &cfg, 1, &legacy, 101).is_err());
+        let fresh = vault_identity_email("8", Some("<fresh>"));
+        let (remaining, seen, ambiguous) = filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
+        assert_eq!((remaining.len(), seen, ambiguous), (1, 0, 1));
+        assert_eq!(remaining[0].dedup_key(), "<fresh>");
+        mark_processed_email(&conn, &cfg, 1, &remaining[0], 101).unwrap();
+    }
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_scoped_ledger_error_aborts_filter_and_completion() {
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let cfg = seen_test_config("alice");
+        conn.execute("DROP TABLE idx_email_seen_scoped", []).unwrap();
+        let mail = vault_identity_email("7", None);
+        assert!(mark_processed_email(&conn, &cfg, 1, &mail, 100).is_err());
+        assert!(filter_unseen(&conn, &cfg, 1, vec![mail]).is_err());
+    }
+
+    #[cfg(feature = "imap_fetch")]
     #[test]
     fn cron_seen_filter_uses_durable_message_id_key() {
         use crate::email::inbound::{InboundEmail, extract_from_domain};
@@ -1003,13 +1066,16 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
         let completed = email("42", Some("<stable@example.com>"));
-        mark_processed_email(&conn, &completed, 1_700_000_000).unwrap();
+        let cfg = seen_test_config("alice");
+        mark_processed_email(&conn, &cfg, 7, &completed, 1_700_000_000).unwrap();
 
         // A changed IMAP UID with the same RFC822 Message-ID is still the same
         // message; a genuinely new Message-ID must remain in the batch.
         let moved = email("99", Some("<stable@example.com>"));
         let fresh = email("100", Some("<fresh@example.com>"));
-        let (unseen, skipped) = filter_unseen(&conn, vec![moved, fresh]).unwrap();
+        let (unseen, skipped, ambiguous) =
+            filter_unseen(&conn, &cfg, 8, vec![moved, fresh]).unwrap();
+        assert_eq!(ambiguous, 0);
         assert_eq!(skipped, 1);
         assert_eq!(unseen.len(), 1);
         assert_eq!(unseen[0].dedup_key(), "<fresh@example.com>");

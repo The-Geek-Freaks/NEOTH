@@ -378,7 +378,24 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A03: bind explicit code hits to submitted UTF-8 ranges",
         run: migration_v51_to_v52,
     },
+    Migration {
+        from: 52,
+        to: 53,
+        description: "A04: scope email completion by mailbox, epoch and purpose",
+        run: migration_v52_to_v53,
+    },
 ];
+
+pub(crate) fn migration_v52_to_v53(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1 COLLATE NOCASE)",
+        ["idx_email_seen_scoped"],
+        |row| row.get(0),
+    )?;
+    ensure!(!exists, "v52→v53: conflicting scoped email object");
+    conn.execute_batch(crate::email::seen_store::SCOPED_SCHEMA_SQL)
+        .context("v52→v53: add scoped email completion without adopting legacy rows")
+}
 
 pub(crate) fn migration_v51_to_v52(conn: &Connection) -> Result<()> {
     for name in ["code_source_ranges", "code_chunk_ranges"] {

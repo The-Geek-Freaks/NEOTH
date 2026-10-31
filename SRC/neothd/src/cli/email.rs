@@ -341,32 +341,46 @@ async fn fetch_and_triage(
 ) -> Result<()> {
     use crate::email::inbound::{InboundAction, triage_inbound};
 
-    let fetched = crate::email::imap_fetch::fetch_unseen(cfg, limit)
-        .await
-        .context("IMAP fetch failed")?;
+    use crate::email::seen_store::scoped::{self, Identity, Purpose, SeenState};
 
-    // P1c — dedup against the local seen-state so an UNSEEN message NEOTH
-    // already triaged isn't re-pulled forever (BODY.PEEK[] never sets \Seen).
-    // Best-effort: a views.db open failure degrades to "process everything".
+    let page = crate::email::imap_fetch::fetch_unseen_page(
+        cfg,
+        limit,
+        crate::email::imap_fetch::UnseenPageCursor::default(),
+    )
+    .await
+    .context("IMAP fetch failed")?;
+    let uid_validity = page.next.uid_validity.unwrap_or(0);
+
+    // A read error is not evidence of an unseen message. Retain UIDVALIDITY
+    // from this exact fetch and keep CLI triage separate from cron completion.
     let seen_conn = crate::memory::store::open(
         &crate::config::FreedomConfig::default_neoth_home().join("views.db"),
     )
-    .ok();
-    let (emails, skipped) = if include_seen {
-        (fetched, 0usize)
-    } else if let Some(conn) = &seen_conn {
-        let mut fresh = Vec::with_capacity(fetched.len());
-        let mut n_skipped = 0usize;
-        for e in fetched {
-            match crate::email::seen_store::is_seen(conn, e.dedup_key()) {
-                Ok(true) => n_skipped += 1,
-                _ => fresh.push(e), // unseen, or a query error → process it
+    .context("open durable email triage state")?;
+    let mut emails = Vec::with_capacity(page.emails.len());
+    let mut identities = Vec::with_capacity(page.emails.len());
+    let mut skipped = 0usize;
+    let mut legacy_ambiguous = 0usize;
+    for email in page.emails {
+        let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &email, uid_validity)?;
+        let state = scoped::state(&seen_conn, &identity, Purpose::Triage)?;
+        if !include_seen {
+            match state {
+                SeenState::Seen => {
+                    skipped += 1;
+                    continue;
+                }
+                SeenState::LegacyAmbiguous => {
+                    legacy_ambiguous += 1;
+                    continue;
+                }
+                SeenState::Unseen => {}
             }
         }
-        (fresh, n_skipped)
-    } else {
-        (fetched, 0)
-    };
+        emails.push(email);
+        identities.push(identity);
+    }
 
     let mut triaged: Vec<_> = emails.iter().map(triage_inbound).collect();
 
@@ -461,20 +475,22 @@ async fn fetch_and_triage(
     // ledger (metadata only). Best-effort: an audit gap never blocks the fetch.
     emit_email_audit_batch(&triaged).await;
 
-    // P1c — record the processed messages as seen so the next fetch skips them.
-    // After triage + audit, so a crash mid-run doesn't mark un-triaged mail.
-    if let Some(conn) = &seen_conn {
-        let now = crate::time::now_unix_i64();
-        for e in &emails {
-            let _ = crate::email::seen_store::mark_seen(conn, e.dedup_key(), Some(&e.uid), now);
-        }
+    // Only the triage stage completed. Even explicit --include-seen cannot
+    // claim cron sink completion or reconcile ambiguous historical effects.
+    let now = crate::time::now_unix_i64();
+    for identity in &identities {
+        scoped::mark(&seen_conn, identity, Purpose::Triage, now)?;
     }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
                 "{}",
-                serde_json::json!({ "skipped_already_seen": skipped, "triaged": &triaged })
+                serde_json::json!({
+                    "skipped_already_seen": skipped,
+                    "legacy_ambiguous": legacy_ambiguous,
+                    "triaged": &triaged
+                })
             );
         }
         OutputFormat::Table => {
@@ -483,8 +499,14 @@ async fn fetch_and_triage(
                     "({skipped} already-seen message(s) skipped — pass --include-seen to re-triage)"
                 );
             }
+            if legacy_ambiguous > 0 {
+                println!(
+                    "({legacy_ambiguous} message(s) have legacy state with unknown account/purpose; \
+                     --include-seen permits re-triage only, not ingest replay)"
+                );
+            }
             if triaged.is_empty() {
-                println!("(no new unseen messages)");
+                println!("(no new unambiguous messages to triage)");
                 return Ok(());
             }
             for t in &triaged {

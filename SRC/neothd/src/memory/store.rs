@@ -141,7 +141,7 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v50: explicit logical-document revisions, event receipts and purge epochs.
 /// v51: reconcile vocabulary drift left by historical automatic source retention.
 /// v52: exact submitted UTF-8 code chunk ranges in both FTS indexes.
-pub const SCHEMA_VERSION: i64 = 52;
+pub const SCHEMA_VERSION: i64 = 53;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -3070,6 +3070,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(crate::memory::code_range::SCHEMA_SQL)
         .context("create A03 explicit code ranges")?;
+
+    conn.execute_batch(crate::email::seen_store::SCOPED_SCHEMA_SQL)
+        .context("create A04 scoped email completion")?;
 
     // Stamp schema version (idempotent).
     conn.execute(
