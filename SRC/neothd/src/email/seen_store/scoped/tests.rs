@@ -94,7 +94,10 @@ fn scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity() {
     assert_eq!(first.unit_sha256, moved.unit_sha256);
     assert_eq!(first.input_sha256, moved.input_sha256);
     mark(&conn, &first, Purpose::Ingest, 200).unwrap();
-    assert_eq!(state(&conn, &moved, Purpose::Ingest).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &moved, Purpose::Ingest).unwrap(),
+        SeenState::Seen
+    );
 }
 
 #[test]
@@ -330,7 +333,10 @@ fn input_bound_completion_rejects_every_changed_field_without_rewriting() {
         let other = identity("alice", &changed, 1);
         assert_eq!(other.unit_sha256, id.unit_sha256);
         assert_ne!(other.input_sha256, id.input_sha256);
-        assert_eq!(state(&conn, &other, Purpose::Ingest).unwrap(), SeenState::InputConflict);
+        assert_eq!(
+            state(&conn, &other, Purpose::Ingest).unwrap(),
+            SeenState::InputConflict
+        );
         assert!(mark(&conn, &other, Purpose::Ingest, 200).is_err());
         assert_eq!(state(&conn, &id, Purpose::Ingest).unwrap(), SeenState::Seen);
     }
@@ -346,11 +352,14 @@ fn schema_53_fixture(path: &std::path::Path, unit: &str) {
     conn.execute_batch(
         "ALTER TABLE idx_email_seen_scoped DROP COLUMN input_sha256;
          UPDATE meta SET value='53' WHERE key='schema_version';",
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO idx_email_seen_scoped (unit_sha256,purpose,first_seen_unix)
-         VALUES (?1,'ingest',100)", [unit],
-    ).unwrap();
+         VALUES (?1,'ingest',100)",
+        [unit],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -360,16 +369,27 @@ fn input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests() {
     let id = identity("alice", &email("1", Some("<legacy-input>")), 1);
     schema_53_fixture(&path, &id.unit_sha256);
     let conn = store::open(&path).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest).unwrap(), SeenState::LegacyAmbiguous);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest).unwrap(),
+        SeenState::LegacyAmbiguous
+    );
     assert!(mark(&conn, &id, Purpose::Ingest, 200).is_err());
     mark(&conn, &id, Purpose::Triage, 300).unwrap();
     assert_eq!(state(&conn, &id, Purpose::Triage).unwrap(), SeenState::Seen);
-    for invalid in ["".to_string(), "a".repeat(63), "a".repeat(65),
-        "A".repeat(64), format!("{}z", "a".repeat(63))] {
-        assert!(conn.execute(
-            "UPDATE idx_email_seen_scoped SET input_sha256=?1 WHERE purpose='ingest'",
-            [invalid],
-        ).is_err());
+    for invalid in [
+        "".to_string(),
+        "a".repeat(63),
+        "a".repeat(65),
+        "A".repeat(64),
+        format!("{}z", "a".repeat(63)),
+    ] {
+        assert!(
+            conn.execute(
+                "UPDATE idx_email_seen_scoped SET input_sha256=?1 WHERE purpose='ingest'",
+                [invalid],
+            )
+            .is_err()
+        );
     }
     let row: (String, i64, Option<String>) = conn.query_row(
         "SELECT (SELECT value FROM meta WHERE key='schema_version'),first_seen_unix,input_sha256
@@ -387,7 +407,8 @@ fn input_v53_column_collision_preserves_version_and_rows() {
     {
         let conn = store::open(&path).unwrap();
         mark(&conn, &id, Purpose::Ingest, 100).unwrap();
-        conn.execute("UPDATE meta SET value='53' WHERE key='schema_version'", []).unwrap();
+        conn.execute("UPDATE meta SET value='53' WHERE key='schema_version'", [])
+            .unwrap();
     }
     assert!(store::open(&path).is_err());
     let conn = Connection::open(&path).unwrap();
@@ -410,8 +431,9 @@ fn input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption() {
         conn.execute_batch(
             "CREATE TRIGGER fail_version_54 BEFORE INSERT ON meta
              WHEN NEW.key='schema_version' AND NEW.value='54'
-             BEGIN SELECT RAISE(ABORT,'fixture'); END;"
-        ).unwrap();
+             BEGIN SELECT RAISE(ABORT,'fixture'); END;",
+        )
+        .unwrap();
     }
     assert!(store::open(&path).is_err());
     {
@@ -421,7 +443,7 @@ fn input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption() {
              (SELECT COUNT(*) FROM pragma_table_info('idx_email_seen_scoped') WHERE name='input_sha256')",
             [], |r| Ok((r.get(0)?,r.get(1)?)),
         ).unwrap();
-        assert_eq!(row, ("53".into(),0));
+        assert_eq!(row, ("53".into(), 0));
         conn.execute_batch("DROP TRIGGER fail_version_54;").unwrap();
     }
     let conn = store::open(&path).unwrap();
@@ -446,26 +468,48 @@ fn input_conflicting_concurrent_marks_cannot_adopt_the_winner() {
     let first_id = identity("alice", &first, 1);
     let second_id = identity("alice", &second, 1);
     let barrier = Arc::new(Barrier::new(2));
-    let handles: Vec<_> = [(identity("alice",&first,1),100_i64), (identity("alice",&second,1),200_i64)]
-        .into_iter().map(|(id,timestamp)| {
-            let path = path.clone();
-            let barrier = Arc::clone(&barrier);
-            std::thread::spawn(move || {
-                let conn = Connection::open(path).unwrap();
-                conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
-                barrier.wait();
-                mark(&conn,&id,Purpose::Ingest,timestamp).is_ok()
-            })
-        }).collect();
-    let results: Vec<_> = handles.into_iter().map(|handle|handle.join().unwrap()).collect();
-    assert_eq!(results.iter().filter(|success|**success).count(),1);
-    let (winner,loser,timestamp) = if results[0] {(&first_id,&second_id,100)} else {(&second_id,&first_id,200)};
+    let handles: Vec<_> = [
+        (identity("alice", &first, 1), 100_i64),
+        (identity("alice", &second, 1), 200_i64),
+    ]
+    .into_iter()
+    .map(|(id, timestamp)| {
+        let path = path.clone();
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            let conn = Connection::open(path).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            barrier.wait();
+            mark(&conn, &id, Purpose::Ingest, timestamp).is_ok()
+        })
+    })
+    .collect();
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect();
+    assert_eq!(results.iter().filter(|success| **success).count(), 1);
+    let (winner, loser, timestamp) = if results[0] {
+        (&first_id, &second_id, 100)
+    } else {
+        (&second_id, &first_id, 200)
+    };
     let conn = Connection::open(&path).unwrap();
-    assert_eq!(state(&conn,winner,Purpose::Ingest).unwrap(),SeenState::Seen);
-    assert_eq!(state(&conn,loser,Purpose::Ingest).unwrap(),SeenState::InputConflict);
-    let row: (String,i64) = conn.query_row(
-        "SELECT input_sha256,first_seen_unix FROM idx_email_seen_scoped WHERE purpose='ingest'",
-        [],|r|Ok((r.get(0)?,r.get(1)?)),
-    ).unwrap();
-    assert_eq!(row,(winner.input_sha256.clone(),timestamp));
+    assert_eq!(
+        state(&conn, winner, Purpose::Ingest).unwrap(),
+        SeenState::Seen
+    );
+    assert_eq!(
+        state(&conn, loser, Purpose::Ingest).unwrap(),
+        SeenState::InputConflict
+    );
+    let row: (String, i64) = conn
+        .query_row(
+            "SELECT input_sha256,first_seen_unix FROM idx_email_seen_scoped WHERE purpose='ingest'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (winner.input_sha256.clone(), timestamp));
 }

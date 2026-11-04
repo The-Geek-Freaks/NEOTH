@@ -1023,7 +1023,6 @@ mod tests {
         );
     }
 
-
     #[cfg(feature = "imap_fetch")]
     #[test]
     fn cron_changed_input_conflicts_without_acknowledging_mixed_batch() {
@@ -1031,19 +1030,19 @@ mod tests {
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
         let cfg = seen_test_config("alice");
         let original = vault_identity_email("7", Some("<bound>"));
-        mark_processed_email(&conn,&cfg,1,&original,100).unwrap();
+        mark_processed_email(&conn, &cfg, 1, &original, 100).unwrap();
         let mut changed = original.clone();
         changed.body.push_str(" changed");
-        let fresh = vault_identity_email("8",Some("<fresh>"));
-        let (remaining,seen,ambiguous,conflicts) =
-            filter_unseen(&conn,&cfg,1,vec![changed.clone(),fresh]).unwrap();
-        assert_eq!((remaining.len(),seen,ambiguous,conflicts),(1,0,0,1));
-        assert_eq!(remaining[0].dedup_key(),"<fresh>");
-        mark_processed_email(&conn,&cfg,1,&remaining[0],200).unwrap();
-        assert!(mark_processed_email(&conn,&cfg,1,&changed,200).is_err());
-        let (remaining,seen,ambiguous,conflicts) =
-            filter_unseen(&conn,&cfg,2,vec![changed,original]).unwrap();
-        assert_eq!((remaining.len(),seen,ambiguous,conflicts),(0,1,0,1));
+        let fresh = vault_identity_email("8", Some("<fresh>"));
+        let (remaining, seen, ambiguous, conflicts) =
+            filter_unseen(&conn, &cfg, 1, vec![changed.clone(), fresh]).unwrap();
+        assert_eq!((remaining.len(), seen, ambiguous, conflicts), (1, 0, 0, 1));
+        assert_eq!(remaining[0].dedup_key(), "<fresh>");
+        mark_processed_email(&conn, &cfg, 1, &remaining[0], 200).unwrap();
+        assert!(mark_processed_email(&conn, &cfg, 1, &changed, 200).is_err());
+        let (remaining, seen, ambiguous, conflicts) =
+            filter_unseen(&conn, &cfg, 2, vec![changed, original]).unwrap();
+        assert_eq!((remaining.len(), seen, ambiguous, conflicts), (0, 1, 0, 1));
     }
 
     fn vault_identity_email(
@@ -1282,11 +1281,18 @@ mod tests {
         assert!(quarantine_cron_email(home.path(), &alice, 1, &mail, &item).is_err());
         let (pending, seen, ambiguous, input_conflicts) =
             filter_unseen(&conn, &alice, 1, vec![mail.clone()]).unwrap();
-        assert_eq!((pending.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
+        assert_eq!(
+            (pending.len(), seen, ambiguous, input_conflicts),
+            (1, 0, 0, 0)
+        );
         quarantine_cron_email(home.path(), &bob, 1, &mail, &item).unwrap();
         mark_processed_email(&conn, &bob, 1, &mail, 101).unwrap();
-        let (pending, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
-        assert_eq!((pending.len(), seen, ambiguous, input_conflicts), (0, 1, 0, 0));
+        let (pending, seen, ambiguous, input_conflicts) =
+            filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
+        assert_eq!(
+            (pending.len(), seen, ambiguous, input_conflicts),
+            (0, 1, 0, 0)
+        );
         let records = list_quarantine_items(home.path()).unwrap();
         assert_eq!(records.len(), 2);
         assert_ne!(records[0].uid, records[1].uid);
@@ -1308,15 +1314,26 @@ mod tests {
         let mail = vault_identity_email("7", None);
         let id = Identity::inbox(&alice.host, alice.port, &alice.username, &mail, 1).unwrap();
         scoped::mark(&conn, &id, Purpose::Triage, 100).unwrap();
-        let (fresh, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
-        assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
+        let (fresh, seen, ambiguous, input_conflicts) =
+            filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
+        assert_eq!(
+            (fresh.len(), seen, ambiguous, input_conflicts),
+            (1, 0, 0, 0)
+        );
         mark_processed_email(&conn, &alice, 1, &fresh[0], 101).unwrap();
-        let (fresh, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &alice, 1, fresh).unwrap();
-        assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (0, 1, 0, 0));
+        let (fresh, seen, ambiguous, input_conflicts) =
+            filter_unseen(&conn, &alice, 1, fresh).unwrap();
+        assert_eq!(
+            (fresh.len(), seen, ambiguous, input_conflicts),
+            (0, 1, 0, 0)
+        );
         for (cfg, epoch) in [(&bob, 1), (&alice, 2)] {
             let (fresh, seen, ambiguous, input_conflicts) =
                 filter_unseen(&conn, cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
-            assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
+            assert_eq!(
+                (fresh.len(), seen, ambiguous, input_conflicts),
+                (1, 0, 0, 0)
+            );
         }
     }
 
@@ -1332,7 +1349,10 @@ mod tests {
         let fresh = vault_identity_email("8", Some("<fresh>"));
         let (remaining, seen, ambiguous, input_conflicts) =
             filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
-        assert_eq!((remaining.len(), seen, ambiguous, input_conflicts), (1, 0, 1, 0));
+        assert_eq!(
+            (remaining.len(), seen, ambiguous, input_conflicts),
+            (1, 0, 1, 0)
+        );
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
         mark_processed_email(&conn, &cfg, 1, &remaining[0], 101).unwrap();
     }

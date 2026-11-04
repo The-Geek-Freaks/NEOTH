@@ -16,42 +16,42 @@
     {
       "test": "email::seen_store::scoped::tests::input_bound_completion_rejects_every_changed_field_without_rewriting",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_column_collision_preserves_version_and_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_conflicting_concurrent_marks_cannot_adopt_the_winner",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_changed_input_conflicts_without_acknowledging_mixed_batch",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "newCase": true,
       "requiresImapFeature": true
     }

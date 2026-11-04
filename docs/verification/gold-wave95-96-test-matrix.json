@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 464352,
-    "sha256": "A299B099EC28C125CE691CF098DFCBC100DA0DF7E19A2601702023CD38CD92F2"
+    "sha256": "145A781059DEEB523F4426AD88AA90D2ACC10E05B521751B1437FBB9D4467B42"
   },
   "sourceInputs": 2535,
   "requiredNativeTests": [
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
@@ -19237,13 +19237,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
@@ -19291,55 +19291,55 @@
     {
       "test": "email::seen_store::scoped::tests::scoped_completion_separates_accounts_hosts_ports_and_case_sensitive_users",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_triage_never_completes_ingest_and_ingest_never_completes_triage",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_legacy_ambiguity_survives_explicit_retriage_without_ingest_authority",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_query_and_write_errors_never_become_unseen_or_completed",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_completion_reopens_idempotently_without_rewriting_first_timestamp",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_preserves_legacy_bytes_without_claiming_an_account",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rejects_colliding_schema_without_adopting_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rolls_back_table_and_stamp_then_retries",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
@@ -19381,49 +19381,49 @@
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "sourceSha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_bound_completion_rejects_every_changed_field_without_rewriting",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_column_collision_preserves_version_and_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_conflicting_concurrent_marks_cannot_adopt_the_winner",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "sourceSha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
       "junitClass": "neoth"
     }
   ],
@@ -91751,6 +91751,44 @@
       }
     ],
     "note": "Schema54 binds completed input without replay;5 portable and1 IMAP regression;all62 preserved;68 hosted cases.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2659Format": {
+    "base": "4a73282be898ee27af4f51dcd880f332b0402839",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 24653,
+        "sha256": "1883DC36C737B0D935F123DD0322B25192A1C4A771E5A06E0685E88312D77E5E",
+        "blob": "efd709ab0c2163e1986b465c3c32a57d9c251ca0"
+      },
+      {
+        "path": "docs/verification/gold-wave2659-input-bound-completion.json",
+        "bytes": 3812,
+        "sha256": "EEB80B60A6D0FE77BD5060BE9E62FF25EC191262F98AE9736AD7EA20585A7910",
+        "blob": "fa1b5b1ebcf610ba927b41b37901969cfc00e787"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 61888,
+        "sha256": "79D476F0F7776EDBDB4AC6CA66A7DA0362FB04B49D498625A80521CB6007EF4F",
+        "blob": "ddbbb20bf4ad8136ff7aeb0f6a95624feb8db710"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+        "bytes": 4905,
+        "sha256": "AE3C6597B63968FC3B5EFF7BC19297606CDC6AC82BD72D034636919672F1769F",
+        "blob": "58ffad221e270397262e36b5ef0a21b2efea4534"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+        "bytes": 18717,
+        "sha256": "3E063CB288ABACB0D189EB7B3E25D2764D99E39AC63824192BB23EE00876BF35",
+        "blob": "0a06ebb191a7f0571adabf63355b632637b66065"
+      }
+    ],
+    "note": "Exact hosted Rust format patch imported;68 case selection and3233 portable cases preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

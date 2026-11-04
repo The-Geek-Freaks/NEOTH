@@ -75,7 +75,8 @@ impl Identity {
             &email.body,
             &email.attachment_filenames,
             &email.auth_results,
-        )).context("bind full email input")?;
+        ))
+        .context("bind full email input")?;
         Ok(Self {
             unit_sha256: crate::wal::paperless_post_receipts::mail_unit_sha256(
                 host, port, username, &mail_key,
@@ -120,17 +121,20 @@ pub(crate) fn mark(
 ) -> Result<()> {
     if purpose == Purpose::Ingest {
         ensure!(
-            matches!(state(conn, identity, purpose)?, SeenState::Unseen | SeenState::Seen),
+            matches!(
+                state(conn, identity, purpose)?,
+                SeenState::Unseen | SeenState::Seen
+            ),
             "legacy or changed email input requires explicit reconciliation"
         );
     }
     let input = (purpose == Purpose::Ingest).then_some(identity.input_sha256.as_str());
     conn.execute(
-            "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix, input_sha256) \
+        "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix, input_sha256) \
          VALUES (?1, ?2, ?3, ?4) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
-            rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input],
-        )
-        .context("record scoped email completion")?;
+        rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input],
+    )
+    .context("record scoped email completion")?;
     ensure!(
         state(conn, identity, purpose)? == SeenState::Seen,
         "scoped email completion was not recorded for this input"
