@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 463964,
-    "sha256": "F8248BD475537DCDE75C1F0E83BE54F320F22304A3540FF03258DAF703BB6824"
+    "sha256": "F7E5149DB8C68BE004BEF6B0053CB659ABF35227DBA22375329A0DB3B0924271"
   },
   "sourceInputs": 2533,
   "requiredNativeTests": [
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "0C0039A8E1636188ABF7767C99D829CABEB02EADA44E3D532F6C6BC497F088AC",
+      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "0C0039A8E1636188ABF7767C99D829CABEB02EADA44E3D532F6C6BC497F088AC",
+      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
       "junitClass": "neoth"
     },
     {
@@ -19237,13 +19237,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "0C0039A8E1636188ABF7767C99D829CABEB02EADA44E3D532F6C6BC497F088AC",
+      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "0C0039A8E1636188ABF7767C99D829CABEB02EADA44E3D532F6C6BC497F088AC",
+      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
       "junitClass": "neoth"
     },
     {
@@ -91527,6 +91527,32 @@
       }
     ],
     "note": "Create-only mailbox-bound cron quarantine, full body digest, exact retry and conservative legacy preservation;59 selected cases and3225 portable registrations. Local runtime prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2657HostedFormatting": {
+    "base": "eec076d699ae84c4716033712391d6ff3f72c75b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 21525,
+        "sha256": "E035471348C7601AA9F545F81CC99A6B379CDEE9E66FCFC382744EEFA8095DE6",
+        "blob": "f3e6b59082145e6f8ab72ff3e60db480b1e49b59"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 52090,
+        "sha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
+        "blob": "a85056c32790b48008addf36d9380670b415e047"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/quarantine/email.rs",
+        "bytes": 7160,
+        "sha256": "744EC922E252671BDDF7A88A6DDF9A8C89A5CFC9CC67703C2E7334A5E77B1A40",
+        "blob": "41e503a9e4b93e53784f33bf866669103be34782"
+      }
+    ],
+    "note": "Exact hosted rustfmt postimages imported for two owned paths;59-case and source inventories rebound;local runtime prohibited.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

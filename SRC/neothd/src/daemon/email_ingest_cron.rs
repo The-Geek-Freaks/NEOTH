@@ -460,9 +460,7 @@ pub async fn run_email_ingest_tick(
             InboundAction::DroppedAtSanitizer | InboundAction::Quarantine => {
                 let item =
                     build_quarantine_item_triage(uid, from, subject, now_unix, body, &triage);
-                match quarantine_cron_email(
-                    neoth_home, &imap_cfg, uid_validity, email, &item,
-                ) {
+                match quarantine_cron_email(neoth_home, &imap_cfg, uid_validity, email, &item) {
                     Ok(_) => {
                         warn!(
                             email_key_len,
@@ -504,9 +502,7 @@ pub async fn run_email_ingest_tick(
 
         if scan.quarantine {
             let item = build_quarantine_item(uid, from, subject, now_unix, body, &scan);
-            match quarantine_cron_email(
-                    neoth_home, &imap_cfg, uid_validity, email, &item,
-                ) {
+            match quarantine_cron_email(neoth_home, &imap_cfg, uid_validity, email, &item) {
                 Ok(_) => {
                     warn!(
                         email_key_len,
@@ -595,8 +591,12 @@ pub async fn run_email_ingest_tick(
                         &format!("{e:#}"),
                     );
                     match quarantine_cron_email(
-                    neoth_home, &imap_cfg, uid_validity, email, &err_item,
-                ) {
+                        neoth_home,
+                        &imap_cfg,
+                        uid_validity,
+                        email,
+                        &err_item,
+                    ) {
                         Ok(_) => {
                             warn!(
                                 email_key_len,
@@ -1050,8 +1050,7 @@ mod tests {
         assert_eq!((pending.len(), seen, ambiguous), (1, 0, 0));
         quarantine_cron_email(home.path(), &bob, 1, &mail, &item).unwrap();
         mark_processed_email(&conn, &bob, 1, &mail, 101).unwrap();
-        let (pending, seen, ambiguous) =
-            filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
+        let (pending, seen, ambiguous) = filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
         assert_eq!((pending.len(), seen, ambiguous), (0, 1, 0));
         let records = list_quarantine_items(home.path()).unwrap();
         assert_eq!(records.len(), 2);

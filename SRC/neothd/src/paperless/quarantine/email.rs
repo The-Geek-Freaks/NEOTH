@@ -47,7 +47,10 @@ fn is_link(metadata: &fs::Metadata) -> bool {
 }
 
 fn invalid_record() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "invalid email quarantine record")
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid email quarantine record",
+    )
 }
 
 /// Read a bounded regular file without following the final component.
@@ -136,7 +139,10 @@ fn legacy_present(directory: &Path, raw_uid: &str) -> Result<bool> {
         let (_, bytes) = read_regular(&path, false)?
             .ok_or_else(|| io::Error::other("quarantine changed during observation"))?;
         bytes_read += bytes.len() as u64;
-        ensure!(bytes_read <= MAX_SCAN_BYTES, "quarantine byte limit reached");
+        ensure!(
+            bytes_read <= MAX_SCAN_BYTES,
+            "quarantine byte limit reached"
+        );
         let item: QuarantineItem =
             serde_json::from_slice(&bytes).context("ambiguous quarantine record")?;
         if item.uid == raw_uid {
