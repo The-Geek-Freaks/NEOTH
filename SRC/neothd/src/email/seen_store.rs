@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS idx_email_seen_scoped (
     input_sha256 TEXT CHECK (input_sha256 IS NULL OR (
         length(input_sha256) = 64 AND input_sha256 NOT GLOB '*[^0-9a-f]*'
     )),
+    completion_kind TEXT CHECK (
+        completion_kind IS NULL OR completion_kind IN ('delivery','quarantine')
+    ),
+    context_sha256 TEXT CHECK (context_sha256 IS NULL OR (
+        length(context_sha256) = 64 AND context_sha256 NOT GLOB '*[^0-9a-f]*'
+    )) CHECK (
+        (completion_kind IS NULL AND context_sha256 IS NULL) OR
+        (completion_kind IS 'quarantine' AND context_sha256 IS NULL) OR
+        (completion_kind IS 'delivery' AND context_sha256 IS NOT NULL)
+    ),
     PRIMARY KEY (unit_sha256, purpose)
 );
 "#;
@@ -54,6 +64,21 @@ ALTER TABLE idx_email_seen_scoped ADD COLUMN input_sha256 TEXT
         length(input_sha256) = 64 AND input_sha256 NOT GLOB '*[^0-9a-f]*'
     ));
 "#;
+
+pub(crate) const SCOPED_CONTEXT_COLUMNS_SQL: &str = r#"
+ALTER TABLE idx_email_seen_scoped ADD COLUMN completion_kind TEXT
+    CHECK (completion_kind IS NULL OR completion_kind IN ('delivery','quarantine'));
+ALTER TABLE idx_email_seen_scoped ADD COLUMN context_sha256 TEXT
+    CHECK (context_sha256 IS NULL OR (
+        length(context_sha256) = 64 AND context_sha256 NOT GLOB '*[^0-9a-f]*'
+    ))
+    CHECK (
+        (completion_kind IS NULL AND context_sha256 IS NULL) OR
+        (completion_kind IS 'quarantine' AND context_sha256 IS NULL) OR
+        (completion_kind IS 'delivery' AND context_sha256 IS NOT NULL)
+    );
+"#;
+
 /// `true` if this dedup key was already recorded (already triaged).
 pub fn is_seen(conn: &Connection, dedup_key: &str) -> Result<bool> {
     let found: Option<i64> = conn

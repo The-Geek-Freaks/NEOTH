@@ -59,3 +59,13 @@ A matching completed unit is Seen. Changed input is InputConflict and is exclude
 Migration53to54 preserves old completion rows with NULL input. They remain LegacyAmbiguous rather than adopting the current fetched bytes. Triage stays separate. An insertion must be followed by an exact matching completion read; an ignored or conflicting concurrent write is not success.
 
 This is a post-completion input contract. Existing WAL and vault controls still govern uncertain effects before completion. Destination principal and approved target/rendition revisions are not established by this digest. W2659 runtime qualification remains pending.
+
+## Target-bound delivery completion (schema55)
+
+Delivery and quarantine now have separate completion kinds. Before filtering, the cron resolves targets from the same coherent configuration and credential snapshot used for that tick. The delivery digest binds the configured vault string, its subdirectory when a vault is configured, the Paperless URL, and whether its token is present and nonempty. It stores neither target text nor token values or token hashes.
+
+An exact input and delivery context can remain Seen. A changed or unavailable context becomes ContextConflict and leaves the unit for explicit reconciliation; it does not authorize a new send. Independent eligible units in the same batch can still proceed. A matching durable quarantine remains terminal regardless of delivery-target changes. Quarantine cannot be adopted as delivery, and delivery cannot be converted into quarantine by an idempotent completion write.
+
+Migration54to55 preserves historical rows with unknown disposition and target context. They stay LegacyAmbiguous; current configuration is never backfilled as historical evidence. The existing migration transaction covers both columns and its version stamp. CLI re-triage continues to affect only triage.
+
+This comparison binds configuration spelling and credential availability, not principal identity, token continuity, filesystem-object identity or an approved rendition revision. Those A04 boundaries remain open. The existing WAL still controls uncertain external effects. W2661 hosted runtime qualification remains pending.

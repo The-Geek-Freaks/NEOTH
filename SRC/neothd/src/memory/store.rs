@@ -143,7 +143,7 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v52: exact submitted UTF-8 code chunk ranges in both FTS indexes.
 /// v53: mailbox- and purpose-scoped email completion.
 /// v54: bind new Ingest completion to full input; retain legacy NULL bindings.
-pub const SCHEMA_VERSION: i64 = 54;
+pub const SCHEMA_VERSION: i64 = 55;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The

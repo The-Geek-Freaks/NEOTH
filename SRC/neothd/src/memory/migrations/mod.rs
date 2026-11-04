@@ -390,7 +390,24 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A04: retain the full input binding for email Ingest completion",
         run: migration_v53_to_v54,
     },
+    Migration {
+        from: 54,
+        to: 55,
+        description: "A04: bind email completion disposition and delivery targets",
+        run: migration_v54_to_v55,
+    },
 ];
+
+pub(crate) fn migration_v54_to_v55(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('idx_email_seen_scoped') \
+         WHERE name COLLATE NOCASE IN ('completion_kind','context_sha256'))",
+        [], |row| row.get(0),
+    )?;
+    ensure!(!exists, "v54→v55: conflicting email completion context columns");
+    conn.execute_batch(crate::email::seen_store::SCOPED_CONTEXT_COLUMNS_SQL)
+        .context("v54→v55: retain unbound dispositions and delivery targets")
+}
 
 pub(crate) fn migration_v53_to_v54(conn: &Connection) -> Result<()> {
     let exists: bool = conn.query_row(

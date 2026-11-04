@@ -1,0 +1,86 @@
+{
+  "schema": "neoth.wave2661.delivery-context.v1",
+  "base": "cc1646f4fa42bb3311a79822ae5ad566b7faa5aa",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_PREPARED_HOSTED_PENDING",
+  "schemaVersion": 55,
+  "behavior": [
+    "Resolve targets before filtering from the same coherent runtime snapshot",
+    "Delivery requires exact input and target context; context drift never authorizes replay",
+    "Quarantine is an explicit terminal disposition independent of changed delivery targets",
+    "Typed completion and exact reread prevent adoption of mismatched or ignored writes",
+    "Historical NULL dispositions/contexts remain ambiguous; migration preserves original evidence"
+  ],
+  "tests": [
+    {
+      "test": "email::seen_store::scoped::tests::delivery_target_drift_keeps_original_completion_without_adoption",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::quarantine_completion_ignores_target_drift_without_becoming_delivery",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::delivery_v54_migration_retains_unknown_disposition_and_rejects_invalid_pairs",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::delivery_v54_column_collision_preserves_version_and_input",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::delivery_v54_stamp_failure_rolls_back_both_columns_before_retry",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::competing_delivery_targets_cannot_adopt_the_first_completion",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "584970348E4EE40D3833D0B7AEEE39B73480EF4D320DD3017F23D0D5575BC9C2",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_target_drift_preserves_quarantine_and_only_processes_fresh_units",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "EB5C7CE0F49F373F9D5ACEB7E35AA27672264E41CCA646ABF77E6438D826D664",
+      "newCase": true,
+      "requiresImapFeature": true
+    }
+  ],
+  "portableAdded": 6,
+  "portableTotal": 3239,
+  "paperlessSelection": 75,
+  "review": "Independent prompt-only review found no definite blocker; caller binds original Option<String> without lossy path conversion",
+  "limits": [
+    "Target configuration only, not principal or approval evidence",
+    "No token values or token hashes retained; same-target token rotation not identified",
+    "Filesystem target replacement and approved rendition revision remain open",
+    "No automatic legacy adoption or resend",
+    "Hosted, native, release and Gold qualification pending"
+  ],
+  "predecessor": {
+    "cases": 68,
+    "run": 41801057446,
+    "status": "in_progress",
+    "producer": "cc1646f4fa42bb3311a79822ae5ad566b7faa5aa"
+  },
+  "localRuntimeExecuted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

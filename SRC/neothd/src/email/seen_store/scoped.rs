@@ -29,6 +29,7 @@ pub(crate) enum SeenState {
     Seen,
     LegacyAmbiguous,
     InputConflict,
+    ContextConflict,
 }
 
 /// Constructed from the same mailbox identity used by existing Paperless WAL
@@ -87,58 +88,130 @@ impl Identity {
     }
 }
 
-pub(crate) fn state(conn: &Connection, identity: &Identity, purpose: Purpose) -> Result<SeenState> {
-    let found: Option<Option<String>> = conn
-        .query_row(
-            "SELECT input_sha256 FROM idx_email_seen_scoped \
-             WHERE unit_sha256 = ?1 AND purpose = ?2",
-            rusqlite::params![identity.unit_sha256, purpose.as_str()],
-            |row| row.get(0),
-        )
-        .optional()
-        .context("query scoped email completion")?;
-    if let Some(input) = found {
-        return Ok(match (purpose, input) {
-            (Purpose::Triage, _) => SeenState::Seen,
-            (Purpose::Ingest, None) => SeenState::LegacyAmbiguous,
-            (Purpose::Ingest, Some(input)) if input == identity.input_sha256 => SeenState::Seen,
-            (Purpose::Ingest, Some(_)) => SeenState::InputConflict,
-        });
-    }
-    if super::is_seen(conn, &identity.legacy_key)? {
-        return Ok(SeenState::LegacyAmbiguous);
-    }
-    Ok(SeenState::Unseen)
+/// Non-secret target configuration only, not principal or approval evidence.
+pub(crate) struct DeliveryContext {
+    sha256: String,
 }
 
-/// The caller records only its completed stage. Re-triage is harmless to the
-/// ingest ledger; legacy ambiguity can never be promoted to ingest completion.
-pub(crate) fn mark(
+impl DeliveryContext {
+    pub(crate) fn new(
+        vault: Option<&str>,
+        subdir: &str,
+        paperless_url: Option<&str>,
+        token_present: bool,
+        token_usable: bool,
+    ) -> Result<Self> {
+        ensure!(!token_usable || token_present, "usable token must be present");
+        let encoded = serde_json::to_vec(&(
+            "neoth.email-delivery-context.v1",
+            vault,
+            vault.map(|_| subdir),
+            paperless_url,
+            token_present,
+            token_usable,
+        ))
+        .context("bind email delivery targets")?;
+        Ok(Self { sha256: format!("{:x}", Sha256::digest(&encoded)) })
+    }
+}
+
+pub(crate) enum Completion<'a> {
+    Triage,
+    Delivery(&'a DeliveryContext),
+    Quarantine,
+}
+
+struct ScopedRow {
+    input_sha256: Option<String>,
+    completion_kind: Option<String>,
+    context_sha256: Option<String>,
+}
+
+fn read_scoped(conn: &Connection, identity: &Identity, purpose: Purpose) -> Result<Option<ScopedRow>> {
+    conn.query_row(
+        "SELECT input_sha256, completion_kind, context_sha256 FROM idx_email_seen_scoped \
+         WHERE unit_sha256 = ?1 AND purpose = ?2",
+        rusqlite::params![identity.unit_sha256, purpose.as_str()],
+        |row| Ok(ScopedRow {
+            input_sha256: row.get(0)?,
+            completion_kind: row.get(1)?,
+            context_sha256: row.get(2)?,
+        }),
+    ).optional().context("query scoped email completion")
+}
+
+pub(crate) fn state(
     conn: &Connection,
     identity: &Identity,
     purpose: Purpose,
+    context: Option<&DeliveryContext>,
+) -> Result<SeenState> {
+    let Some(row) = read_scoped(conn, identity, purpose)? else {
+        return Ok(if super::is_seen(conn, &identity.legacy_key)? {
+            SeenState::LegacyAmbiguous
+        } else {
+            SeenState::Unseen
+        });
+    };
+    if purpose == Purpose::Triage {
+        return Ok(SeenState::Seen);
+    }
+    let Some(input) = row.input_sha256.as_deref() else {
+        return Ok(SeenState::LegacyAmbiguous);
+    };
+    if input != identity.input_sha256 {
+        return Ok(SeenState::InputConflict);
+    }
+    Ok(match row.completion_kind.as_deref() {
+        Some("quarantine") if row.context_sha256.is_none() => SeenState::Seen,
+        Some("delivery") => match row.context_sha256.as_deref() {
+            None => SeenState::LegacyAmbiguous,
+            Some(stored) => match context {
+                Some(expected) if stored == expected.sha256 => SeenState::Seen,
+                _ => SeenState::ContextConflict,
+            },
+        },
+        _ => SeenState::LegacyAmbiguous,
+    })
+}
+
+/// Completion is explicit: a quarantine cannot be adopted as delivery or vice
+/// versa. A mismatched or historical row never authorizes a new external effect.
+pub(crate) fn mark(
+    conn: &Connection,
+    identity: &Identity,
+    completion: Completion<'_>,
     now_unix: i64,
 ) -> Result<()> {
+    let (purpose, kind, context) = match completion {
+        Completion::Triage => (Purpose::Triage, None, None),
+        Completion::Delivery(context) => (Purpose::Ingest, Some("delivery"), Some(context)),
+        Completion::Quarantine => (Purpose::Ingest, Some("quarantine"), None),
+    };
+    // Explicit CLI re-triage remains permitted; it never changes Ingest.
     if purpose == Purpose::Ingest {
         ensure!(
-            matches!(
-                state(conn, identity, purpose)?,
-                SeenState::Unseen | SeenState::Seen
-            ),
-            "legacy or changed email input requires explicit reconciliation"
+            matches!(state(conn, identity, purpose, context)?, SeenState::Unseen | SeenState::Seen),
+            "email completion requires explicit reconciliation"
         );
     }
     let input = (purpose == Purpose::Ingest).then_some(identity.input_sha256.as_str());
+    let context_hash = context.map(|value| value.sha256.as_str());
     conn.execute(
-        "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix, input_sha256) \
-         VALUES (?1, ?2, ?3, ?4) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
-        rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input],
-    )
-    .context("record scoped email completion")?;
-    ensure!(
-        state(conn, identity, purpose)? == SeenState::Seen,
-        "scoped email completion was not recorded for this input"
-    );
+        "INSERT INTO idx_email_seen_scoped \
+         (unit_sha256, purpose, first_seen_unix, input_sha256, completion_kind, context_sha256) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
+        rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input, kind, context_hash],
+    ).context("record scoped email completion")?;
+    let row = read_scoped(conn, identity, purpose)?.context("scoped email completion was not recorded")?;
+    if purpose == Purpose::Ingest {
+        ensure!(
+            row.input_sha256.as_deref() == input
+                && row.completion_kind.as_deref() == kind
+                && row.context_sha256.as_deref() == context_hash,
+            "scoped email completion differs from intended input, targets or disposition"
+        );
+    }
     Ok(())
 }
 

@@ -214,6 +214,7 @@ impl<'a> PaperlessDestination<'a> {
         &self,
         conn: &rusqlite::Connection,
         identity: &crate::email::seen_store::scoped::Identity,
+        context: &crate::email::seen_store::scoped::DeliveryContext,
         now_unix: i64,
         vault: (bool, bool),
         paperless: Option<PaperlessReconcileOutcome>,
@@ -224,7 +225,7 @@ impl<'a> PaperlessDestination<'a> {
         crate::email::seen_store::scoped::mark(
             conn,
             identity,
-            crate::email::seen_store::scoped::Purpose::Ingest,
+            crate::email::seen_store::scoped::Completion::Delivery(context),
             now_unix,
         )
         .context("email_ingest_cron: persist proven delivery completion")?;
@@ -449,37 +450,6 @@ pub async fn run_email_ingest_tick(
     // the ledger cannot be opened or queried.
     let seen_conn = crate::memory::store::open(&neoth_home.join("views.db"))
         .context("email_ingest_cron: open durable email seen-state")?;
-    let (emails, skipped_seen, legacy_ambiguous, input_conflicts) =
-        filter_unseen(&seen_conn, &imap_cfg, uid_validity, fetched)?;
-    if legacy_ambiguous > 0 {
-        warn!(
-            legacy_ambiguous,
-            "email_ingest_cron: legacy completion has unknown account/purpose; reconciliation required"
-        );
-    }
-
-    if input_conflicts > 0 {
-        warn!(
-            input_conflicts,
-            "email_ingest_cron: completed mailbox units contain changed input; reconciliation required"
-        );
-    }
-
-    if emails.is_empty() {
-        info!(
-            skipped_seen,
-            "email_ingest_cron: no unprocessed emails this tick"
-        );
-        return Ok(());
-    }
-
-    info!(
-        count = emails.len(),
-        skipped_seen,
-        "email_ingest_cron: fetched {} unprocessed email(s)",
-        emails.len()
-    );
-
     // Presence declares the destination even if its credentials are incomplete.
     let paperless_token = runtime
         .credentials
@@ -498,6 +468,45 @@ pub async fn run_email_ingest_tick(
         .as_deref()
         .unwrap_or("NEOTH")
         .to_string();
+
+    let delivery_context = crate::email::seen_store::scoped::DeliveryContext::new(
+        freedom_config.obsidian_vault.as_deref(),
+        &subdir,
+        runtime.credentials.paperless_url.as_deref(),
+        paperless_token.is_some(),
+        paperless_token.as_deref().is_some_and(|token| !token.is_empty()),
+    )?;
+
+    let (emails, skipped_seen, legacy_ambiguous, completion_conflicts) =
+        filter_unseen(&seen_conn, &delivery_context, &imap_cfg, uid_validity, fetched)?;
+    if legacy_ambiguous > 0 {
+        warn!(
+            legacy_ambiguous,
+            "email_ingest_cron: legacy completion has unknown account/purpose; reconciliation required"
+        );
+    }
+
+    if completion_conflicts > 0 {
+        warn!(
+            completion_conflicts,
+            "email_ingest_cron: completed mailbox units contain changed input or delivery targets; reconciliation required"
+        );
+    }
+
+    if emails.is_empty() {
+        info!(
+            skipped_seen,
+            "email_ingest_cron: no unprocessed emails this tick"
+        );
+        return Ok(());
+    }
+
+    info!(
+        count = emails.len(),
+        skipped_seen,
+        "email_ingest_cron: fetched {} unprocessed email(s)",
+        emails.len()
+    );
 
     let now_unix = crate::time::now_unix_secs() as i64;
     let mut quarantined = 0usize;
@@ -771,6 +780,7 @@ pub async fn run_email_ingest_tick(
             paperless_destination.record_delivery(
                 &seen_conn,
                 &identity,
+                &delivery_context,
                 now_unix,
                 (vault.is_some(), vault_succeeded),
                 paperless_outcome,
@@ -852,6 +862,7 @@ fn quarantine_cron_email(
 #[cfg(feature = "imap_fetch")]
 fn filter_unseen(
     conn: &rusqlite::Connection,
+    context: &crate::email::seen_store::scoped::DeliveryContext,
     cfg: &ImapConnectionConfig,
     uid_validity: u32,
     emails: Vec<InboundEmail>,
@@ -861,20 +872,20 @@ fn filter_unseen(
     let mut unseen = Vec::with_capacity(emails.len());
     let mut skipped = 0usize;
     let mut ambiguous = 0usize;
-    let mut input_conflicts = 0usize;
+    let mut completion_conflicts = 0usize;
     for email in emails {
         let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &email, uid_validity)?;
-        match scoped::state(conn, &identity, Purpose::Ingest)? {
+        match scoped::state(conn, &identity, Purpose::Ingest, Some(context))? {
             SeenState::Seen => skipped += 1,
             SeenState::LegacyAmbiguous => ambiguous += 1,
-            SeenState::InputConflict => input_conflicts += 1,
+            SeenState::InputConflict | SeenState::ContextConflict => completion_conflicts += 1,
             SeenState::Unseen => unseen.push(email),
         }
     }
-    Ok((unseen, skipped, ambiguous, input_conflicts))
+    Ok((unseen, skipped, ambiguous, completion_conflicts))
 }
 
-/// Commit only after quarantine or all configured sinks completed. A failed
+/// Commit only after durable quarantine. Delivery uses its target-bound gate. A failed
 /// ledger write aborts the tick; it must never silently permit another effect.
 #[cfg(feature = "imap_fetch")]
 fn mark_processed_email(
@@ -884,10 +895,10 @@ fn mark_processed_email(
     email: &InboundEmail,
     now_unix: i64,
 ) -> Result<()> {
-    use crate::email::seen_store::scoped::{self, Identity, Purpose};
+    use crate::email::seen_store::scoped::{self, Identity};
 
     let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, email, uid_validity)?;
-    scoped::mark(conn, &identity, Purpose::Ingest, now_unix)
+    scoped::mark(conn, &identity, scoped::Completion::Quarantine, now_unix)
         .context("email_ingest_cron: persist scoped completion")
 }
 
@@ -969,11 +980,11 @@ mod tests {
         let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), None);
         assert!(
             !destination
-                .record_delivery(&conn, &identity, 100, (true, true), None)
+                .record_delivery(&conn, &identity, &target_test_context(), 100, (true, true), None)
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
             SeenState::Unseen
         );
 
@@ -996,6 +1007,7 @@ mod tests {
                 .record_delivery(
                     &conn,
                     &identity,
+                    &target_test_context(),
                     200,
                     (true, true),
                     Some(PaperlessReconcileOutcome::UnknownOutcome)
@@ -1003,7 +1015,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
             SeenState::Unseen
         );
         assert!(
@@ -1011,6 +1023,7 @@ mod tests {
                 .record_delivery(
                     &conn,
                     &identity,
+                    &target_test_context(),
                     300,
                     (true, true),
                     Some(PaperlessReconcileOutcome::Completed)
@@ -1018,7 +1031,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
             SeenState::Seen
         );
     }
@@ -1035,14 +1048,48 @@ mod tests {
         changed.body.push_str(" changed");
         let fresh = vault_identity_email("8", Some("<fresh>"));
         let (remaining, seen, ambiguous, conflicts) =
-            filter_unseen(&conn, &cfg, 1, vec![changed.clone(), fresh]).unwrap();
+            filter_unseen(&conn, &target_test_context(), &cfg, 1, vec![changed.clone(), fresh]).unwrap();
         assert_eq!((remaining.len(), seen, ambiguous, conflicts), (1, 0, 0, 1));
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
         mark_processed_email(&conn, &cfg, 1, &remaining[0], 200).unwrap();
         assert!(mark_processed_email(&conn, &cfg, 1, &changed, 200).is_err());
         let (remaining, seen, ambiguous, conflicts) =
-            filter_unseen(&conn, &cfg, 2, vec![changed, original]).unwrap();
+            filter_unseen(&conn, &target_test_context(), &cfg, 2, vec![changed, original]).unwrap();
         assert_eq!((remaining.len(), seen, ambiguous, conflicts), (0, 1, 0, 1));
+    }
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_target_drift_preserves_quarantine_and_only_processes_fresh_units() {
+        use crate::email::seen_store::scoped::{DeliveryContext, Identity};
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let cfg = seen_test_config("alice");
+        let delivered = vault_identity_email("1", Some("<delivered-target>"));
+        let quarantined = vault_identity_email("2", Some("<quarantined-target>"));
+        let fresh = vault_identity_email("3", Some("<fresh-target>"));
+        let original = target_test_context();
+        let changed = DeliveryContext::new(Some("/changed"), "NEOTH", Some("https://other.example"), true, true).unwrap();
+        let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
+        let id = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &delivered, 1).unwrap();
+        assert!(destination.record_delivery(&conn, &id, &original, 100, (true,true), Some(PaperlessReconcileOutcome::Completed)).unwrap());
+        let item = build_quarantine_item_error(quarantined.dedup_key(), &quarantined.from, &quarantined.subject, 100, &quarantined.body, "fixture");
+        quarantine_cron_email(home.path(), &cfg, 1, &quarantined, &item).unwrap();
+        mark_processed_email(&conn, &cfg, 1, &quarantined, 100).unwrap();
+        let (pending, seen, ambiguous, conflicts) = filter_unseen(
+            &conn, &changed, &cfg, 1, vec![delivered.clone(), quarantined, fresh],
+        ).unwrap();
+        assert_eq!((pending.len(),seen,ambiguous,conflicts), (1,1,0,1));
+        assert_eq!(pending[0].dedup_key(), "<fresh-target>");
+        assert!(destination.record_delivery(&conn, &id, &changed, 200, (true,true), Some(PaperlessReconcileOutcome::Completed)).is_err());
+        let (pending,seen,ambiguous,conflicts) = filter_unseen(&conn, &original, &cfg, 2, vec![delivered]).unwrap();
+        assert_eq!((pending.len(),seen,ambiguous,conflicts), (0,1,0,0));
+    }
+
+    fn target_test_context() -> crate::email::seen_store::scoped::DeliveryContext {
+        crate::email::seen_store::scoped::DeliveryContext::new(
+            Some("/vault"), "NEOTH", Some("https://paperless.example"), true, true,
+        ).unwrap()
     }
 
     fn vault_identity_email(
@@ -1279,18 +1326,18 @@ mod tests {
         quarantine_cron_email(home.path(), &alice, 1, &mail, &item).unwrap();
         mail.body.push_str(" changed");
         assert!(quarantine_cron_email(home.path(), &alice, 1, &mail, &item).is_err());
-        let (pending, seen, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &alice, 1, vec![mail.clone()]).unwrap();
+        let (pending, seen, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &alice, 1, vec![mail.clone()]).unwrap();
         assert_eq!(
-            (pending.len(), seen, ambiguous, input_conflicts),
+            (pending.len(), seen, ambiguous, completion_conflicts),
             (1, 0, 0, 0)
         );
         quarantine_cron_email(home.path(), &bob, 1, &mail, &item).unwrap();
         mark_processed_email(&conn, &bob, 1, &mail, 101).unwrap();
-        let (pending, seen, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
+        let (pending, seen, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &bob, 1, vec![mail.clone()]).unwrap();
         assert_eq!(
-            (pending.len(), seen, ambiguous, input_conflicts),
+            (pending.len(), seen, ambiguous, completion_conflicts),
             (0, 1, 0, 0)
         );
         let records = list_quarantine_items(home.path()).unwrap();
@@ -1305,7 +1352,7 @@ mod tests {
     #[cfg(feature = "imap_fetch")]
     #[test]
     fn cron_seen_filter_separates_accounts_epochs_and_triage_completion() {
-        use crate::email::seen_store::scoped::{self, Identity, Purpose};
+        use crate::email::seen_store::scoped::{self, Identity};
 
         let home = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
@@ -1313,25 +1360,25 @@ mod tests {
         let bob = seen_test_config("bob");
         let mail = vault_identity_email("7", None);
         let id = Identity::inbox(&alice.host, alice.port, &alice.username, &mail, 1).unwrap();
-        scoped::mark(&conn, &id, Purpose::Triage, 100).unwrap();
-        let (fresh, seen, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
+        scoped::mark(&conn, &id, scoped::Completion::Triage, 100).unwrap();
+        let (fresh, seen, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &alice, 1, vec![mail]).unwrap();
         assert_eq!(
-            (fresh.len(), seen, ambiguous, input_conflicts),
+            (fresh.len(), seen, ambiguous, completion_conflicts),
             (1, 0, 0, 0)
         );
         mark_processed_email(&conn, &alice, 1, &fresh[0], 101).unwrap();
-        let (fresh, seen, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &alice, 1, fresh).unwrap();
+        let (fresh, seen, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &alice, 1, fresh).unwrap();
         assert_eq!(
-            (fresh.len(), seen, ambiguous, input_conflicts),
+            (fresh.len(), seen, ambiguous, completion_conflicts),
             (0, 1, 0, 0)
         );
         for (cfg, epoch) in [(&bob, 1), (&alice, 2)] {
-            let (fresh, seen, ambiguous, input_conflicts) =
-                filter_unseen(&conn, cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
+            let (fresh, seen, ambiguous, completion_conflicts) =
+                filter_unseen(&conn, &target_test_context(), cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
             assert_eq!(
-                (fresh.len(), seen, ambiguous, input_conflicts),
+                (fresh.len(), seen, ambiguous, completion_conflicts),
                 (1, 0, 0, 0)
             );
         }
@@ -1347,10 +1394,10 @@ mod tests {
         let legacy = vault_identity_email("7", Some("<legacy>"));
         assert!(mark_processed_email(&conn, &cfg, 1, &legacy, 101).is_err());
         let fresh = vault_identity_email("8", Some("<fresh>"));
-        let (remaining, seen, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
+        let (remaining, seen, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &cfg, 1, vec![legacy, fresh]).unwrap();
         assert_eq!(
-            (remaining.len(), seen, ambiguous, input_conflicts),
+            (remaining.len(), seen, ambiguous, completion_conflicts),
             (1, 0, 1, 0)
         );
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
@@ -1367,7 +1414,7 @@ mod tests {
             .unwrap();
         let mail = vault_identity_email("7", None);
         assert!(mark_processed_email(&conn, &cfg, 1, &mail, 100).is_err());
-        assert!(filter_unseen(&conn, &cfg, 1, vec![mail]).is_err());
+        assert!(filter_unseen(&conn, &target_test_context(), &cfg, 1, vec![mail]).is_err());
     }
 
     #[cfg(feature = "imap_fetch")]
@@ -1399,10 +1446,10 @@ mod tests {
         // message; a genuinely new Message-ID must remain in the batch.
         let moved = email("99", Some("<stable@example.com>"));
         let fresh = email("100", Some("<fresh@example.com>"));
-        let (unseen, skipped, ambiguous, input_conflicts) =
-            filter_unseen(&conn, &cfg, 8, vec![moved, fresh]).unwrap();
+        let (unseen, skipped, ambiguous, completion_conflicts) =
+            filter_unseen(&conn, &target_test_context(), &cfg, 8, vec![moved, fresh]).unwrap();
         assert_eq!(ambiguous, 0);
-        assert_eq!(input_conflicts, 0);
+        assert_eq!(completion_conflicts, 0);
         assert_eq!(skipped, 1);
         assert_eq!(unseen.len(), 1);
         assert_eq!(unseen[0].dedup_key(), "<fresh@example.com>");

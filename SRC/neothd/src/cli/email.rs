@@ -364,7 +364,7 @@ async fn fetch_and_triage(
     let mut legacy_ambiguous = 0usize;
     for email in page.emails {
         let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &email, uid_validity)?;
-        let state = scoped::state(&seen_conn, &identity, Purpose::Triage)?;
+        let state = scoped::state(&seen_conn, &identity, Purpose::Triage, None)?;
         if !include_seen {
             match state {
                 SeenState::Seen => {
@@ -375,8 +375,8 @@ async fn fetch_and_triage(
                     legacy_ambiguous += 1;
                     continue;
                 }
-                SeenState::InputConflict => {
-                    anyhow::bail!("unexpected input conflict in triage-only completion");
+                SeenState::InputConflict | SeenState::ContextConflict => {
+                    anyhow::bail!("unexpected ingest conflict in triage-only completion");
                 }
                 SeenState::Unseen => {}
             }
@@ -482,7 +482,7 @@ async fn fetch_and_triage(
     // claim cron sink completion or reconcile ambiguous historical effects.
     let now = crate::time::now_unix_i64();
     for identity in &identities {
-        scoped::mark(&seen_conn, identity, Purpose::Triage, now)?;
+        scoped::mark(&seen_conn, identity, scoped::Completion::Triage, now)?;
     }
 
     match output {
