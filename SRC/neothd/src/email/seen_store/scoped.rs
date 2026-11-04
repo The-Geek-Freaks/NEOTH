@@ -101,7 +101,10 @@ impl DeliveryContext {
         token_present: bool,
         token_usable: bool,
     ) -> Result<Self> {
-        ensure!(!token_usable || token_present, "usable token must be present");
+        ensure!(
+            !token_usable || token_present,
+            "usable token must be present"
+        );
         let encoded = serde_json::to_vec(&(
             "neoth.email-delivery-context.v1",
             vault,
@@ -111,7 +114,9 @@ impl DeliveryContext {
             token_usable,
         ))
         .context("bind email delivery targets")?;
-        Ok(Self { sha256: format!("{:x}", Sha256::digest(&encoded)) })
+        Ok(Self {
+            sha256: format!("{:x}", Sha256::digest(&encoded)),
+        })
     }
 }
 
@@ -127,17 +132,25 @@ struct ScopedRow {
     context_sha256: Option<String>,
 }
 
-fn read_scoped(conn: &Connection, identity: &Identity, purpose: Purpose) -> Result<Option<ScopedRow>> {
+fn read_scoped(
+    conn: &Connection,
+    identity: &Identity,
+    purpose: Purpose,
+) -> Result<Option<ScopedRow>> {
     conn.query_row(
         "SELECT input_sha256, completion_kind, context_sha256 FROM idx_email_seen_scoped \
          WHERE unit_sha256 = ?1 AND purpose = ?2",
         rusqlite::params![identity.unit_sha256, purpose.as_str()],
-        |row| Ok(ScopedRow {
-            input_sha256: row.get(0)?,
-            completion_kind: row.get(1)?,
-            context_sha256: row.get(2)?,
-        }),
-    ).optional().context("query scoped email completion")
+        |row| {
+            Ok(ScopedRow {
+                input_sha256: row.get(0)?,
+                completion_kind: row.get(1)?,
+                context_sha256: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .context("query scoped email completion")
 }
 
 pub(crate) fn state(
@@ -191,7 +204,10 @@ pub(crate) fn mark(
     // Explicit CLI re-triage remains permitted; it never changes Ingest.
     if purpose == Purpose::Ingest {
         ensure!(
-            matches!(state(conn, identity, purpose, context)?, SeenState::Unseen | SeenState::Seen),
+            matches!(
+                state(conn, identity, purpose, context)?,
+                SeenState::Unseen | SeenState::Seen
+            ),
             "email completion requires explicit reconciliation"
         );
     }
@@ -201,9 +217,18 @@ pub(crate) fn mark(
         "INSERT INTO idx_email_seen_scoped \
          (unit_sha256, purpose, first_seen_unix, input_sha256, completion_kind, context_sha256) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
-        rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input, kind, context_hash],
-    ).context("record scoped email completion")?;
-    let row = read_scoped(conn, identity, purpose)?.context("scoped email completion was not recorded")?;
+        rusqlite::params![
+            identity.unit_sha256,
+            purpose.as_str(),
+            now_unix,
+            input,
+            kind,
+            context_hash
+        ],
+    )
+    .context("record scoped email completion")?;
+    let row = read_scoped(conn, identity, purpose)?
+        .context("scoped email completion was not recorded")?;
     if purpose == Purpose::Ingest {
         ensure!(
             row.input_sha256.as_deref() == input

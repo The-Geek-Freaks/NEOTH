@@ -16,7 +16,14 @@ fn email(uid: &str, message_id: Option<&str>) -> InboundEmail {
 }
 
 fn target_context() -> DeliveryContext {
-    DeliveryContext::new(Some("/vault"), "NEOTH", Some("https://paperless.example"), true, true).unwrap()
+    DeliveryContext::new(
+        Some("/vault"),
+        "NEOTH",
+        Some("https://paperless.example"),
+        true,
+        true,
+    )
+    .unwrap()
 }
 
 fn identity(user: &str, mail: &InboundEmail, epoch: u32) -> Identity {
@@ -76,7 +83,13 @@ fn scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity() {
     mark(&conn, &old, Completion::Delivery(&target_context()), 100).unwrap();
     let replacement = identity("alice", &no_id, 12);
     assert_eq!(
-        state(&conn, &replacement, Purpose::Ingest, Some(&target_context())).unwrap(),
+        state(
+            &conn,
+            &replacement,
+            Purpose::Ingest,
+            Some(&target_context())
+        )
+        .unwrap(),
         SeenState::Unseen
     );
     assert_eq!(
@@ -109,7 +122,10 @@ fn scoped_triage_never_completes_ingest_and_ingest_never_completes_triage() {
     let conn = db();
     let id = identity("alice", &email("7", None), 11);
     mark(&conn, &id, Completion::Triage, 100).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Triage, None).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Triage, None).unwrap(),
+        SeenState::Seen
+    );
     assert_eq!(
         state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
         SeenState::Unseen
@@ -121,7 +137,10 @@ fn scoped_triage_never_completes_ingest_and_ingest_never_completes_triage() {
         SeenState::Unseen
     );
     mark(&conn, &id, Completion::Delivery(&target_context()), 200).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::Seen
+    );
 }
 
 #[test]
@@ -137,7 +156,10 @@ fn scoped_legacy_ambiguity_survives_explicit_retriage_without_ingest_authority()
             );
             assert!(mark(&conn, &id, Completion::Delivery(&target_context()), 100).is_err());
             mark(&conn, &id, Completion::Triage, 100).unwrap();
-            assert_eq!(state(&conn, &id, Purpose::Triage, None).unwrap(), SeenState::Seen);
+            assert_eq!(
+                state(&conn, &id, Purpose::Triage, None).unwrap(),
+                SeenState::Seen
+            );
             assert_eq!(
                 state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
                 SeenState::LegacyAmbiguous
@@ -183,9 +205,13 @@ fn scoped_query_and_write_errors_never_become_unseen_or_completed() {
          WHEN NEW.purpose='ingest'
          BEGIN UPDATE idx_email_seen_scoped SET context_sha256=printf('%064d',0)
          WHERE unit_sha256=NEW.unit_sha256 AND purpose=NEW.purpose; END;",
-    ).unwrap();
+    )
+    .unwrap();
     assert!(mark(&conn, &id, Completion::Delivery(&target_context()), 100).is_err());
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::ContextConflict);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::ContextConflict
+    );
     conn.execute("DROP TABLE idx_email_seen_scoped", [])
         .unwrap();
     assert!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).is_err());
@@ -202,7 +228,10 @@ fn scoped_completion_reopens_idempotently_without_rewriting_first_timestamp() {
         mark(&conn, &id, Completion::Delivery(&target_context()), 100).unwrap();
     }
     let conn = store::open(&path).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::Seen
+    );
     mark(&conn, &id, Completion::Delivery(&target_context()), 200).unwrap();
     let rows: (i64, i64) = conn
         .query_row(
@@ -351,7 +380,10 @@ fn input_bound_completion_rejects_every_changed_field_without_rewriting() {
             SeenState::InputConflict
         );
         assert!(mark(&conn, &other, Completion::Delivery(&target_context()), 200).is_err());
-        assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::Seen);
+        assert_eq!(
+            state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+            SeenState::Seen
+        );
     }
     let row: (String, i64) = conn.query_row(
         "SELECT input_sha256, first_seen_unix FROM idx_email_seen_scoped WHERE purpose='ingest'",
@@ -390,7 +422,10 @@ fn input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests() {
     );
     assert!(mark(&conn, &id, Completion::Delivery(&target_context()), 200).is_err());
     mark(&conn, &id, Completion::Triage, 300).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Triage, None).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Triage, None).unwrap(),
+        SeenState::Seen
+    );
     for invalid in [
         "".to_string(),
         "a".repeat(63),
@@ -496,7 +531,13 @@ fn input_conflicting_concurrent_marks_cannot_adopt_the_winner() {
             conn.busy_timeout(std::time::Duration::from_secs(5))
                 .unwrap();
             barrier.wait();
-            mark(&conn, &id, Completion::Delivery(&target_context()), timestamp).is_ok()
+            mark(
+                &conn,
+                &id,
+                Completion::Delivery(&target_context()),
+                timestamp,
+            )
+            .is_ok()
         })
     })
     .collect();
@@ -535,26 +576,74 @@ fn delivery_target_drift_keeps_original_completion_without_adoption() {
     let id = identity("alice", &email("1", Some("<targets>")), 1);
     let original = target_context();
     mark(&conn, &id, Completion::Delivery(&original), 100).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&original)).unwrap(), SeenState::Seen);
-    assert_eq!(state(&conn, &id, Purpose::Ingest, None).unwrap(), SeenState::ContextConflict);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&original)).unwrap(),
+        SeenState::Seen
+    );
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, None).unwrap(),
+        SeenState::ContextConflict
+    );
     let variants = [
-        DeliveryContext::new(Some("/other"), "NEOTH", Some("https://paperless.example"), true, true).unwrap(),
+        DeliveryContext::new(
+            Some("/other"),
+            "NEOTH",
+            Some("https://paperless.example"),
+            true,
+            true,
+        )
+        .unwrap(),
         DeliveryContext::new(None, "NEOTH", Some("https://paperless.example"), true, true).unwrap(),
-        DeliveryContext::new(Some("/vault"), "other", Some("https://paperless.example"), true, true).unwrap(),
-        DeliveryContext::new(Some("/vault"), "NEOTH", Some("https://other.example"), true, true).unwrap(),
+        DeliveryContext::new(
+            Some("/vault"),
+            "other",
+            Some("https://paperless.example"),
+            true,
+            true,
+        )
+        .unwrap(),
+        DeliveryContext::new(
+            Some("/vault"),
+            "NEOTH",
+            Some("https://other.example"),
+            true,
+            true,
+        )
+        .unwrap(),
         DeliveryContext::new(Some("/vault"), "NEOTH", None, true, true).unwrap(),
         DeliveryContext::new(Some("/vault"), "NEOTH", Some(""), true, true).unwrap(),
-        DeliveryContext::new(Some("/vault"), "NEOTH", Some("https://paperless.example"), false, false).unwrap(),
-        DeliveryContext::new(Some("/vault"), "NEOTH", Some("https://paperless.example"), true, false).unwrap(),
+        DeliveryContext::new(
+            Some("/vault"),
+            "NEOTH",
+            Some("https://paperless.example"),
+            false,
+            false,
+        )
+        .unwrap(),
+        DeliveryContext::new(
+            Some("/vault"),
+            "NEOTH",
+            Some("https://paperless.example"),
+            true,
+            false,
+        )
+        .unwrap(),
     ];
     for changed in variants {
-        assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&changed)).unwrap(), SeenState::ContextConflict);
+        assert_eq!(
+            state(&conn, &id, Purpose::Ingest, Some(&changed)).unwrap(),
+            SeenState::ContextConflict
+        );
         assert!(mark(&conn, &id, Completion::Delivery(&changed), 200).is_err());
     }
     assert!(DeliveryContext::new(None, "NEOTH", None, false, true).is_err());
     assert_eq!(
-        DeliveryContext::new(None, "first", None, false, false).unwrap().sha256,
-        DeliveryContext::new(None, "second", None, false, false).unwrap().sha256
+        DeliveryContext::new(None, "first", None, false, false)
+            .unwrap()
+            .sha256,
+        DeliveryContext::new(None, "second", None, false, false)
+            .unwrap()
+            .sha256
     );
     let row: (String, String, i64) = conn.query_row(
         "SELECT completion_kind,context_sha256,first_seen_unix FROM idx_email_seen_scoped WHERE purpose='ingest'",
@@ -569,9 +658,15 @@ fn quarantine_completion_ignores_target_drift_without_becoming_delivery() {
     let mail = email("1", Some("<quarantine>"));
     let id = identity("alice", &mail, 1);
     mark(&conn, &id, Completion::Quarantine, 100).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, None).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, None).unwrap(),
+        SeenState::Seen
+    );
     let targets = target_context();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&targets)).unwrap(), SeenState::Seen);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&targets)).unwrap(),
+        SeenState::Seen
+    );
     assert!(mark(&conn, &id, Completion::Delivery(&targets), 200).is_err());
     mark(&conn, &id, Completion::Quarantine, 300).unwrap();
     let row: (String, Option<String>, i64) = conn.query_row(
@@ -581,7 +676,16 @@ fn quarantine_completion_ignores_target_drift_without_becoming_delivery() {
     assert_eq!(row, ("quarantine".into(), None, 100));
     let mut changed = mail;
     changed.body.push_str(" changed");
-    assert_eq!(state(&conn, &identity("alice", &changed, 1), Purpose::Ingest, Some(&targets)).unwrap(), SeenState::InputConflict);
+    assert_eq!(
+        state(
+            &conn,
+            &identity("alice", &changed, 1),
+            Purpose::Ingest,
+            Some(&targets)
+        )
+        .unwrap(),
+        SeenState::InputConflict
+    );
     let delivered = identity("alice", &email("2", Some("<delivered>")), 1);
     mark(&conn, &delivered, Completion::Delivery(&targets), 100).unwrap();
     assert!(mark(&conn, &delivered, Completion::Quarantine, 200).is_err());
@@ -593,7 +697,8 @@ fn schema_54_fixture(path: &std::path::Path, id: &Identity) {
         "ALTER TABLE idx_email_seen_scoped DROP COLUMN context_sha256;
          ALTER TABLE idx_email_seen_scoped DROP COLUMN completion_kind;
          UPDATE meta SET value='54' WHERE key='schema_version';",
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO idx_email_seen_scoped (unit_sha256,purpose,first_seen_unix,input_sha256) VALUES (?1,'ingest',100,?2)",
         rusqlite::params![id.unit_sha256, id.input_sha256],
@@ -607,7 +712,10 @@ fn delivery_v54_migration_retains_unknown_disposition_and_rejects_invalid_pairs(
     let id = identity("alice", &email("1", Some("<v54>")), 1);
     schema_54_fixture(&path, &id);
     let conn = store::open(&path).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::LegacyAmbiguous);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::LegacyAmbiguous
+    );
     assert!(mark(&conn, &id, Completion::Delivery(&target_context()), 200).is_err());
     assert!(mark(&conn, &id, Completion::Quarantine, 200).is_err());
     mark(&conn, &id, Completion::Triage, 200).unwrap();
@@ -625,7 +733,10 @@ fn delivery_v54_migration_retains_unknown_disposition_and_rejects_invalid_pairs(
     ] {
         assert!(conn.execute_batch(sql).is_err());
     }
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::LegacyAmbiguous);
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::LegacyAmbiguous
+    );
 }
 
 #[test]
@@ -636,7 +747,8 @@ fn delivery_v54_column_collision_preserves_version_and_input() {
     schema_54_fixture(&path, &id);
     {
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("ALTER TABLE idx_email_seen_scoped ADD COLUMN CONTEXT_SHA256 TEXT;").unwrap();
+        conn.execute_batch("ALTER TABLE idx_email_seen_scoped ADD COLUMN CONTEXT_SHA256 TEXT;")
+            .unwrap();
     }
     assert!(store::open(&path).is_err());
     let conn = Connection::open(&path).unwrap();
@@ -659,7 +771,8 @@ fn delivery_v54_stamp_failure_rolls_back_both_columns_before_retry() {
             "CREATE TRIGGER fail_version_55 BEFORE INSERT ON meta
              WHEN NEW.key='schema_version' AND NEW.value='55'
              BEGIN SELECT RAISE(ABORT,'fixture'); END;",
-        ).unwrap();
+        )
+        .unwrap();
     }
     assert!(store::open(&path).is_err());
     {
@@ -674,8 +787,17 @@ fn delivery_v54_stamp_failure_rolls_back_both_columns_before_retry() {
         conn.execute_batch("DROP TRIGGER fail_version_55;").unwrap();
     }
     let conn = store::open(&path).unwrap();
-    assert_eq!(state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(), SeenState::LegacyAmbiguous);
-    let version: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
+    assert_eq!(
+        state(&conn, &id, Purpose::Ingest, Some(&target_context())).unwrap(),
+        SeenState::LegacyAmbiguous
+    );
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key='schema_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(version, store::SCHEMA_VERSION.to_string());
 }
 
@@ -686,26 +808,38 @@ fn competing_delivery_targets_cannot_adopt_the_first_completion() {
     let path = home.path().join("views.db");
     drop(store::open(&path).unwrap());
     let barrier = Arc::new(Barrier::new(2));
-    let handles: Vec<_> = ["/first", "/second"].into_iter().map(|vault| {
-        let path = path.clone();
-        let barrier = Arc::clone(&barrier);
-        std::thread::spawn(move || {
-            let conn = Connection::open(path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
-            let id = identity("alice", &email("1", Some("<target-race>")), 1);
-            let context = DeliveryContext::new(Some(vault), "NEOTH", None, false, false).unwrap();
-            barrier.wait();
-            (mark(&conn, &id, Completion::Delivery(&context), 100).is_ok(), context)
+    let handles: Vec<_> = ["/first", "/second"]
+        .into_iter()
+        .map(|vault| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let conn = Connection::open(path).unwrap();
+                conn.busy_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                let id = identity("alice", &email("1", Some("<target-race>")), 1);
+                let context =
+                    DeliveryContext::new(Some(vault), "NEOTH", None, false, false).unwrap();
+                barrier.wait();
+                (
+                    mark(&conn, &id, Completion::Delivery(&context), 100).is_ok(),
+                    context,
+                )
+            })
         })
-    }).collect();
+        .collect();
     let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    assert_eq!(results.iter().filter(|(success,_)| *success).count(), 1);
+    assert_eq!(results.iter().filter(|(success, _)| *success).count(), 1);
     let conn = Connection::open(&path).unwrap();
     let id = identity("alice", &email("1", Some("<target-race>")), 1);
     for (success, context) in results {
         assert_eq!(
             state(&conn, &id, Purpose::Ingest, Some(&context)).unwrap(),
-            if success { SeenState::Seen } else { SeenState::ContextConflict }
+            if success {
+                SeenState::Seen
+            } else {
+                SeenState::ContextConflict
+            }
         );
     }
 }

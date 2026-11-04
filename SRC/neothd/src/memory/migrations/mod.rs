@@ -402,9 +402,13 @@ pub(crate) fn migration_v54_to_v55(conn: &Connection) -> Result<()> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('idx_email_seen_scoped') \
          WHERE name COLLATE NOCASE IN ('completion_kind','context_sha256'))",
-        [], |row| row.get(0),
+        [],
+        |row| row.get(0),
     )?;
-    ensure!(!exists, "v54→v55: conflicting email completion context columns");
+    ensure!(
+        !exists,
+        "v54→v55: conflicting email completion context columns"
+    );
     conn.execute_batch(crate::email::seen_store::SCOPED_CONTEXT_COLUMNS_SQL)
         .context("v54→v55: retain unbound dispositions and delivery targets")
 }

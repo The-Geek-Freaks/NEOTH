@@ -474,11 +474,18 @@ pub async fn run_email_ingest_tick(
         &subdir,
         runtime.credentials.paperless_url.as_deref(),
         paperless_token.is_some(),
-        paperless_token.as_deref().is_some_and(|token| !token.is_empty()),
+        paperless_token
+            .as_deref()
+            .is_some_and(|token| !token.is_empty()),
     )?;
 
-    let (emails, skipped_seen, legacy_ambiguous, completion_conflicts) =
-        filter_unseen(&seen_conn, &delivery_context, &imap_cfg, uid_validity, fetched)?;
+    let (emails, skipped_seen, legacy_ambiguous, completion_conflicts) = filter_unseen(
+        &seen_conn,
+        &delivery_context,
+        &imap_cfg,
+        uid_validity,
+        fetched,
+    )?;
     if legacy_ambiguous > 0 {
         warn!(
             legacy_ambiguous,
@@ -980,11 +987,24 @@ mod tests {
         let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), None);
         assert!(
             !destination
-                .record_delivery(&conn, &identity, &target_test_context(), 100, (true, true), None)
+                .record_delivery(
+                    &conn,
+                    &identity,
+                    &target_test_context(),
+                    100,
+                    (true, true),
+                    None
+                )
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
+            scoped::state(
+                &conn,
+                &identity,
+                Purpose::Ingest,
+                Some(&target_test_context())
+            )
+            .unwrap(),
             SeenState::Unseen
         );
 
@@ -1015,7 +1035,13 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
+            scoped::state(
+                &conn,
+                &identity,
+                Purpose::Ingest,
+                Some(&target_test_context())
+            )
+            .unwrap(),
             SeenState::Unseen
         );
         assert!(
@@ -1031,7 +1057,13 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            scoped::state(&conn, &identity, Purpose::Ingest, Some(&target_test_context())).unwrap(),
+            scoped::state(
+                &conn,
+                &identity,
+                Purpose::Ingest,
+                Some(&target_test_context())
+            )
+            .unwrap(),
             SeenState::Seen
         );
     }
@@ -1047,14 +1079,26 @@ mod tests {
         let mut changed = original.clone();
         changed.body.push_str(" changed");
         let fresh = vault_identity_email("8", Some("<fresh>"));
-        let (remaining, seen, ambiguous, conflicts) =
-            filter_unseen(&conn, &target_test_context(), &cfg, 1, vec![changed.clone(), fresh]).unwrap();
+        let (remaining, seen, ambiguous, conflicts) = filter_unseen(
+            &conn,
+            &target_test_context(),
+            &cfg,
+            1,
+            vec![changed.clone(), fresh],
+        )
+        .unwrap();
         assert_eq!((remaining.len(), seen, ambiguous, conflicts), (1, 0, 0, 1));
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
         mark_processed_email(&conn, &cfg, 1, &remaining[0], 200).unwrap();
         assert!(mark_processed_email(&conn, &cfg, 1, &changed, 200).is_err());
-        let (remaining, seen, ambiguous, conflicts) =
-            filter_unseen(&conn, &target_test_context(), &cfg, 2, vec![changed, original]).unwrap();
+        let (remaining, seen, ambiguous, conflicts) = filter_unseen(
+            &conn,
+            &target_test_context(),
+            &cfg,
+            2,
+            vec![changed, original],
+        )
+        .unwrap();
         assert_eq!((remaining.len(), seen, ambiguous, conflicts), (0, 1, 0, 1));
     }
 
@@ -1069,27 +1113,75 @@ mod tests {
         let quarantined = vault_identity_email("2", Some("<quarantined-target>"));
         let fresh = vault_identity_email("3", Some("<fresh-target>"));
         let original = target_test_context();
-        let changed = DeliveryContext::new(Some("/changed"), "NEOTH", Some("https://other.example"), true, true).unwrap();
-        let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
+        let changed = DeliveryContext::new(
+            Some("/changed"),
+            "NEOTH",
+            Some("https://other.example"),
+            true,
+            true,
+        )
+        .unwrap();
+        let destination =
+            PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
         let id = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &delivered, 1).unwrap();
-        assert!(destination.record_delivery(&conn, &id, &original, 100, (true,true), Some(PaperlessReconcileOutcome::Completed)).unwrap());
-        let item = build_quarantine_item_error(quarantined.dedup_key(), &quarantined.from, &quarantined.subject, 100, &quarantined.body, "fixture");
+        assert!(
+            destination
+                .record_delivery(
+                    &conn,
+                    &id,
+                    &original,
+                    100,
+                    (true, true),
+                    Some(PaperlessReconcileOutcome::Completed)
+                )
+                .unwrap()
+        );
+        let item = build_quarantine_item_error(
+            quarantined.dedup_key(),
+            &quarantined.from,
+            &quarantined.subject,
+            100,
+            &quarantined.body,
+            "fixture",
+        );
         quarantine_cron_email(home.path(), &cfg, 1, &quarantined, &item).unwrap();
         mark_processed_email(&conn, &cfg, 1, &quarantined, 100).unwrap();
         let (pending, seen, ambiguous, conflicts) = filter_unseen(
-            &conn, &changed, &cfg, 1, vec![delivered.clone(), quarantined, fresh],
-        ).unwrap();
-        assert_eq!((pending.len(),seen,ambiguous,conflicts), (1,1,0,1));
+            &conn,
+            &changed,
+            &cfg,
+            1,
+            vec![delivered.clone(), quarantined, fresh],
+        )
+        .unwrap();
+        assert_eq!((pending.len(), seen, ambiguous, conflicts), (1, 1, 0, 1));
         assert_eq!(pending[0].dedup_key(), "<fresh-target>");
-        assert!(destination.record_delivery(&conn, &id, &changed, 200, (true,true), Some(PaperlessReconcileOutcome::Completed)).is_err());
-        let (pending,seen,ambiguous,conflicts) = filter_unseen(&conn, &original, &cfg, 2, vec![delivered]).unwrap();
-        assert_eq!((pending.len(),seen,ambiguous,conflicts), (0,1,0,0));
+        assert!(
+            destination
+                .record_delivery(
+                    &conn,
+                    &id,
+                    &changed,
+                    200,
+                    (true, true),
+                    Some(PaperlessReconcileOutcome::Completed)
+                )
+                .is_err()
+        );
+        let (pending, seen, ambiguous, conflicts) =
+            filter_unseen(&conn, &original, &cfg, 2, vec![delivered]).unwrap();
+        assert_eq!((pending.len(), seen, ambiguous, conflicts), (0, 1, 0, 0));
     }
 
     fn target_test_context() -> crate::email::seen_store::scoped::DeliveryContext {
         crate::email::seen_store::scoped::DeliveryContext::new(
-            Some("/vault"), "NEOTH", Some("https://paperless.example"), true, true,
-        ).unwrap()
+            Some("/vault"),
+            "NEOTH",
+            Some("https://paperless.example"),
+            true,
+            true,
+        )
+        .unwrap()
     }
 
     fn vault_identity_email(
@@ -1375,8 +1467,14 @@ mod tests {
             (0, 1, 0, 0)
         );
         for (cfg, epoch) in [(&bob, 1), (&alice, 2)] {
-            let (fresh, seen, ambiguous, completion_conflicts) =
-                filter_unseen(&conn, &target_test_context(), cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
+            let (fresh, seen, ambiguous, completion_conflicts) = filter_unseen(
+                &conn,
+                &target_test_context(),
+                cfg,
+                epoch,
+                vec![vault_identity_email("7", None)],
+            )
+            .unwrap();
             assert_eq!(
                 (fresh.len(), seen, ambiguous, completion_conflicts),
                 (1, 0, 0, 0)
