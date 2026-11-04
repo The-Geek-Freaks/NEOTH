@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 464540,
-    "sha256": "5561646EE036FBF947E22C65F7407E5EB83ACE67123D2F18E63CA0C61E9E3F00"
+    "bytes": 464735,
+    "sha256": "8236456A5B19B028BDABF160964034AED3DBE310BF47BB0836C6B4042B823244"
   },
-  "sourceInputs": 2536,
+  "sourceInputs": 2537,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -91981,6 +91981,32 @@
       }
     ],
     "note": "Original hosted rustfmt artifact verified against run/API/ZIP/member and exact Git pre/postimages; UTF-8 stdin corrects local importer transport; no local formatter. 75-case runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2662SshCandidateWorkflow": {
+    "base": "056ab130c921a33dd246279002921dd03ff93ee5",
+    "sources": [
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 7556,
+        "sha256": "687E962F7C75FC5BD51A49B3574AB16AD607BD9E20124F0D4A7162E53BB4AD71",
+        "blob": "25df574e02cf70ec23072b6796e2bfc3b725c0f7"
+      },
+      {
+        "path": "docs/verification/gold-wave2662-ssh-dependency-frontier.json",
+        "bytes": 5971,
+        "sha256": "A42140F426F183795D04FA77E743A0B8249A2F939305B5EAF174D351D5ECA82E",
+        "blob": "fc4ab3b3deee73b78024ddd1f5f15222632ca7b3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2757739,
+        "sha256": "14177FB8FCBDDA91C7E887CEEFECF8CF2B0BD3966F4F875808EE4848ED303694",
+        "blob": "237c9104a5a75534248ecdabfb76315c4eeb8bb1"
+      }
+    ],
+    "note": "Prepare existing main-only read-only SSH dependency candidate; no dependency upgrade or local lock modification; full transitive delta and explicit unknown MSRV reporting.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

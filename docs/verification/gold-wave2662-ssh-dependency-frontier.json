@@ -1,0 +1,159 @@
+{
+  "schema": "neoth.wave2662.ssh-dependency-frontier.v1",
+  "base": "056ab130c921a33dd246279002921dd03ff93ee5",
+  "status": "HOSTED_CANDIDATE_WORKFLOW_PREPARED",
+  "alerts": [
+    {
+      "number": 108,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/neothd/Cargo.toml",
+      "scope": "runtime",
+      "ghsa": "GHSA-vp5q-ff62-jwqv",
+      "severity": "high",
+      "title": "russh: Agent server never calls `Agent::confirm`, so keys added with the confirm constraint (`ssh-add -c`) sign without confirmation",
+      "vulnerable": "< 0.65",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/108"
+    },
+    {
+      "number": 107,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/neothd/Cargo.toml",
+      "scope": "runtime",
+      "ghsa": "GHSA-fw5c-8223-6h42",
+      "severity": "medium",
+      "title": "russh: peer-declared zero maximum packet size permanently stalls channel writes (silent AsyncWrite hang)",
+      "vulnerable": ">= 0.60.0, <= 0.64.1",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/107"
+    },
+    {
+      "number": 106,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/neothd/Cargo.toml",
+      "scope": "runtime",
+      "ghsa": "GHSA-9wfm-jcj8-jfv9",
+      "severity": "low",
+      "title": "russh's SSH agent server is susceptible to unbound allocations via repeated SSH_AGENT_CONSTRAIN_CONFIRM messages",
+      "vulnerable": "< 0.65.0",
+      "fixed": "0.65.0",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/106"
+    },
+    {
+      "number": 105,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/neothd/Cargo.toml",
+      "scope": "runtime",
+      "ghsa": "GHSA-4p9f-7p9m-5vfg",
+      "severity": "medium",
+      "title": "russh's SSH client is susceptible to unbounded allocations via EXT_INFO packets",
+      "vulnerable": "< 0.65",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/105"
+    },
+    {
+      "number": 104,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/Cargo.lock",
+      "scope": "runtime",
+      "ghsa": "GHSA-vp5q-ff62-jwqv",
+      "severity": "high",
+      "title": "russh: Agent server never calls `Agent::confirm`, so keys added with the confirm constraint (`ssh-add -c`) sign without confirmation",
+      "vulnerable": "< 0.65",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/104"
+    },
+    {
+      "number": 103,
+      "package": "pageant",
+      "ecosystem": "rust",
+      "manifest": "SRC/Cargo.lock",
+      "scope": "runtime",
+      "ghsa": "GHSA-662x-8wvj-2276",
+      "severity": "low",
+      "title": "pageant: unbounded frame buffering on peer-controlled 4-byte length prefix (memory-exhaustion DoS)",
+      "vulnerable": ">= 0.2.0, <= 0.2.4",
+      "fixed": "0.2.5",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/103"
+    },
+    {
+      "number": 102,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/Cargo.lock",
+      "scope": "runtime",
+      "ghsa": "GHSA-fw5c-8223-6h42",
+      "severity": "medium",
+      "title": "russh: peer-declared zero maximum packet size permanently stalls channel writes (silent AsyncWrite hang)",
+      "vulnerable": ">= 0.60.0, <= 0.64.1",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/102"
+    },
+    {
+      "number": 101,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/Cargo.lock",
+      "scope": "runtime",
+      "ghsa": "GHSA-9wfm-jcj8-jfv9",
+      "severity": "low",
+      "title": "russh's SSH agent server is susceptible to unbound allocations via repeated SSH_AGENT_CONSTRAIN_CONFIRM messages",
+      "vulnerable": "< 0.65.0",
+      "fixed": "0.65.0",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/101"
+    },
+    {
+      "number": 100,
+      "package": "russh",
+      "ecosystem": "rust",
+      "manifest": "SRC/Cargo.lock",
+      "scope": "runtime",
+      "ghsa": "GHSA-4p9f-7p9m-5vfg",
+      "severity": "medium",
+      "title": "russh's SSH client is susceptible to unbounded allocations via EXT_INFO packets",
+      "vulnerable": "< 0.65",
+      "fixed": "0.65",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/security/dependabot/100"
+    }
+  ],
+  "targets": [
+    {
+      "yanked": false,
+      "name": "russh",
+      "declaredRustVersion": "1.89",
+      "version": "0.65.0",
+      "sha256": "3bb77a4b259312b2abbc541bca1c13cb4e9b61c560a7fd894068c3b92e0c9dc3",
+      "source": "https://crates.io/api/v1/crates/russh/0.65.0"
+    },
+    {
+      "yanked": false,
+      "name": "pageant",
+      "declaredRustVersion": "1.89",
+      "version": "0.2.5",
+      "sha256": "e0bc922d9aa8cfcf598de27b3c6122cb2eeda9d6fe71527a22ebcb7f633540ff",
+      "source": "https://crates.io/api/v1/crates/pageant/0.2.5"
+    }
+  ],
+  "workflow": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+  "bounds": [
+    "Exact main producer and pinned manifest preimage",
+    "Read-only token and only two candidate file paths",
+    "Registry versions and checksums checked against published metadata",
+    "All added/removed/changed lock packages reported; declared MSRV checked where metadata exists",
+    "Unknown or absent metadata retained as uncertainty",
+    "No branch, PR or source mutation from hosted candidate job"
+  ],
+  "review": "Independent prompt-only review required transitive delta and Windows SSH validation; both remain explicit downstream requirements",
+  "localLockSha256": "5F274ACA1AD7148414803ADFD6034BAD7F083B915BC8177D8319332AA683CE52",
+  "dependencyUpgradePublished": false,
+  "candidateExecuted": false,
+  "compilationExecuted": false,
+  "runtimeAccepted": false,
+  "securityAccepted": false,
+  "goldAccepted": false
+}

@@ -23,6 +23,11 @@ jobs:
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
       CARGO_BUILD_JOBS: 1
+      RUSSH_CURRENT: '0.64.1'
+      RUSSH_TARGET: '0.65.0'
+      PAGEANT_TARGET: '0.2.5'
+      RUSSH_SHA256: '3bb77a4b259312b2abbc541bca1c13cb4e9b61c560a7fd894068c3b92e0c9dc3'
+      PAGEANT_SHA256: 'e0bc922d9aa8cfcf598de27b3c6122cb2eeda9d6fe71527a22ebcb7f633540ff'
     steps:
       - name: Check out exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -56,12 +61,14 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import os
           path = Path("SRC/neothd/Cargo.toml")
-          before = 'russh               = { version = "0.62.5", default-features = false, features = ["ring"], optional = true }'
-          after = before.replace('"0.62.5"', '"=0.63.2"')
+          template = 'russh               = { version = "={version}", default-features = false, features = ["ring"], optional = true }'
+          before = template.replace("{version}", os.environ["RUSSH_CURRENT"])
+          after = template.replace("{version}", os.environ["RUSSH_TARGET"])
           source = path.read_text(encoding="utf-8")
           if source.count(before) != 1:
-              raise SystemExit("Expected Russh 0.62.5 preimage is absent or ambiguous")
+              raise SystemExit("Expected pinned Russh preimage is absent or ambiguous")
           path.write_text(source.replace(before, after), encoding="utf-8", newline="\n")
           PY
 
@@ -69,17 +76,63 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo update --manifest-path SRC/Cargo.toml -p russh --precise 0.63.2
-          cargo update --manifest-path SRC/Cargo.toml -p pageant --precise 0.2.3
-          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features ssh-tunnel > /dev/null
+          cargo update --manifest-path SRC/Cargo.toml -p "russh@$RUSSH_CURRENT" --precise "$RUSSH_TARGET"
+          cargo update --manifest-path SRC/Cargo.toml -p pageant@0.2.3 --precise "$PAGEANT_TARGET"
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features ssh-tunnel > "$RUNNER_TEMP/ssh-lock-metadata.json"
           python3 - <<'PY'
           from pathlib import Path
+          import json
+          import os
+          import subprocess
           import tomllib
           lock = tomllib.loads(Path("SRC/Cargo.lock").read_text(encoding="utf-8"))
-          for name, version in (("russh", "0.63.2"), ("pageant", "0.2.3")):
-              actual = [package["version"] for package in lock["package"] if package["name"] == name]
-              if actual != [version]:
-                  raise SystemExit(f"Unexpected resolved {name} versions: {actual}")
+          expected = (
+              ("russh", os.environ["RUSSH_TARGET"], os.environ["RUSSH_SHA256"]),
+              ("pageant", os.environ["PAGEANT_TARGET"], os.environ["PAGEANT_SHA256"]),
+          )
+          for name, version, checksum in expected:
+              actual = [p for p in lock["package"] if p["name"] == name]
+              if len(actual) != 1 or actual[0]["version"] != version or actual[0].get("checksum") != checksum:
+                  raise SystemExit(f"Unexpected resolved {name} identity or checksum")
+              if actual[0].get("source") != "registry+https://github.com/rust-lang/crates.io-index":
+                  raise SystemExit(f"Unexpected resolved {name} source")
+          before = tomllib.loads(subprocess.check_output(
+              ["git", "show", "HEAD:SRC/Cargo.lock"], text=True, encoding="utf-8"
+          ))
+          def identity(package):
+              return (package["name"], package["version"], package.get("source"))
+          old = {identity(p): p for p in before["package"]}
+          new = {identity(p): p for p in lock["package"]}
+          added = [p for key, p in new.items() if key not in old]
+          removed = [p for key, p in old.items() if key not in new]
+          changed = [
+              {"before": old[key], "after": package}
+              for key, package in new.items() if key in old and old[key] != package
+          ]
+          metadata = json.loads(Path(os.environ["RUNNER_TEMP"], "ssh-lock-metadata.json").read_text())
+          changed_ids = {identity(p) for p in added}
+          changed_ids.update(identity(item["after"]) for item in changed)
+          msrv = [
+              {"name": p["name"], "version": p["version"], "source": p.get("source"), "rust_version": p.get("rust_version")}
+              for p in metadata["packages"] if identity(p) in changed_ids
+          ]
+          for package in msrv:
+              version = package["rust_version"]
+              if version is not None and tuple(int(part) for part in version.split(".")[:2]) > (1, 91):
+                  raise SystemExit(f"Resolved dependency exceeds Rust 1.91: {package['name']}")
+          represented = {identity(p) for p in msrv}
+          missing_metadata = [
+              {"name": name, "version": version, "source": source}
+              for name, version, source in sorted(changed_ids - represented, key=repr)
+          ]
+          summary = {
+              "schema": 1, "source_head": os.environ["EXPECTED_HEAD"],
+              "added": added, "removed": removed, "changed": changed,
+              "changed_package_msrv": msrv, "compilation_ran": False, "tests_ran": False,
+              "unknown_msrv": [p for p in msrv if p["rust_version"] is None],
+              "missing_metadata": missing_metadata,
+          }
+          Path(os.environ["RUNNER_TEMP"], "ssh-lock-delta.json").write_text(json.dumps(summary, indent=2) + "\n")
           PY
           test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nSRC/neothd/Cargo.toml'
 
@@ -93,8 +146,9 @@ jobs:
           git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml > "$evidence/candidate.patch"
           cp SRC/Cargo.lock "$evidence/Cargo.lock"
           cp SRC/neothd/Cargo.toml "$evidence/neothd-Cargo.toml"
-          printf '%s\n' 'Exact Russh 0.63.2 and Pageant 0.2.3 resolved; locked ssh-tunnel metadata succeeded; no compilation or tests ran' > "$evidence/validation.txt"
-          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml validation.txt > SHA256SUMS)
+          cp "$RUNNER_TEMP/ssh-lock-delta.json" "$evidence/lock-delta.json"
+          printf 'Russh %s and Pageant %s version/checksum verified; locked ssh-tunnel metadata succeeded; available declared MSRV checked; unknown or missing metadata listed; no compilation or tests ran\n' "$RUSSH_TARGET" "$PAGEANT_TARGET" > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml lock-delta.json validation.txt > SHA256SUMS)
 
       - name: Upload exact candidate for Root review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

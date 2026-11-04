@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-04T08:59:17.2019070Z",
+  "capturedUtc": "2026-11-04T09:10:12.1164294Z",
   "validationStatus": "SOURCE_PREPARED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -343,8 +343,8 @@
     },
     {
       "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
-      "bytes": 4247,
-      "sha256": "66D26F2325D63AD6E37203723D9DE5E987F8D0030DC5A86F8DDA6005046F2E21"
+      "bytes": 7556,
+      "sha256": "687E962F7C75FC5BD51A49B3574AB16AD607BD9E20124F0D4A7162E53BB4AD71"
     },
     {
       "path": ".github/workflows/udx-transport-regressions.yml",
@@ -4792,6 +4792,11 @@
       "sha256": "705EAD0C226CEA187C923D90E1BCA92B39A8E565177C416F1B1B530BA9983603"
     },
     {
+      "path": "docs/verification/gold-wave2662-ssh-dependency-frontier.json",
+      "bytes": 5971,
+      "sha256": "A42140F426F183795D04FA77E743A0B8249A2F939305B5EAF174D351D5ECA82E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6033,8 +6038,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2756112,
-      "sha256": "05D02CF0B73F19251101EC927299BA3094B29058ACB0DE1B61B56C2DB4AADA25"
+      "bytes": 2757739,
+      "sha256": "14177FB8FCBDDA91C7E887CEEFECF8CF2B0BD3966F4F875808EE4848ED303694"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
