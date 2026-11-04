@@ -1,0 +1,73 @@
+{
+  "schema": "neoth.wave2663.email-completion-acceptance.v1",
+  "capturedUtc": "2026-11-04T09:39:22.3622109Z",
+  "status": "HOSTED_RECOVERY_AND_PRODUCT_ACCEPTED_FOR_RECORDED_PRODUCERS",
+  "acceptedRuns": [
+    {
+      "run": 41801057446,
+      "producer": "cc1646f4fa42bb3311a79822ae5ad566b7faa5aa",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/41801057446",
+      "cases": 68,
+      "recoveryEntries": 277,
+      "recoverySourceBindings": 26,
+      "productSourceBindings": 29,
+      "productChecks": 47,
+      "recoveryArtifact": 13308821044,
+      "recoveryZipSha256": "a490e550a275ad319b7612d91adf298ed6ff72caaed1b542b352ab701e574484",
+      "productArtifact": 13309681014,
+      "productZipSha256": "37b7c535f4ef3e7494d55fa6f38368cbed79fd5f58bad5960b80c0689a2e1d4a",
+      "recoveryAdmissionPath": "work/gold-20260906/wave2656-hosted-repair/admission-41801057446/ROOT_RECOVERY_ADMISSION.json",
+      "recoveryAdmissionSha256": "3D1060740259513EEF9A20A6BD71CDC277B6BE3ADD8EBC7C692132C58D8BF6C5",
+      "productAdmissionPath": "work/gold-20260906/wave2656-hosted-repair/admission-41801057446/ROOT_PRODUCT_ADMISSION.json",
+      "productAdmissionSha256": "BBD0259D0CD18754E26F1263124EA8F3FCD0DA2ED4BFF3246EE8CEB03411EF52",
+      "productAccepted": true,
+      "binaryDigestRecorded": "6e493ba64c73658e8ea60703420b58c18d4ed70f6cdda4195a63d42266701056",
+      "binaryArtifactIndependentlyCompared": false
+    },
+    {
+      "run": 41805595539,
+      "producer": "11d5bccd305e5f0b1689bdbcb7501c5e18cb85d6",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/41805595539",
+      "cases": 75,
+      "recoveryEntries": 305,
+      "recoverySourceBindings": 26,
+      "productSourceBindings": 29,
+      "productChecks": 47,
+      "recoveryArtifact": 13310562450,
+      "recoveryZipSha256": "dc09866c450c5797f695bc564fab7fe75201e78a4800bab6aa46cf29e9f52109",
+      "productArtifact": 13310264665,
+      "productZipSha256": "1762dc22d812839d0eb477f3f63ccead2d509a300aab35d0e117352b86343240",
+      "recoveryAdmissionPath": "work/gold-20260906/wave2656-hosted-repair/admission-41805595539/ROOT_RECOVERY_ADMISSION.json",
+      "recoveryAdmissionSha256": "7D4928D13465167CDB63BC3AAFF548ED62AF49B88922C85F5CFB09CDCAA48D29",
+      "productAdmissionPath": "work/gold-20260906/wave2656-hosted-repair/admission-41805595539/ROOT_PRODUCT_ADMISSION.json",
+      "productAdmissionSha256": "A8136296C6043C4A89A0EFA15143452AF398C140C8142E434B1EDFB4BAEAF1B5",
+      "productAccepted": true,
+      "binaryDigestRecorded": "0c38a217bdcdaae358c2f807181b44f8f52b4bb22674a292c3fa5cb161b995ad",
+      "binaryArtifactIndependentlyCompared": false
+    }
+  ],
+  "scope": [
+    "Scoped account/purpose completion and quarantine isolation",
+    "Incomplete destination stays pending",
+    "Input-bound completion and schema54 migration",
+    "Target-bound delivery/quarantine completion and schema55 migration",
+    "Actual compiled Paperless lifecycle, authentication negative controls, document preservation and cleanup of both generations"
+  ],
+  "bounds": [
+    "Every recovery identity has exact discovery and actual pass evidence",
+    "Original API ZIP digests, member hashes and producer raw Git source bindings verified",
+    "Product binary digest recorded in receipt but binary artifact not independently compared",
+    "No actual user mailbox delivery or current native/release/whole-Gold qualification"
+  ],
+  "remainingA04": [
+    "Authenticated destination principal and same-URL credential continuity",
+    "Filesystem object identity for configured paths",
+    "Approved target and rendition revisions",
+    "Explicit legacy uncertain-effect reconciliation"
+  ],
+  "localExecutableValidationRan": false,
+  "actualUserMailboxAccepted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

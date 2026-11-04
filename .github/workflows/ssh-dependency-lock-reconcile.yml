@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo update --manifest-path SRC/Cargo.toml -p "russh@$RUSSH_CURRENT" --precise "$RUSSH_TARGET"
-          cargo update --manifest-path SRC/Cargo.toml -p pageant@0.2.3 --precise "$PAGEANT_TARGET"
+          cargo update --manifest-path SRC/Cargo.toml -p pageant --precise "$PAGEANT_TARGET"
           cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features ssh-tunnel > "$RUNNER_TEMP/ssh-lock-metadata.json"
           python3 - <<'PY'
           from pathlib import Path

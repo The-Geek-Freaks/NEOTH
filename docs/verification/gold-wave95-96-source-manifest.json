@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-04T09:24:40.9054033Z",
-  "validationStatus": "HOSTED_SSH_CANDIDATE_NOTICES_PREPARED",
+  "capturedUtc": "2026-11-04T09:39:48.9284362Z",
+  "validationStatus": "EMAIL75_ACCEPTED_FOR_RECORDED_PRODUCER_CURRENT_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -343,8 +343,8 @@
     },
     {
       "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
-      "bytes": 8659,
-      "sha256": "85D232071DCD925B20053548CD45FF1C6CE3A151B35C22BF7062A164FD3D5524"
+      "bytes": 8653,
+      "sha256": "DEE791FBD10022272C0E58E2C786DE1DB4FC7E94658544EC629EEBB2B703A3C4"
     },
     {
       "path": ".github/workflows/udx-transport-regressions.yml",
@@ -758,8 +758,8 @@
     },
     {
       "path": "docs/EMAIL_INGEST_RECOVERY.md",
-      "bytes": 9296,
-      "sha256": "609AF56D883F52507DBAC7C99EEA642BAA013D952AA3F043415D7F915BE6B3EC"
+      "bytes": 10336,
+      "sha256": "453849E6BD1BE54C9A1EC18DC694C37B6D3903004A83065FD8115C1DEDD5E1AA"
     },
     {
       "path": "docs/getting-started.md",
@@ -4797,6 +4797,11 @@
       "sha256": "2D1016678083930515234ECFEE6A6C816C0501A76506978AAE0BB416AC4EE263"
     },
     {
+      "path": "docs/verification/gold-wave2663-email-completion-acceptance.json",
+      "bytes": 3847,
+      "sha256": "DCA4FA6FBDDB27A160429E8E2E3FEBBF6E66E523A87B2E2B1C0AEEF5741F828F"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6038,8 +6043,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2758256,
-      "sha256": "11C952CA51045D433027E05FAB2911E17D81936D47417E9BF50E17DEC13C1BFA"
+      "bytes": 2759984,
+      "sha256": "E35EA7AC8A129910363395A8B6E8BDF7D5C436A4E6ADF815CB4471AF47751D28"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

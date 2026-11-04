@@ -42,13 +42,13 @@ New records are created without replacement. The envelope binds the full raw-bod
 
 Existing legacy hash names, lossy names and renamed records with the raw UID remain ambiguous. Scan/read/parse failures and bounded scan exhaustion also leave work pending. The scan accepts at most4096 entries and16MiB of records, each at most1MiB. Crash partial files require explicit reconciliation. Concurrent legacy writers and hostile parent-directory replacement are outside this migration guarantee. The generic quarantine API retains its existing behavior for other callers.
 
-The scoped completion ledger still lacks destination/input revision binding; completed old entries do not automatically become eligible for replay. W2657 runtime and native qualification remain pending.
+Schema54 and55 add the input and configured-target completion bindings described below. Completed old entries never automatically become eligible for replay. Hosted coverage is recorded in the acceptance section; native qualification remains separate.
 
 ## Incomplete Paperless configuration
 
 A Paperless destination is declared if either its URL or token field is present, including an empty value. Both fields absent disable that destination. A declared destination without both nonempty values remains pending even when the configured Obsidian note was successfully created or found byte-for-byte intact. Repairing credentials allows the existing WAL reconciliation path to run; it grants no second POST for an uncertain historical effect.
 
-Only authenticated Paperless completion and every configured vault completion allow delivered Ingest marking. Durable quarantine remains its separate terminal path. This prevents new premature completions; already marked historical units require explicit reconciliation. W2658 adds a real vault/ledger regression and two destination-state regressions, pending hosted validation.
+Only authenticated Paperless completion and every configured vault completion allow delivered Ingest marking. Durable quarantine remains its separate terminal path. This prevents new premature completions; already marked historical units require explicit reconciliation. W2658 adds a real vault/ledger regression and two destination-state regressions included in the accepted hosted runs below.
 
 ## Input-bound completion (schema54)
 
@@ -58,7 +58,7 @@ A matching completed unit is Seen. Changed input is InputConflict and is exclude
 
 Migration53to54 preserves old completion rows with NULL input. They remain LegacyAmbiguous rather than adopting the current fetched bytes. Triage stays separate. An insertion must be followed by an exact matching completion read; an ignored or conflicting concurrent write is not success.
 
-This is a post-completion input contract. Existing WAL and vault controls still govern uncertain effects before completion. Destination principal and approved target/rendition revisions are not established by this digest. W2659 runtime qualification remains pending.
+This is a post-completion input contract. Existing WAL and vault controls still govern uncertain effects before completion. Destination principal and approved target/rendition revisions are not established by this digest. W2659 is covered by the accepted hosted runs below.
 
 ## Target-bound delivery completion (schema55)
 
@@ -68,4 +68,10 @@ An exact input and delivery context can remain Seen. A changed or unavailable co
 
 Migration54to55 preserves historical rows with unknown disposition and target context. They stay LegacyAmbiguous; current configuration is never backfilled as historical evidence. The existing migration transaction covers both columns and its version stamp. CLI re-triage continues to affect only triage.
 
-This comparison binds configuration spelling and credential availability, not principal identity, token continuity, filesystem-object identity or an approved rendition revision. Those A04 boundaries remain open. The existing WAL still controls uncertain external effects. W2661 hosted runtime qualification remains pending.
+This comparison binds configuration spelling and credential availability, not principal identity, token continuity, filesystem-object identity or an approved rendition revision. Those A04 boundaries remain open. The existing WAL still controls uncertain external effects. W2661 is covered by the accepted75-case hosted run below.
+
+## Hosted acceptance on 2026-11-04
+
+Run41801057446 on cc1646f4fa42bb3311a79822ae5ad566b7faa5aa passed68 exact recovery cases and the compiled product lifecycle. Run41805595539 on11d5bccd305e5f0b1689bdbcb7501c5e18cb85d6 additionally covers the target/disposition changes with75 exact recovery cases. Root verified both original archives per run against GitHub API digests, each discovery/pass pair, source bindings against raw producer Git blobs, and47 product checks including cleanup of both test generations.
+
+The75-case recovery archive has305 entries and26 source bindings; the product receipt has29 source bindings. Its binary digest is recorded but was not independently compared with a downloaded binary artifact. These results are producer-specific hosted evidence, not actual user-mailbox delivery, current native/release qualification or complete Gold acceptance. Detailed provenance: docs/verification/gold-wave2663-email-completion-acceptance.json.

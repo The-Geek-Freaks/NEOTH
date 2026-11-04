@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_SSH_CANDIDATE_NOTICES_PREPARED",
+  "status": "EMAIL75_ACCEPTED_FOR_RECORDED_PRODUCER_CURRENT_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 464742,
-    "sha256": "EB70B410D77A219B7A08B2495F577886799FB08116F301CDA9FEA852F54DE80E"
+    "bytes": 464966,
+    "sha256": "7D128AACB4E5ED265D8986598FBE1F1DF28596D852F9652BD095E230A785E70A"
   },
-  "sourceInputs": 2537,
+  "sourceInputs": 2538,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -92033,6 +92033,38 @@
       }
     ],
     "note": "Same hosted resolver candidate includes generated/checked notices; source lock and manifest hash-fixed; no local runtime or dependency upgrade.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2663EmailHostedAcceptance": {
+    "base": "3183ce3c7ee7db675e132c682eb192d72b22aa44",
+    "sources": [
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 8653,
+        "sha256": "DEE791FBD10022272C0E58E2C786DE1DB4FC7E94658544EC629EEBB2B703A3C4",
+        "blob": "89b12f4f5f96da7e4e7e0aa0bf5a83b5a45fa650"
+      },
+      {
+        "path": "docs/EMAIL_INGEST_RECOVERY.md",
+        "bytes": 10336,
+        "sha256": "453849E6BD1BE54C9A1EC18DC694C37B6D3903004A83065FD8115C1DEDD5E1AA",
+        "blob": "2c81a3b1b82fd89f6bad1fa0bc6aeedd8d4b6e1e"
+      },
+      {
+        "path": "docs/verification/gold-wave2663-email-completion-acceptance.json",
+        "bytes": 3847,
+        "sha256": "DCA4FA6FBDDB27A160429E8E2E3FEBBF6E66E523A87B2E2B1C0AEEF5741F828F",
+        "blob": "22f29d6b45389846acbaaadc6eb8713dbe67b6e4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2759984,
+        "sha256": "E35EA7AC8A129910363395A8B6E8BDF7D5C436A4E6ADF815CB4471AF47751D28",
+        "blob": "0f47b075494e3891440e114d2875fd9ade309145"
+      }
+    ],
+    "note": "68 and75 exact recovery cases plus both compiled product lifecycle proofs admitted for their exact producers; no local runtime, actual user mailbox or whole-Gold claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
