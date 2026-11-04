@@ -33,3 +33,13 @@ Schema 52-to-53 creates the new scoped table transactionally. Legacy rows retain
 Explicit `--include-seen` allows CLI re-triage and records only the scoped triage result. It does not clear the legacy row, unblock cron ingestion or authorize a second Paperless POST. Legacy reconciliation needs independent mailbox/effect evidence and remains a separate explicit recovery task. Destination/rendition revisions and the remaining A04 adapter contracts also remain open.
 
 W2655 source and regression selection are prepared for hosted validation. Local executable validation remains prohibited by the BSOD hold; source integration alone is not runtime or Gold acceptance.
+
+## Account-bound cron quarantine
+
+Cron quarantine now uses the same full mailbox-unit identity as the WAL and vault. The identifier printed by quarantine list is email-<digest>; pass it unchanged to quarantine show. These commands inspect retained content and do not authorize delivery.
+
+New records are created without replacement. The envelope binds the full raw-body SHA256 in addition to the visible 512-character preview, reason and findings. An exact retry preserves the first timestamp and file bytes, then synchronizes the file before reporting completion. A changed body, edited record, partial file, unexpected schema, link or nonregular target stays pending.
+
+Existing legacy hash names, lossy names and renamed records with the raw UID remain ambiguous. Scan/read/parse failures and bounded scan exhaustion also leave work pending. The scan accepts at most4096 entries and16MiB of records, each at most1MiB. Crash partial files require explicit reconciliation. Concurrent legacy writers and hostile parent-directory replacement are outside this migration guarantee. The generic quarantine API retains its existing behavior for other callers.
+
+The scoped completion ledger still lacks destination/input revision binding; completed old entries do not automatically become eligible for replay. W2657 runtime and native qualification remain pending.

@@ -21,6 +21,9 @@
 //!
 //! Both commands call the free functions in this module; no Tokio required.
 
+#[cfg(any(test, feature = "imap_fetch"))]
+pub(crate) mod email;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

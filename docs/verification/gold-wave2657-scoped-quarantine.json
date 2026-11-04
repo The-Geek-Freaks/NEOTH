@@ -1,0 +1,80 @@
+{
+  "schema": "neoth.wave2657.scoped-quarantine.v1",
+  "base": "b23092667f1c9cc38e84391c5a5e8e2223b28135",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_PREPARED_HOSTED_PENDING",
+  "problem": "Cron quarantine previously replaced files keyed only by raw Message-ID/UID; different accounts could overwrite one another.",
+  "behavior": [
+    "Same historical mailbox-unit identity as WAL and vault, exposed as email-<full SHA256> for list/show",
+    "Create-only private durable record; canonical schema and full raw-body SHA256 bind the preview and findings",
+    "Exact retry preserves first timestamp and every stored byte; partial/edited/nonregular/oversized targets conflict",
+    "Hashed, lossy and renamed legacy records remain ambiguous; bounded scan failures do not prove absence",
+    "All three cron quarantine branches require successful persistence before existing Ingest marking; ledger errors still propagate"
+  ],
+  "tests": [
+    {
+      "test": "paperless::quarantine::email::tests::separate_account_ids_are_preserved_and_loadable",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::quarantine::email::tests::retry_retains_first_timestamp_and_exact_bytes",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::quarantine::email::tests::body_drift_beyond_preview_and_reason_drift_conflict",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::quarantine::email::tests::legacy_files_block_even_if_hashed_lossy_or_renamed",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::quarantine::email::tests::unsafe_targets_and_invalid_ids_fail_closed",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::quarantine::email::tests::concurrent_creation_has_one_winner_and_retry_is_idempotent",
+      "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+      "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_quarantine_binds_accounts_and_blocks_conflicting_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "0C0039A8E1636188ABF7767C99D829CABEB02EADA44E3D532F6C6BC497F088AC",
+      "newCase": true,
+      "requiresImapFeature": true
+    }
+  ],
+  "portableAdded": 6,
+  "portableTotal": 3225,
+  "paperlessSelection": 59,
+  "limits": [
+    "No hostile concurrent parent-directory replacement guarantee",
+    "Mixed old/new executables or unrelated generic writers are not a synchronized migration; legacy observations do not authorize external delivery",
+    "Crash partial files and malformed legacy records need explicit reconciliation",
+    "Completed scoped Ingest rows still lack input/destination/revision binding; A04 remains open",
+    "Windows parent synchronization retains existing atomic-write platform semantics; no new native durability claim"
+  ],
+  "review": "Prompt-only independent source review; no tool or runtime execution by subagents",
+  "localRuntimeExecuted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

@@ -21,9 +21,9 @@
 //!    fail-closed (quarantined, not forwarded).
 //!
 //! 4. **Quarantine gate** — any HIGH finding → item written to
-//!    `~/.neoth/paperless_quarantine/` via `paperless::quarantine::quarantine_item`.
+//!    `~/.neoth/paperless_quarantine/` via the create-only, account-bound cron quarantine writer.
 //!    The document never reaches Paperless NGX or Obsidian until the operator
-//!    releases it via `neoth paperless quarantine show/list`.
+//!    reviews it with `neoth paperless quarantine show/list`; these commands do not authorize delivery.
 //!
 //! 5. **Obsidian note** — the cron-only writer uses an account-bound full unit
 //!    digest under `<vault>/<subdir>/Paperless/email-<digest>.md`. It creates
@@ -73,7 +73,6 @@ use crate::email::inbound::{InboundAction, InboundEmail, triage_inbound};
 #[cfg(feature = "imap_fetch")]
 use crate::paperless::quarantine::{
     build_quarantine_item, build_quarantine_item_error, build_quarantine_item_triage,
-    quarantine_item,
 };
 #[cfg(feature = "imap_fetch")]
 use crate::security::content_scanner::scan_content;
@@ -461,7 +460,9 @@ pub async fn run_email_ingest_tick(
             InboundAction::DroppedAtSanitizer | InboundAction::Quarantine => {
                 let item =
                     build_quarantine_item_triage(uid, from, subject, now_unix, body, &triage);
-                match quarantine_item(neoth_home, &item) {
+                match quarantine_cron_email(
+                    neoth_home, &imap_cfg, uid_validity, email, &item,
+                ) {
                     Ok(_) => {
                         warn!(
                             email_key_len,
@@ -475,7 +476,7 @@ pub async fn run_email_ingest_tick(
                     Err(_) => {
                         warn!(
                             email_key_len,
-                            "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded"
+                            "email_ingest_cron: triage-quarantine conflict or write failure — item remains pending, not forwarded"
                         );
                     }
                 }
@@ -503,7 +504,9 @@ pub async fn run_email_ingest_tick(
 
         if scan.quarantine {
             let item = build_quarantine_item(uid, from, subject, now_unix, body, &scan);
-            match quarantine_item(neoth_home, &item) {
+            match quarantine_cron_email(
+                    neoth_home, &imap_cfg, uid_validity, email, &item,
+                ) {
                 Ok(_) => {
                     warn!(
                         email_key_len,
@@ -522,7 +525,7 @@ pub async fn run_email_ingest_tick(
                     // Quarantine write failed — log but do NOT forward.
                     warn!(
                         email_key_len,
-                        "email_ingest_cron: quarantine write failed — item dropped, not forwarded"
+                        "email_ingest_cron: quarantine conflict or write failure — item remains pending, not forwarded"
                     );
                 }
             }
@@ -591,7 +594,9 @@ pub async fn run_email_ingest_tick(
                         body,
                         &format!("{e:#}"),
                     );
-                    match quarantine_item(neoth_home, &err_item) {
+                    match quarantine_cron_email(
+                    neoth_home, &imap_cfg, uid_validity, email, &err_item,
+                ) {
                         Ok(_) => {
                             warn!(
                                 email_key_len,
@@ -733,6 +738,27 @@ fn sanitize_doc_id(uid: &str) -> String {
         })
         .take(80)
         .collect()
+}
+
+/// Persist a scoped quarantine witness before the caller records Ingest.
+/// Conflicts never become completion and never authorize a downstream effect.
+#[cfg(feature = "imap_fetch")]
+fn quarantine_cron_email(
+    home: &Path,
+    cfg: &ImapConnectionConfig,
+    uid_validity: u32,
+    email: &InboundEmail,
+    item: &crate::paperless::quarantine::QuarantineItem,
+) -> Result<()> {
+    use crate::paperless::quarantine::email::{Outcome, persist};
+
+    let id = mail_vault_doc_id(&cfg.host, cfg.port, &cfg.username, email, uid_validity)?;
+    match persist(home, item, &id, &email.body)? {
+        Outcome::Created | Outcome::AlreadyPresent => Ok(()),
+        Outcome::Conflict | Outcome::LegacyAmbiguous => {
+            anyhow::bail!("email quarantine identity or rendition requires reconciliation")
+        }
+    }
 }
 
 /// Remove completed and legacy-ambiguous units before any sink side effect.
@@ -997,6 +1023,42 @@ mod tests {
                 password: "unused-fixture".into(),
             },
             use_tls: true,
+        }
+    }
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_quarantine_binds_accounts_and_blocks_conflicting_completion() {
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let alice = seen_test_config("alice");
+        let bob = seen_test_config("bob");
+        let mut mail = vault_identity_email("7", Some("<shared>"));
+        let item = build_quarantine_item_error(
+            mail.dedup_key(),
+            &mail.from,
+            &mail.subject,
+            100,
+            &mail.body,
+            "fixture",
+        );
+        quarantine_cron_email(home.path(), &alice, 1, &mail, &item).unwrap();
+        mail.body.push_str(" changed");
+        assert!(quarantine_cron_email(home.path(), &alice, 1, &mail, &item).is_err());
+        let (pending, seen, ambiguous) =
+            filter_unseen(&conn, &alice, 1, vec![mail.clone()]).unwrap();
+        assert_eq!((pending.len(), seen, ambiguous), (1, 0, 0));
+        quarantine_cron_email(home.path(), &bob, 1, &mail, &item).unwrap();
+        mark_processed_email(&conn, &bob, 1, &mail, 101).unwrap();
+        let (pending, seen, ambiguous) =
+            filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
+        assert_eq!((pending.len(), seen, ambiguous), (0, 1, 0));
+        let records = list_quarantine_items(home.path()).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_ne!(records[0].uid, records[1].uid);
+        for cfg in [&alice, &bob] {
+            let id = mail_vault_doc_id(&cfg.host, cfg.port, &cfg.username, &mail, 1).unwrap();
+            assert!(records.iter().any(|record| record.uid == id));
         }
     }
 
