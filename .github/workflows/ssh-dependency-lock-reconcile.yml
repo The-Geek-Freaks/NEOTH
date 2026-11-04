@@ -23,6 +23,7 @@ jobs:
     env:
       EXPECTED_HEAD: ${{ inputs.source_head }}
       CARGO_BUILD_JOBS: 1
+      PYTHONDONTWRITEBYTECODE: '1'
       RUSSH_CURRENT: '0.64.1'
       RUSSH_TARGET: '0.65.0'
       PAGEANT_TARGET: '0.2.5'
@@ -136,6 +137,25 @@ jobs:
           PY
           test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nSRC/neothd/Cargo.toml'
 
+      - name: Generate and verify candidate distribution notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum SRC/Cargo.lock SRC/neothd/Cargo.toml > "$RUNNER_TEMP/ssh-resolved-inputs.sha256"
+          python3 packaging/generate_rust_notices.py --write
+          python3 packaging/generate_rust_notices.py --check
+          sha256sum -c "$RUNNER_TEMP/ssh-resolved-inputs.sha256"
+          test -z "$(git ls-files --others --exclude-standard)"
+          python3 - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only"], text=True
+          ).splitlines())
+          required = {"SRC/Cargo.lock", "SRC/neothd/Cargo.toml"}
+          if not required <= changed <= required | {"THIRD_PARTY_LICENSES"}:
+              raise SystemExit(f"Unexpected candidate files: {sorted(changed)}")
+          PY
+
       - name: Seal exact candidate patch and postimages
         shell: bash
         run: |
@@ -143,12 +163,13 @@ jobs:
           evidence="$RUNNER_TEMP/ssh-dependency-lock"
           mkdir -p "$evidence"
           git rev-parse HEAD > "$evidence/source-head.txt"
-          git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml > "$evidence/candidate.patch"
+          git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml THIRD_PARTY_LICENSES > "$evidence/candidate.patch"
           cp SRC/Cargo.lock "$evidence/Cargo.lock"
           cp SRC/neothd/Cargo.toml "$evidence/neothd-Cargo.toml"
+          cp THIRD_PARTY_LICENSES "$evidence/THIRD_PARTY_LICENSES"
           cp "$RUNNER_TEMP/ssh-lock-delta.json" "$evidence/lock-delta.json"
-          printf 'Russh %s and Pageant %s version/checksum verified; locked ssh-tunnel metadata succeeded; available declared MSRV checked; unknown or missing metadata listed; no compilation or tests ran\n' "$RUSSH_TARGET" "$PAGEANT_TARGET" > "$evidence/validation.txt"
-          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml lock-delta.json validation.txt > SHA256SUMS)
+          printf 'Russh %s and Pageant %s version/checksum verified; locked ssh-tunnel metadata succeeded; available declared MSRV checked; unknown or missing metadata listed; candidate distribution notices regenerated and checked; no compilation or tests ran\n' "$RUSSH_TARGET" "$PAGEANT_TARGET" > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml lock-delta.json validation.txt THIRD_PARTY_LICENSES > SHA256SUMS)
 
       - name: Upload exact candidate for Root review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -142,7 +142,7 @@
   "workflow": ".github/workflows/ssh-dependency-lock-reconcile.yml",
   "bounds": [
     "Exact main producer and pinned manifest preimage",
-    "Read-only token and only two candidate file paths",
+    "Read-only token; only candidate lock, manifest and optional distribution-notice diff",
     "Registry versions and checksums checked against published metadata",
     "All added/removed/changed lock packages reported; declared MSRV checked where metadata exists",
     "Unknown or absent metadata retained as uncertainty",
@@ -155,5 +155,6 @@
   "compilationExecuted": false,
   "runtimeAccepted": false,
   "securityAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "noticeGeneration": "Existing hosted generator writes and checks notices against the resolved candidate; lock/manifest hashes remain fixed and snapshots remain unchanged. Notice postimage is always archived, even without a diff."
 }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_PREPARED_HOSTED_PENDING",
+  "status": "HOSTED_SSH_CANDIDATE_NOTICES_PREPARED",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 464735,
-    "sha256": "8236456A5B19B028BDABF160964034AED3DBE310BF47BB0836C6B4042B823244"
+    "bytes": 464742,
+    "sha256": "EB70B410D77A219B7A08B2495F577886799FB08116F301CDA9FEA852F54DE80E"
   },
   "sourceInputs": 2537,
   "requiredNativeTests": [
@@ -92007,6 +92007,32 @@
       }
     ],
     "note": "Prepare existing main-only read-only SSH dependency candidate; no dependency upgrade or local lock modification; full transitive delta and explicit unknown MSRV reporting.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2662CandidateNotices": {
+    "base": "11d5bccd305e5f0b1689bdbcb7501c5e18cb85d6",
+    "sources": [
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 8659,
+        "sha256": "85D232071DCD925B20053548CD45FF1C6CE3A151B35C22BF7062A164FD3D5524",
+        "blob": "c1d6ea9c2b60ebbbbb7ba021629423d809336e08"
+      },
+      {
+        "path": "docs/verification/gold-wave2662-ssh-dependency-frontier.json",
+        "bytes": 6239,
+        "sha256": "2D1016678083930515234ECFEE6A6C816C0501A76506978AAE0BB416AC4EE263",
+        "blob": "d49799dfd8df830477e4c5d58a3253709d2ab71e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2758256,
+        "sha256": "11C952CA51045D433027E05FAB2911E17D81936D47417E9BF50E17DEC13C1BFA",
+        "blob": "9bf83c2ae100295e7d3e8aab12c049550a9f77b4"
+      }
+    ],
+    "note": "Same hosted resolver candidate includes generated/checked notices; source lock and manifest hash-fixed; no local runtime or dependency upgrade.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
