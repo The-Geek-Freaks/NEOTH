@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 463964,
-    "sha256": "F7E5149DB8C68BE004BEF6B0053CB659ABF35227DBA22375329A0DB3B0924271"
+    "bytes": 464158,
+    "sha256": "4BED6FA31C3366C173366BBF1FC39EC113D3D831C8EA74D14C8C3775E6560577"
   },
-  "sourceInputs": 2533,
+  "sourceInputs": 2534,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
       "junitClass": "neoth"
     },
     {
@@ -19237,13 +19237,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "6F8E8848EF86310CF3BA630DDC219409491B71C67C96AE90C106427F8062ED8D",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
       "junitClass": "neoth"
     },
     {
@@ -19376,6 +19376,24 @@
       "test": "paperless::quarantine::email::tests::concurrent_creation_has_one_winner_and_retry_is_idempotent",
       "sourcePath": "SRC/neothd/src/paperless/quarantine/email/tests.rs",
       "sourceSha256": "ECF8082F2B088CCF97EFBFB2FA54A94803C8AFF5C7E2EBF47C6C109CE72B58A4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
       "junitClass": "neoth"
     }
   ],
@@ -91553,6 +91571,50 @@
       }
     ],
     "note": "Exact hosted rustfmt postimages imported for two owned paths;59-case and source inventories rebound;local runtime prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2658": {
+    "base": "fee1ae6a52b3f3e5e8e6a20f196e686b20584fb2",
+    "sources": [
+      {
+        "path": ".github/workflows/paperless-product.yml",
+        "bytes": 6836,
+        "sha256": "CB121CADB9C990DB1E7385316672E6B99515EA4F382D2662A27DE9692385D80A",
+        "blob": "cb2a1263cde0d382e3bf1007058467f8e4cad1aa"
+      },
+      {
+        "path": "docs/EMAIL_INGEST_RECOVERY.md",
+        "bytes": 6444,
+        "sha256": "1A503749D3D372B88E8D63E1DDB2270CC8567AE5C7089A6D4CE02F22A9007389",
+        "blob": "5af74c657c8b3f70ae981a1e125e780d2da4f562"
+      },
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 22558,
+        "sha256": "BECE59BE4960478D5D9164BAA280C2826A3446C2EAD12C9029B618F48D4C24D6",
+        "blob": "72fefb227968bb44f66af0571ba59936fc42c43e"
+      },
+      {
+        "path": "docs/verification/gold-wave2658-incomplete-destination.json",
+        "bytes": 2942,
+        "sha256": "2D4C12743FEF22DAEBED55D1B5F7243874331F2C022869DA75B4976C84D52074",
+        "blob": "3cd9dbc0cb8ca58f6635bbdc990fe29cc8b25906"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2750464,
+        "sha256": "79E946E7B98453BBA5EDEA2B2FD61B29981B3F2D71AB0C26518F90AE37411504",
+        "blob": "e3d0ea9e66b92be77f91921ac505c19b193edc24"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 59069,
+        "sha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+        "blob": "59823a231c35848ba5d7e657a4058ac820cfb146"
+      }
+    ],
+    "note": "Incomplete configured Paperless destination blocks delivered completion; all59 preserved plus3 new;52 predecessor source/product archives admitted.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

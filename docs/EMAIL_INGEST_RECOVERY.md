@@ -43,3 +43,9 @@ New records are created without replacement. The envelope binds the full raw-bod
 Existing legacy hash names, lossy names and renamed records with the raw UID remain ambiguous. Scan/read/parse failures and bounded scan exhaustion also leave work pending. The scan accepts at most4096 entries and16MiB of records, each at most1MiB. Crash partial files require explicit reconciliation. Concurrent legacy writers and hostile parent-directory replacement are outside this migration guarantee. The generic quarantine API retains its existing behavior for other callers.
 
 The scoped completion ledger still lacks destination/input revision binding; completed old entries do not automatically become eligible for replay. W2657 runtime and native qualification remain pending.
+
+## Incomplete Paperless configuration
+
+A Paperless destination is declared if either its URL or token field is present, including an empty value. Both fields absent disable that destination. A declared destination without both nonempty values remains pending even when the configured Obsidian note was successfully created or found byte-for-byte intact. Repairing credentials allows the existing WAL reconciliation path to run; it grants no second POST for an uncertain historical effect.
+
+Only authenticated Paperless completion and every configured vault completion allow delivered Ingest marking. Durable quarantine remains its separate terminal path. This prevents new premature completions; already marked historical units require explicit reconciliation. W2658 adds a real vault/ledger regression and two destination-state regressions, pending hosted validation.

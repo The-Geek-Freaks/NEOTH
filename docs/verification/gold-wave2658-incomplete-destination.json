@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.wave2658.incomplete-destination.v1",
+  "base": "fee1ae6a52b3f3e5e8e6a20f196e686b20584fb2",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_PREPARED_HOSTED_PENDING",
+  "problem": "A declared Paperless destination with missing credentials was omitted from the completion set; a successful vault write could permanently mark the whole unit complete.",
+  "behavior": [
+    "Absent URL and token disable Paperless; either present but incomplete keeps delivery pending",
+    "Ready Paperless requires authenticated Completed plus every configured vault sink",
+    "The production completion gate records Ingest only after all destination evidence; quarantine remains separately terminal",
+    "No new queue, replay authority or migration; previously incorrect completion rows require explicit reconciliation"
+  ],
+  "tests": [
+    {
+      "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "newCase": true,
+      "requiresImapFeature": false
+    }
+  ],
+  "portableAdded": 3,
+  "portableTotal": 3228,
+  "paperlessSelection": 62,
+  "predecessor": {
+    "productAccepted": true,
+    "recoveryEntries": 213,
+    "recoveryProofSha256": "CCADBA6D9A338DE1AA2E9CA26ECB9B767F61E52224A4ED4C1B1938B1809B746C",
+    "recoverySourceBindings": 23,
+    "producer": "b23092667f1c9cc38e84391c5a5e8e2223b28135",
+    "run": 41792137067,
+    "exactCases": 52,
+    "productChecks": 47,
+    "productSourceBindings": 29,
+    "productProofSha256": "BAAFF33D44EC9F6AC96C468E755A497955FFAAD68C1EC720B989BAF434C972B5"
+  },
+  "review": "Independent prompt-only review and actual vault/ledger regression prepared; runtime validation pending",
+  "limits": [
+    "Previously completed rows not replayed or silently repaired",
+    "Input, target and approved rendition revision binding remains open",
+    "Predecessor product canary is not a real user-mailbox delivery or current-producer native/Gold acceptance"
+  ],
+  "localRuntimeExecuted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

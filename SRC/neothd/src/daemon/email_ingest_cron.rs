@@ -169,6 +169,65 @@ pub(crate) enum PaperlessReconcileOutcome {
     UnknownOutcome,
 }
 
+#[cfg(any(test, feature = "imap_fetch"))]
+enum PaperlessDestination<'a> {
+    Disabled,
+    Unavailable,
+    Ready { url: &'a str, token: &'a str },
+}
+
+#[cfg(any(test, feature = "imap_fetch"))]
+impl<'a> PaperlessDestination<'a> {
+    fn from_parts(url: Option<&'a str>, token: Option<&'a str>) -> Self {
+        match (url, token) {
+            (None, None) => Self::Disabled,
+            (Some(url), Some(token)) if !url.is_empty() && !token.is_empty() => {
+                Self::Ready { url, token }
+            }
+            _ => Self::Unavailable,
+        }
+    }
+
+    fn configured(&self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    // Missing credentials do not remove a configured destination from the
+    // completion contract. This gate grants no authority to repeat an effect.
+    fn delivery_complete(
+        &self,
+        vault_configured: bool,
+        vault_completed: bool,
+        paperless: Option<PaperlessReconcileOutcome>,
+    ) -> bool {
+        if vault_configured && !vault_completed {
+            return false;
+        }
+        match self {
+            Self::Disabled => vault_configured,
+            Self::Unavailable => false,
+            Self::Ready { .. } => paperless == Some(PaperlessReconcileOutcome::Completed),
+        }
+    }
+
+    fn record_delivery(
+        &self,
+        conn: &rusqlite::Connection,
+        identity: &crate::email::seen_store::scoped::Identity,
+        now_unix: i64,
+        vault: (bool, bool),
+        paperless: Option<PaperlessReconcileOutcome>,
+    ) -> Result<bool> {
+        if !self.delivery_complete(vault.0, vault.1, paperless) {
+            return Ok(false);
+        }
+        crate::email::seen_store::scoped::mark(
+            conn, identity, crate::email::seen_store::scoped::Purpose::Ingest, now_unix,
+        ).context("email_ingest_cron: persist proven delivery completion")?;
+        Ok(true)
+    }
+}
+
 /// The production send closure can run only after this exact writer transaction
 /// appends a durable authenticated claim. An existing claim never grants send.
 #[cfg(any(test, feature = "imap_fetch"))]
@@ -410,21 +469,16 @@ pub async fn run_email_ingest_tick(
         emails.len()
     );
 
-    // Resolve Paperless NGX credentials (optional).
-    let paperless_creds: Option<(String, String)> = {
-        runtime.credentials.paperless_url.as_ref().and_then(|url| {
-            let token = runtime
-                .credentials
-                .paperless_token
-                .as_ref()
-                .map(|secret| secret.expose().to_string())?;
-            if url.is_empty() || token.is_empty() {
-                None
-            } else {
-                Some((url.clone(), token))
-            }
-        })
-    };
+    // Presence declares the destination even if its credentials are incomplete.
+    let paperless_token = runtime
+        .credentials
+        .paperless_token
+        .as_ref()
+        .map(|secret| secret.expose().to_string());
+    let paperless_destination = PaperlessDestination::from_parts(
+        runtime.credentials.paperless_url.as_deref(),
+        paperless_token.as_deref(),
+    );
 
     // Resolve Obsidian vault path.
     let vault: Option<PathBuf> = freedom_config.obsidian_vault.as_deref().map(PathBuf::from);
@@ -528,8 +582,9 @@ pub async fn run_email_ingest_tick(
             continue; // Never reaches Paperless or Obsidian.
         }
 
-        let has_configured_sink = vault.is_some() || paperless_creds.is_some();
-        let mut all_configured_sinks_succeeded = true;
+        let has_configured_sink = vault.is_some() || paperless_destination.configured();
+        let mut vault_succeeded = true;
+        let mut paperless_outcome = None;
 
         // 5. Obsidian note via existing ingest gate (SC-16 sanitizer + vault
         // write). This local, idempotent sink runs before Paperless so a local
@@ -566,11 +621,11 @@ pub async fn run_email_ingest_tick(
                                 "email_ingest_cron: vault identity or rendition conflict; existing note preserved"
                             );
                             vault_conflicts += 1;
-                            all_configured_sinks_succeeded = false;
+                            vault_succeeded = false;
                         }
                         Err(_) => {
                             warn!(email_key_len, "email_ingest_cron: vault write failed");
-                            all_configured_sinks_succeeded = false;
+                            vault_succeeded = false;
                         }
                     }
                 }
@@ -625,9 +680,8 @@ pub async fn run_email_ingest_tick(
 
         // 6. Observe/reconcile each exact unit. Only an authenticated completion
         // permits local seen-state. Every ambiguous effect remains unresent.
-        if all_configured_sinks_succeeded {
-            if let Some((ref url, ref token)) = paperless_creds {
-                all_configured_sinks_succeeded = false;
+        if vault_succeeded {
+            if let PaperlessDestination::Ready { url, token } = &paperless_destination {
                 let (endpoint, title) = match paperless_request_binding(url, subject) {
                     Ok(binding) => binding,
                     Err(_) => {
@@ -658,7 +712,7 @@ pub async fn run_email_ingest_tick(
                 .await;
                 match result {
                     Ok(Ok(PaperlessReconcileOutcome::Completed)) => {
-                        all_configured_sinks_succeeded = true;
+                        paperless_outcome = Some(PaperlessReconcileOutcome::Completed);
                         paperless_completed += 1;
                         info!(
                             email_key_len,
@@ -666,6 +720,7 @@ pub async fn run_email_ingest_tick(
                         );
                     }
                     Ok(Ok(PaperlessReconcileOutcome::AdmissionBlocked)) => {
+                        paperless_outcome = Some(PaperlessReconcileOutcome::AdmissionBlocked);
                         paperless_admission_blocked += 1;
                         warn!(
                             email_key_len,
@@ -673,6 +728,7 @@ pub async fn run_email_ingest_tick(
                         );
                     }
                     Ok(Ok(PaperlessReconcileOutcome::UnknownOutcome)) | Ok(Err(_)) | Err(_) => {
+                        paperless_outcome = Some(PaperlessReconcileOutcome::UnknownOutcome);
                         paperless_unknown += 1;
                         warn!(
                             email_key_len,
@@ -687,8 +743,19 @@ pub async fn run_email_ingest_tick(
                 email_key_len,
                 "email_ingest_cron: no Paperless or Obsidian sink configured — item remains pending"
             );
-        } else if all_configured_sinks_succeeded {
-            mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
+        } else if matches!(paperless_destination, PaperlessDestination::Unavailable) {
+            paperless_admission_blocked += 1;
+            warn!(
+                email_key_len,
+                "email_ingest_cron: configured Paperless destination lacks complete credentials; delivery remains pending"
+            );
+        } else {
+            let identity = crate::email::seen_store::scoped::Identity::inbox(
+                &imap_cfg.host, imap_cfg.port, &imap_cfg.username, email, uid_validity,
+            )?;
+            paperless_destination.record_delivery(
+                &seen_conn, &identity, now_unix, (vault.is_some(), vault_succeeded), paperless_outcome,
+            )?;
         }
     }
 
@@ -810,6 +877,97 @@ fn mark_processed_email(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_paperless_credentials_never_complete_vault_delivery() {
+        for (url, token) in [
+            (Some("https://paperless.example"), None),
+            (Some("https://paperless.example"), Some("")),
+            (None, Some("token")),
+            (Some(""), Some("token")),
+            (Some(""), None),
+            (None, Some("")),
+            (Some(""), Some("")),
+        ] {
+            let destination = PaperlessDestination::from_parts(url, token);
+            assert!(destination.configured());
+            assert!(!destination.delivery_complete(true, true, None));
+            assert!(!destination.delivery_complete(false, true, None));
+            // Even an unrelated completion cannot repair missing configuration.
+            assert!(!destination.delivery_complete(
+                true, true, Some(PaperlessReconcileOutcome::Completed)
+            ));
+        }
+    }
+
+    #[test]
+    fn delivery_requires_every_configured_sink_and_authenticated_paperless_completion() {
+        let disabled = PaperlessDestination::from_parts(None, None);
+        assert!(!disabled.configured());
+        assert!(disabled.delivery_complete(true, true, None));
+        assert!(!disabled.delivery_complete(true, false, None));
+        assert!(!disabled.delivery_complete(false, true, None));
+
+        let ready = PaperlessDestination::from_parts(
+            Some("https://paperless.example"), Some("token")
+        );
+        assert!(ready.configured());
+        for outcome in [
+            None,
+            Some(PaperlessReconcileOutcome::AdmissionBlocked),
+            Some(PaperlessReconcileOutcome::UnknownOutcome),
+        ] {
+            assert!(!ready.delivery_complete(true, true, outcome));
+            assert!(!ready.delivery_complete(false, true, outcome));
+        }
+        let completed = Some(PaperlessReconcileOutcome::Completed);
+        assert!(ready.delivery_complete(false, true, completed));
+        assert!(ready.delivery_complete(true, true, completed));
+        assert!(!ready.delivery_complete(true, false, completed));
+    }
+
+    #[test]
+    fn persisted_vault_with_missing_paperless_token_leaves_ingest_pending() {
+        use crate::email::seen_store::scoped::{self, Identity, Purpose, SeenState};
+        use crate::paperless::email_note::{EmailNoteOutcome, sync_email_to_obsidian};
+
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let email = vault_identity_email("7", Some("<pending@example.com>"));
+        let identity = Identity::inbox("imap.example", 993, "alice", &email, 4).unwrap();
+        let doc_id = mail_vault_doc_id("imap.example", 993, "alice", &email, 4).unwrap();
+        let payload = ingest_ocr_text(&email.body, OcrSource::TesseractDirect, &doc_id).unwrap();
+        let legacy_id = sanitize_doc_id(email.dedup_key());
+        assert_eq!(
+            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH").unwrap(),
+            EmailNoteOutcome::Created
+        );
+        let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), None);
+        assert!(!destination.record_delivery(&conn, &identity, 100, (true, true), None).unwrap());
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Unseen);
+
+        assert_eq!(
+            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH").unwrap(),
+            EmailNoteOutcome::AlreadyPresent
+        );
+        let ready = PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
+        match &ready {
+            PaperlessDestination::Ready { url, token } => {
+                assert_eq!(*url, "https://paperless.example");
+                assert_eq!(*token, "token");
+            }
+            _ => panic!("complete credentials must remain ready"),
+        }
+        assert!(!ready.record_delivery(
+            &conn, &identity, 200, (true, true), Some(PaperlessReconcileOutcome::UnknownOutcome)
+        ).unwrap());
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Unseen);
+        assert!(ready.record_delivery(
+            &conn, &identity, 300, (true, true), Some(PaperlessReconcileOutcome::Completed)
+        ).unwrap());
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Seen);
+    }
 
     fn vault_identity_email(
         uid: &str,
