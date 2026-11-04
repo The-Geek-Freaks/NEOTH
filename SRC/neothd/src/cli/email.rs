@@ -375,6 +375,9 @@ async fn fetch_and_triage(
                     legacy_ambiguous += 1;
                     continue;
                 }
+                SeenState::InputConflict => {
+                    anyhow::bail!("unexpected input conflict in triage-only completion");
+                }
                 SeenState::Unseen => {}
             }
         }

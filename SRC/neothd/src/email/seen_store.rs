@@ -17,10 +17,10 @@ use rusqlite::{Connection, OptionalExtension};
 #[cfg(any(test, feature = "imap_fetch"))]
 pub(crate) mod scoped;
 
-/// Shared by fresh databases and the transactional v52 -> v53 migration.
+/// Frozen v53 definition used only by the transactional v52 -> v53 migration.
 /// Historical rows remain in idx_email_seen: their mailbox and purpose cannot
 /// be reconstructed from an unscoped Message-ID or UID.
-pub(crate) const SCOPED_SCHEMA_SQL: &str = r#"
+pub(crate) const SCOPED_SCHEMA_V53_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS idx_email_seen_scoped (
     unit_sha256 TEXT NOT NULL CHECK (
         length(unit_sha256) = 64 AND unit_sha256 NOT GLOB '*[^0-9a-f]*'
@@ -31,6 +31,29 @@ CREATE TABLE IF NOT EXISTS idx_email_seen_scoped (
 );
 "#;
 
+/// Current fresh schema; NULL input remains explicitly unbound.
+/// Historical rows remain in idx_email_seen: their mailbox and purpose cannot
+/// be reconstructed from an unscoped Message-ID or UID.
+pub(crate) const SCOPED_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS idx_email_seen_scoped (
+    unit_sha256 TEXT NOT NULL CHECK (
+        length(unit_sha256) = 64 AND unit_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    purpose TEXT NOT NULL CHECK (purpose IN ('triage', 'ingest')),
+    first_seen_unix INTEGER NOT NULL,
+    input_sha256 TEXT CHECK (input_sha256 IS NULL OR (
+        length(input_sha256) = 64 AND input_sha256 NOT GLOB '*[^0-9a-f]*'
+    )),
+    PRIMARY KEY (unit_sha256, purpose)
+);
+"#;
+
+pub(crate) const SCOPED_INPUT_COLUMN_SQL: &str = r#"
+ALTER TABLE idx_email_seen_scoped ADD COLUMN input_sha256 TEXT
+    CHECK (input_sha256 IS NULL OR (
+        length(input_sha256) = 64 AND input_sha256 NOT GLOB '*[^0-9a-f]*'
+    ));
+"#;
 /// `true` if this dedup key was already recorded (already triaged).
 pub fn is_seen(conn: &Connection, dedup_key: &str) -> Result<bool> {
     let found: Option<i64> = conn

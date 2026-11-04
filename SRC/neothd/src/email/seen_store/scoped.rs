@@ -3,7 +3,8 @@
 //! or permission to repeat an external effect. CLI re-triage cannot clear it.
 
 use anyhow::{Context, Result, ensure};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 use crate::email::inbound::InboundEmail;
 
@@ -27,6 +28,7 @@ pub(crate) enum SeenState {
     Unseen,
     Seen,
     LegacyAmbiguous,
+    InputConflict,
 }
 
 /// Constructed from the same mailbox identity used by existing Paperless WAL
@@ -34,6 +36,7 @@ pub(crate) enum SeenState {
 pub(crate) struct Identity {
     unit_sha256: String,
     legacy_key: String,
+    input_sha256: String,
 }
 
 pub(crate) fn mail_key(email: &InboundEmail, uid_validity: u32) -> Result<String> {
@@ -62,26 +65,44 @@ impl Identity {
             "email seen-state requires a complete mailbox identity"
         );
         let mail_key = mail_key(email, uid_validity)?;
+        // UID/Message-ID are already bound by the immutable mailbox unit.
+        // These exact immutable inputs drive triage and the downstream rendition.
+        let input = serde_json::to_vec(&(
+            "neoth.email-input.v1",
+            &email.from,
+            &email.from_domain,
+            &email.subject,
+            &email.body,
+            &email.attachment_filenames,
+            &email.auth_results,
+        )).context("bind full email input")?;
         Ok(Self {
             unit_sha256: crate::wal::paperless_post_receipts::mail_unit_sha256(
                 host, port, username, &mail_key,
             ),
             legacy_key: email.dedup_key().to_owned(),
+            input_sha256: format!("{:x}", Sha256::digest(&input)),
         })
     }
 }
 
 pub(crate) fn state(conn: &Connection, identity: &Identity, purpose: Purpose) -> Result<SeenState> {
-    let found: bool = conn
+    let found: Option<Option<String>> = conn
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM idx_email_seen_scoped \
-             WHERE unit_sha256 = ?1 AND purpose = ?2)",
+            "SELECT input_sha256 FROM idx_email_seen_scoped \
+             WHERE unit_sha256 = ?1 AND purpose = ?2",
             rusqlite::params![identity.unit_sha256, purpose.as_str()],
             |row| row.get(0),
         )
+        .optional()
         .context("query scoped email completion")?;
-    if found {
-        return Ok(SeenState::Seen);
+    if let Some(input) = found {
+        return Ok(match (purpose, input) {
+            (Purpose::Triage, _) => SeenState::Seen,
+            (Purpose::Ingest, None) => SeenState::LegacyAmbiguous,
+            (Purpose::Ingest, Some(input)) if input == identity.input_sha256 => SeenState::Seen,
+            (Purpose::Ingest, Some(_)) => SeenState::InputConflict,
+        });
     }
     if super::is_seen(conn, &identity.legacy_key)? {
         return Ok(SeenState::LegacyAmbiguous);
@@ -99,20 +120,20 @@ pub(crate) fn mark(
 ) -> Result<()> {
     if purpose == Purpose::Ingest {
         ensure!(
-            state(conn, identity, purpose)? != SeenState::LegacyAmbiguous,
-            "legacy email completion has unknown mailbox/purpose; reconciliation required"
+            matches!(state(conn, identity, purpose)?, SeenState::Unseen | SeenState::Seen),
+            "legacy or changed email input requires explicit reconciliation"
         );
     }
-    let written = conn
-        .execute(
-            "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix) \
-         VALUES (?1, ?2, ?3) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
-            rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix],
+    let input = (purpose == Purpose::Ingest).then_some(identity.input_sha256.as_str());
+    conn.execute(
+            "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix, input_sha256) \
+         VALUES (?1, ?2, ?3, ?4) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
+            rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix, input],
         )
         .context("record scoped email completion")?;
     ensure!(
-        written == 1 || state(conn, identity, purpose)? == SeenState::Seen,
-        "scoped email completion was not recorded"
+        state(conn, identity, purpose)? == SeenState::Seen,
+        "scoped email completion was not recorded for this input"
     );
     Ok(())
 }

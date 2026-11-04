@@ -449,12 +449,19 @@ pub async fn run_email_ingest_tick(
     // the ledger cannot be opened or queried.
     let seen_conn = crate::memory::store::open(&neoth_home.join("views.db"))
         .context("email_ingest_cron: open durable email seen-state")?;
-    let (emails, skipped_seen, legacy_ambiguous) =
+    let (emails, skipped_seen, legacy_ambiguous, input_conflicts) =
         filter_unseen(&seen_conn, &imap_cfg, uid_validity, fetched)?;
     if legacy_ambiguous > 0 {
         warn!(
             legacy_ambiguous,
             "email_ingest_cron: legacy completion has unknown account/purpose; reconciliation required"
+        );
+    }
+
+    if input_conflicts > 0 {
+        warn!(
+            input_conflicts,
+            "email_ingest_cron: completed mailbox units contain changed input; reconciliation required"
         );
     }
 
@@ -848,21 +855,23 @@ fn filter_unseen(
     cfg: &ImapConnectionConfig,
     uid_validity: u32,
     emails: Vec<InboundEmail>,
-) -> Result<(Vec<InboundEmail>, usize, usize)> {
+) -> Result<(Vec<InboundEmail>, usize, usize, usize)> {
     use crate::email::seen_store::scoped::{self, Identity, Purpose, SeenState};
 
     let mut unseen = Vec::with_capacity(emails.len());
     let mut skipped = 0usize;
     let mut ambiguous = 0usize;
+    let mut input_conflicts = 0usize;
     for email in emails {
         let identity = Identity::inbox(&cfg.host, cfg.port, &cfg.username, &email, uid_validity)?;
         match scoped::state(conn, &identity, Purpose::Ingest)? {
             SeenState::Seen => skipped += 1,
             SeenState::LegacyAmbiguous => ambiguous += 1,
+            SeenState::InputConflict => input_conflicts += 1,
             SeenState::Unseen => unseen.push(email),
         }
     }
-    Ok((unseen, skipped, ambiguous))
+    Ok((unseen, skipped, ambiguous, input_conflicts))
 }
 
 /// Commit only after quarantine or all configured sinks completed. A failed
@@ -1012,6 +1021,29 @@ mod tests {
             scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
             SeenState::Seen
         );
+    }
+
+
+    #[cfg(feature = "imap_fetch")]
+    #[test]
+    fn cron_changed_input_conflicts_without_acknowledging_mixed_batch() {
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let cfg = seen_test_config("alice");
+        let original = vault_identity_email("7", Some("<bound>"));
+        mark_processed_email(&conn,&cfg,1,&original,100).unwrap();
+        let mut changed = original.clone();
+        changed.body.push_str(" changed");
+        let fresh = vault_identity_email("8",Some("<fresh>"));
+        let (remaining,seen,ambiguous,conflicts) =
+            filter_unseen(&conn,&cfg,1,vec![changed.clone(),fresh]).unwrap();
+        assert_eq!((remaining.len(),seen,ambiguous,conflicts),(1,0,0,1));
+        assert_eq!(remaining[0].dedup_key(),"<fresh>");
+        mark_processed_email(&conn,&cfg,1,&remaining[0],200).unwrap();
+        assert!(mark_processed_email(&conn,&cfg,1,&changed,200).is_err());
+        let (remaining,seen,ambiguous,conflicts) =
+            filter_unseen(&conn,&cfg,2,vec![changed,original]).unwrap();
+        assert_eq!((remaining.len(),seen,ambiguous,conflicts),(0,1,0,1));
     }
 
     fn vault_identity_email(
@@ -1248,13 +1280,13 @@ mod tests {
         quarantine_cron_email(home.path(), &alice, 1, &mail, &item).unwrap();
         mail.body.push_str(" changed");
         assert!(quarantine_cron_email(home.path(), &alice, 1, &mail, &item).is_err());
-        let (pending, seen, ambiguous) =
+        let (pending, seen, ambiguous, input_conflicts) =
             filter_unseen(&conn, &alice, 1, vec![mail.clone()]).unwrap();
-        assert_eq!((pending.len(), seen, ambiguous), (1, 0, 0));
+        assert_eq!((pending.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
         quarantine_cron_email(home.path(), &bob, 1, &mail, &item).unwrap();
         mark_processed_email(&conn, &bob, 1, &mail, 101).unwrap();
-        let (pending, seen, ambiguous) = filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
-        assert_eq!((pending.len(), seen, ambiguous), (0, 1, 0));
+        let (pending, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &bob, 1, vec![mail.clone()]).unwrap();
+        assert_eq!((pending.len(), seen, ambiguous, input_conflicts), (0, 1, 0, 0));
         let records = list_quarantine_items(home.path()).unwrap();
         assert_eq!(records.len(), 2);
         assert_ne!(records[0].uid, records[1].uid);
@@ -1276,15 +1308,15 @@ mod tests {
         let mail = vault_identity_email("7", None);
         let id = Identity::inbox(&alice.host, alice.port, &alice.username, &mail, 1).unwrap();
         scoped::mark(&conn, &id, Purpose::Triage, 100).unwrap();
-        let (fresh, seen, ambiguous) = filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
-        assert_eq!((fresh.len(), seen, ambiguous), (1, 0, 0));
+        let (fresh, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &alice, 1, vec![mail]).unwrap();
+        assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
         mark_processed_email(&conn, &alice, 1, &fresh[0], 101).unwrap();
-        let (fresh, seen, ambiguous) = filter_unseen(&conn, &alice, 1, fresh).unwrap();
-        assert_eq!((fresh.len(), seen, ambiguous), (0, 1, 0));
+        let (fresh, seen, ambiguous, input_conflicts) = filter_unseen(&conn, &alice, 1, fresh).unwrap();
+        assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (0, 1, 0, 0));
         for (cfg, epoch) in [(&bob, 1), (&alice, 2)] {
-            let (fresh, seen, ambiguous) =
+            let (fresh, seen, ambiguous, input_conflicts) =
                 filter_unseen(&conn, cfg, epoch, vec![vault_identity_email("7", None)]).unwrap();
-            assert_eq!((fresh.len(), seen, ambiguous), (1, 0, 0));
+            assert_eq!((fresh.len(), seen, ambiguous, input_conflicts), (1, 0, 0, 0));
         }
     }
 
@@ -1298,9 +1330,9 @@ mod tests {
         let legacy = vault_identity_email("7", Some("<legacy>"));
         assert!(mark_processed_email(&conn, &cfg, 1, &legacy, 101).is_err());
         let fresh = vault_identity_email("8", Some("<fresh>"));
-        let (remaining, seen, ambiguous) =
+        let (remaining, seen, ambiguous, input_conflicts) =
             filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
-        assert_eq!((remaining.len(), seen, ambiguous), (1, 0, 1));
+        assert_eq!((remaining.len(), seen, ambiguous, input_conflicts), (1, 0, 1, 0));
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
         mark_processed_email(&conn, &cfg, 1, &remaining[0], 101).unwrap();
     }
@@ -1347,9 +1379,10 @@ mod tests {
         // message; a genuinely new Message-ID must remain in the batch.
         let moved = email("99", Some("<stable@example.com>"));
         let fresh = email("100", Some("<fresh@example.com>"));
-        let (unseen, skipped, ambiguous) =
+        let (unseen, skipped, ambiguous, input_conflicts) =
             filter_unseen(&conn, &cfg, 8, vec![moved, fresh]).unwrap();
         assert_eq!(ambiguous, 0);
+        assert_eq!(input_conflicts, 0);
         assert_eq!(skipped, 1);
         assert_eq!(unseen.len(), 1);
         assert_eq!(unseen[0].dedup_key(), "<fresh@example.com>");

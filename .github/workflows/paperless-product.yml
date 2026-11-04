@@ -65,7 +65,7 @@ jobs:
           catalog_path = root / "docs/verification/gold-wave2557-email-paperless-recovery-tests.json"
           catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
           cases = catalog["requiredTests"]
-          assert len(cases) == 62 and len({case["test"] for case in cases}) == 62
+          assert len(cases) == 68 and len({case["test"] for case in cases}) == 68
           bindings = {}
           for case in cases:
               assert not any(char.isspace() for char in case["test"])

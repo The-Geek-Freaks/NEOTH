@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2659.input-bound-completion.v1",
+  "base": "b73556b6c2c80f96cf93d475ce8d663bdbb5738c",
+  "roadmap": "ADOPT-20261012-A04",
+  "status": "SOURCE_PREPARED_HOSTED_PENDING",
+  "schemaVersion": 54,
+  "owner": "Existing scoped email completion table in views.db; original WAL authority unchanged",
+  "behavior": [
+    "New Ingest completions bind a versioned SHA256 of sender, domain, subject, full body, ordered attachments and authentication results",
+    "Historical unit hashes and Message-ID/UID fallback remain unchanged",
+    "Exact inputs retain Seen; changed input is InputConflict; migrated NULL remains LegacyAmbiguous without replay",
+    "Triage stays distinct; conflicting inserts and ignored or altered writes cannot claim completion",
+    "Cron filters only the affected unit and exposes conflict counts; rotating BODY.PEEK UID selection remains non-acknowledging"
+  ],
+  "tests": [
+    {
+      "test": "email::seen_store::scoped::tests::input_bound_completion_rejects_every_changed_field_without_rewriting",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::input_v53_column_collision_preserves_version_and_rows",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::input_conflicting_concurrent_marks_cannot_adopt_the_winner",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "C97228C598C4C334E0B2895CE803C50983A9949F219E87B3706B81A0903BF135",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "daemon::email_ingest_cron::tests::cron_changed_input_conflicts_without_acknowledging_mixed_batch",
+      "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sourceSha256": "C5D94E1E7779BFA044D3CE5AEF2506724D58FA83B19C439E8607B076045FEA75",
+      "newCase": true,
+      "requiresImapFeature": true
+    }
+  ],
+  "portableAdded": 5,
+  "portableTotal": 3233,
+  "paperlessSelection": 68,
+  "review": "Independent prompt-only review found no concrete blocker; concurrent test uses5-second busy timeout and reads final conflict after joins",
+  "limits": [
+    "Input binding proves a completed rendition input only, not pre-effect authority",
+    "Target principal, destination and approved rendition revisions remain open",
+    "No automatic legacy adoption, reconciliation or resend",
+    "Runtime, native, release and Gold qualification remain pending"
+  ],
+  "predecessor": {
+    "status": "in_progress",
+    "cases": 62,
+    "producer": "b73556b6c2c80f96cf93d475ce8d663bdbb5738c",
+    "run": 41797117530
+  },
+  "localRuntimeExecuted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

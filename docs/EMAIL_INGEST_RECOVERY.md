@@ -49,3 +49,13 @@ The scoped completion ledger still lacks destination/input revision binding; com
 A Paperless destination is declared if either its URL or token field is present, including an empty value. Both fields absent disable that destination. A declared destination without both nonempty values remains pending even when the configured Obsidian note was successfully created or found byte-for-byte intact. Repairing credentials allows the existing WAL reconciliation path to run; it grants no second POST for an uncertain historical effect.
 
 Only authenticated Paperless completion and every configured vault completion allow delivered Ingest marking. Durable quarantine remains its separate terminal path. This prevents new premature completions; already marked historical units require explicit reconciliation. W2658 adds a real vault/ledger regression and two destination-state regressions, pending hosted validation.
+
+## Input-bound completion (schema54)
+
+New Ingest completions bind the exact sender, sender domain, subject, full raw body, ordered attachment names and Authentication-Results through a versioned SHA256. The existing mailbox-unit identity still binds Message-ID or UIDVALIDITY/UID; changing only the UID of the same Message-ID does not invalidate completion.
+
+A matching completed unit is Seen. Changed input is InputConflict and is excluded from sink effects; the cron reports its own conflict count while continuing independent eligible messages. This comparison does not authorize a new delivery. The rotating IMAP page cursor and BODY.PEEK behavior remain selection-only and do not acknowledge or remove conflicted messages.
+
+Migration53to54 preserves old completion rows with NULL input. They remain LegacyAmbiguous rather than adopting the current fetched bytes. Triage stays separate. An insertion must be followed by an exact matching completion read; an ignored or conflicting concurrent write is not success.
+
+This is a post-completion input contract. Existing WAL and vault controls still govern uncertain effects before completion. Destination principal and approved target/rendition revisions are not established by this digest. W2659 runtime qualification remains pending.

@@ -384,7 +384,25 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "A04: scope email completion by mailbox, epoch and purpose",
         run: migration_v52_to_v53,
     },
+    Migration {
+        from: 53,
+        to: 54,
+        description: "A04: retain the full input binding for email Ingest completion",
+        run: migration_v53_to_v54,
+    },
 ];
+
+pub(crate) fn migration_v53_to_v54(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('idx_email_seen_scoped') \
+         WHERE name='input_sha256' COLLATE NOCASE)",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(!exists, "v53→v54: conflicting email input binding column");
+    conn.execute_batch(crate::email::seen_store::SCOPED_INPUT_COLUMN_SQL)
+        .context("v53→v54: retain unbound legacy completions without adopting current input")
+}
 
 pub(crate) fn migration_v52_to_v53(conn: &Connection) -> Result<()> {
     let exists: bool = conn.query_row(
@@ -393,7 +411,7 @@ pub(crate) fn migration_v52_to_v53(conn: &Connection) -> Result<()> {
         |row| row.get(0),
     )?;
     ensure!(!exists, "v52→v53: conflicting scoped email object");
-    conn.execute_batch(crate::email::seen_store::SCOPED_SCHEMA_SQL)
+    conn.execute_batch(crate::email::seen_store::SCOPED_SCHEMA_V53_SQL)
         .context("v52→v53: add scoped email completion without adopting legacy rows")
 }
 
