@@ -1,0 +1,301 @@
+{
+  "schema": "neoth.wave2664.ssh-advisory-remediation.v1",
+  "base": "68689e1224541c30e1a9db8a979488f2595121b5",
+  "status": "REVIEWED_HOSTED_CANDIDATE_IMPORTED_NATIVE_AND_SECURITY_PENDING",
+  "candidateRun": 41809755304,
+  "candidateUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/41809755304",
+  "producer": "68689e1224541c30e1a9db8a979488f2595121b5",
+  "artifact": 13310579798,
+  "zipSha256": "sha256:9c82e6b5098939998c223c548821fb96a9182c33cc890bc793fbcd2ca7f3b31d",
+  "custodyPath": "work/gold-20260906/wave2662-dependency-frontier/candidate-41809755304/ROOT_CANDIDATE_CUSTODY.json",
+  "custodySha256": "827B146BD13BEB90836F9F3C55594623988FD1F758339CD62034448F06F5FA0D",
+  "importPath": "work/gold-20260906/wave2662-dependency-frontier/candidate-41809755304/ROOT_IMPORT.json",
+  "importSha256": "5A13629345424FE83FCDD3E2A4B6BABBFFF04B262861F6D3C6C6EEF92E2F42E3",
+  "versions": [
+    {
+      "to": "0.65.0",
+      "from": "0.64.1",
+      "name": "russh"
+    },
+    {
+      "to": "0.2.5",
+      "from": "0.2.3",
+      "name": "pageant"
+    }
+  ],
+  "addressedAdvisories": [
+    "GHSA-vp5q-ff62-jwqv",
+    "GHSA-9wfm-jcj8-jfv9",
+    "GHSA-fw5c-8223-6h42",
+    "GHSA-4p9f-7p9m-5vfg",
+    "GHSA-662x-8wvj-2276"
+  ],
+  "patchPaths": [
+    {
+      "oldBlob": "8ee468adcd78e6da65e828fc50d35a7d880567c3",
+      "path": "SRC/Cargo.lock",
+      "newBlob": "ae9bb4fff91c20cc0595ddfc4220cb8b32f0d925",
+      "sha256": "969fa9a6ba14d36f54ea10974e146d774a424d91c6cc6885146a4246a4b5c9c7",
+      "bytes": 387150
+    },
+    {
+      "oldBlob": "fb76d5bef5c3353a3fe124aeefbec5d32be9c8a3",
+      "path": "SRC/neothd/Cargo.toml",
+      "newBlob": "f63dc1b0d1646100e5bb97cb73578f21e03ae6f4",
+      "sha256": "03d269218bbd9e32e72541caa6f99cb14957a86db91f3a4183696ab3c6071a5e",
+      "bytes": 46688
+    }
+  ],
+  "transitiveChanges": [
+    {
+      "before": {
+        "name": "errno",
+        "version": "0.3.14",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+        "dependencies": [
+          "libc",
+          "windows-sys 0.59.0"
+        ]
+      },
+      "after": {
+        "name": "errno",
+        "version": "0.3.14",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+        "dependencies": [
+          "libc",
+          "windows-sys 0.52.0"
+        ]
+      }
+    },
+    {
+      "before": {
+        "name": "rustix",
+        "version": "1.1.4",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
+        "dependencies": [
+          "bitflags 2.11.1",
+          "errno",
+          "libc",
+          "linux-raw-sys 0.12.1",
+          "windows-sys 0.59.0"
+        ]
+      },
+      "after": {
+        "name": "rustix",
+        "version": "1.1.4",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
+        "dependencies": [
+          "bitflags 2.11.1",
+          "errno",
+          "libc",
+          "linux-raw-sys 0.12.1",
+          "windows-sys 0.52.0"
+        ]
+      }
+    },
+    {
+      "before": {
+        "name": "rustls-platform-verifier",
+        "version": "0.7.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0",
+        "dependencies": [
+          "core-foundation 0.10.1",
+          "core-foundation-sys",
+          "jni 0.22.4",
+          "log",
+          "once_cell",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-platform-verifier-android",
+          "rustls-webpki",
+          "security-framework",
+          "security-framework-sys",
+          "webpki-root-certs",
+          "windows-sys 0.59.0"
+        ]
+      },
+      "after": {
+        "name": "rustls-platform-verifier",
+        "version": "0.7.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0",
+        "dependencies": [
+          "core-foundation 0.10.1",
+          "core-foundation-sys",
+          "jni 0.22.4",
+          "log",
+          "once_cell",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-platform-verifier-android",
+          "rustls-webpki",
+          "security-framework",
+          "security-framework-sys",
+          "webpki-root-certs",
+          "windows-sys 0.52.0"
+        ]
+      }
+    },
+    {
+      "before": {
+        "name": "seize",
+        "version": "0.5.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521",
+        "dependencies": [
+          "libc",
+          "windows-sys 0.59.0"
+        ]
+      },
+      "after": {
+        "name": "seize",
+        "version": "0.5.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521",
+        "dependencies": [
+          "libc",
+          "windows-sys 0.52.0"
+        ]
+      }
+    },
+    {
+      "before": {
+        "name": "tempfile",
+        "version": "3.27.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd",
+        "dependencies": [
+          "fastrand",
+          "getrandom 0.4.2",
+          "once_cell",
+          "rustix 1.1.4",
+          "windows-sys 0.59.0"
+        ]
+      },
+      "after": {
+        "name": "tempfile",
+        "version": "3.27.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd",
+        "dependencies": [
+          "fastrand",
+          "getrandom 0.3.4",
+          "once_cell",
+          "rustix 1.1.4",
+          "windows-sys 0.52.0"
+        ]
+      }
+    }
+  ],
+  "transitiveRegistryReview": [
+    {
+      "name": "errno",
+      "version": "0.3.14",
+      "source": "https://crates.io/api/v1/crates/errno/0.3.14",
+      "rustVersion": "1.56",
+      "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+      "yanked": false,
+      "affectedRequirements": [
+        {
+          "crate_id": "windows-sys",
+          "req": ">=0.52, <0.62",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "source": "https://crates.io/api/v1/crates/rustix/1.1.4",
+      "rustVersion": "1.63",
+      "checksum": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
+      "yanked": false,
+      "affectedRequirements": [
+        {
+          "crate_id": "windows-sys",
+          "req": ">=0.52, <0.62",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "name": "rustls-platform-verifier",
+      "version": "0.7.0",
+      "source": "https://crates.io/api/v1/crates/rustls-platform-verifier/0.7.0",
+      "rustVersion": "1.85",
+      "checksum": "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0",
+      "yanked": false,
+      "affectedRequirements": [
+        {
+          "crate_id": "windows-sys",
+          "req": ">=0.52.0, <0.62.0",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "name": "seize",
+      "version": "0.5.1",
+      "source": "https://crates.io/api/v1/crates/seize/0.5.1",
+      "rustVersion": "1.72.0",
+      "checksum": "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521",
+      "yanked": false,
+      "affectedRequirements": [
+        {
+          "crate_id": "windows-sys",
+          "req": ">=0.52, <=0.61",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "source": "https://crates.io/api/v1/crates/tempfile/3.27.0",
+      "rustVersion": "1.63",
+      "checksum": "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd",
+      "yanked": false,
+      "affectedRequirements": [
+        {
+          "crate_id": "windows-sys",
+          "req": ">=0.52, <0.62",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "optional": false
+        },
+        {
+          "crate_id": "getrandom",
+          "req": ">=0.3.0, <0.5",
+          "kind": "normal",
+          "target": "cfg(any(unix, windows, target_os = \"wasi\"))",
+          "optional": true
+        }
+      ]
+    }
+  ],
+  "selectedMetadataLimit": "The ssh-tunnel metadata did not include rustls-platform-verifier or seize. Separate exact-version Crates.io metadata supplied their declared MSRVs 1.85 and1.72.0; this is not compile proof.",
+  "notices": "Existing generator write/check passed against candidate; THIRD_PARTY_LICENSES remains byte-identical to producer and is archived with SHA256",
+  "review": "Independent prompt-only review accepted resolver-produced rebindings subject to relevant native Windows validation; actual patch hunks applied to clean index and all resulting blobs independently matched original archived postimages",
+  "physicalLockWrittenOrStaged": false,
+  "protectedPhysicalLockSha256": "5F274ACA1AD7148414803ADFD6034BAD7F083B915BC8177D8319332AA683CE52",
+  "localExecutableValidationRan": false,
+  "candidateMetadataAccepted": true,
+  "nativeCompilationAccepted": false,
+  "runtimeAccepted": false,
+  "securityAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}
