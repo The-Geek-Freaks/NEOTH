@@ -207,6 +207,27 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+
+    def test_paperless_case_count_has_one_catalog_bound_authority(self) -> None:
+        workflow = (WORKFLOWS / "paperless-product.yml").read_text(encoding="utf-8")
+        declared = re.findall(r"(?m)^  W2557_EXPECTED_CASES: '([1-9][0-9]*)'$", workflow)
+        self.assertEqual(len(declared), 1)
+        expected = int(declared[0])
+        catalog = json.loads(
+            (ROOT / "docs/verification/gold-wave2557-email-paperless-recovery-tests.json")
+            .read_text(encoding="utf-8-sig")
+        )
+        cases = catalog["requiredTests"]
+        self.assertEqual(len(cases), expected)
+        self.assertEqual(len({case["test"] for case in cases}), expected)
+        blocks = [command for command in run_commands(workflow) if "ordinal=0" in command]
+        self.assertEqual(len(blocks), 1)
+        block = blocks[0]
+        self.assertIn('expected_cases = int(os.environ["W2557_EXPECTED_CASES"])', block)
+        self.assertIn('assert len(cases) == expected_cases and len({case["test"] for case in cases}) == expected_cases', block)
+        self.assertIn('test "$ordinal" -eq "$W2557_EXPECTED_CASES"', block)
+        self.assertNotRegex(block, r'test "\$ordinal" -eq [0-9]+')
+
     def test_cli_checkpoint_retains_successful_compile_without_accepting_failed_gates(self) -> None:
         workflow = (WORKFLOWS / "cli-reference.yml").read_text(encoding="utf-8")
         steps = workflow_steps(workflow_jobs(workflow)["generate"])

@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-04T08:23:40.1105907Z",
+  "capturedUtc": "2026-11-04T08:35:29.5495627Z",
   "validationStatus": "SOURCE_PREPARED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -278,8 +278,8 @@
     },
     {
       "path": ".github/workflows/paperless-product.yml",
-      "bytes": 6836,
-      "sha256": "5E2722FB3BDEC94EA9B96E9ECDFF0DBA8A74C2500E7D0F534628BCE6CA005BF1"
+      "bytes": 6977,
+      "sha256": "7EB6C9C5418145BC8B326824C275FB43B07824B94582B5E6EB8E3D73E8A1F275"
     },
     {
       "path": ".github/workflows/paperless-provenance.yml",
@@ -4783,8 +4783,8 @@
     },
     {
       "path": "docs/verification/gold-wave2659-input-bound-completion.json",
-      "bytes": 3812,
-      "sha256": "EEB80B60A6D0FE77BD5060BE9E62FF25EC191262F98AE9736AD7EA20585A7910"
+      "bytes": 4514,
+      "sha256": "BC048469128B7F86A06C73450D2E88D0A74604215A1740F6172958EB7A6339B1"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5793,8 +5793,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 86698,
-      "sha256": "19995A8B7C1F9788BC0A7F1D0EBDBD5B4C4C4840118F10F8C9BF0EC7E8EC0D34"
+      "bytes": 87891,
+      "sha256": "413930A404C75086CA829A6685BE2DA6F039B136FC0006FE17DD5C1D7CA38A80"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -6028,8 +6028,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2752676,
-      "sha256": "B3E5895259531FCFB68A437B16FC5A21DEC30D5AB24868CACCCF937F123F956B"
+      "bytes": 2753881,
+      "sha256": "D5E50AA4D7D39324DEC5C3D89CAB423ABB98713BE2572BD05CD962D73854266A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

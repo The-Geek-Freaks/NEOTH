@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  W2557_EXPECTED_CASES: '68'
   CARGO_BUILD_JOBS: '1'
   CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
@@ -65,7 +66,8 @@ jobs:
           catalog_path = root / "docs/verification/gold-wave2557-email-paperless-recovery-tests.json"
           catalog = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
           cases = catalog["requiredTests"]
-          assert len(cases) == 68 and len({case["test"] for case in cases}) == 68
+          expected_cases = int(os.environ["W2557_EXPECTED_CASES"])
+          assert len(cases) == expected_cases and len({case["test"] for case in cases}) == expected_cases
           bindings = {}
           for case in cases:
               assert not any(char.isspace() for char in case["test"])
@@ -99,7 +101,7 @@ jobs:
               exit 1
             fi
           done < "$W2557_ROOT/cases.txt"
-          test "$ordinal" -eq 59
+          test "$ordinal" -eq "$W2557_EXPECTED_CASES"
 
       - name: Upload exact email recovery evidence
         if: always()

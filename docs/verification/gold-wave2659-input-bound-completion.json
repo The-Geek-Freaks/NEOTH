@@ -67,13 +67,27 @@
     "Runtime, native, release and Gold qualification remain pending"
   ],
   "predecessor": {
-    "status": "in_progress",
+    "status": "failure",
     "cases": 62,
     "producer": "b73556b6c2c80f96cf93d475ce8d663bdbb5738c",
-    "run": 41797117530
+    "run": 41797117530,
+    "acceptedReceiptCount": 62,
+    "fullIndependentCaseAdmission": false,
+    "workflowAccepted": false,
+    "productAccepted": false,
+    "failure": "All 62 per-case receipts accepted; recovery shell retained a terminal ordinal assertion of 59. Product canary skipped.",
+    "originalArtifact": 13306144043,
+    "originalZipSha256": "7901dfe1106a396999badd2b67644f589b31655587933e4ebf1bdf2472d11a54"
   },
   "localRuntimeExecuted": false,
   "nativeAccepted": false,
   "releaseAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "counterRepair": {
+    "expectedCases": 68,
+    "authority": "Workflow-level W2557_EXPECTED_CASES shared by catalog validation and terminal shell assertion",
+    "regression": "test_paperless_case_count_has_one_catalog_bound_authority",
+    "hosted": "pending",
+    "localRuntimeExecuted": false
+  }
 }

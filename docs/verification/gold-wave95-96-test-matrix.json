@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 464352,
-    "sha256": "145A781059DEEB523F4426AD88AA90D2ACC10E05B521751B1437FBB9D4467B42"
+    "sha256": "7BFDBC67173B830D33872832DEDC20A6553757929F3D579E9CCC887AE149FF9F"
   },
   "sourceInputs": 2535,
   "requiredNativeTests": [
@@ -91789,6 +91789,38 @@
       }
     ],
     "note": "Exact hosted Rust format patch imported;68 case selection and3233 portable cases preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2660CaseCount": {
+    "base": "b5bf7dca991338455144fc2be629ab952ccf255c",
+    "sources": [
+      {
+        "path": ".github/workflows/paperless-product.yml",
+        "bytes": 6977,
+        "sha256": "7EB6C9C5418145BC8B326824C275FB43B07824B94582B5E6EB8E3D73E8A1F275",
+        "blob": "7179015fc87925a1ef2b72b90dcf91693859cb0c"
+      },
+      {
+        "path": "docs/verification/gold-wave2659-input-bound-completion.json",
+        "bytes": 4514,
+        "sha256": "BC048469128B7F86A06C73450D2E88D0A74604215A1740F6172958EB7A6339B1",
+        "blob": "c8a96eeef3432849941b66a9695b4736353eb787"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 87891,
+        "sha256": "413930A404C75086CA829A6685BE2DA6F039B136FC0006FE17DD5C1D7CA38A80",
+        "blob": "c7487c2ef006b9444a712dc6213e22bd57bea1d9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2753881,
+        "sha256": "D5E50AA4D7D39324DEC5C3D89CAB423ABB98713BE2572BD05CD962D73854266A",
+        "blob": "5f99fa1154eefbd6258ea8a08eb10b382cc33c74"
+      }
+    ],
+    "note": "Shared catalog-bound count prevents post-success terminal mismatch; 68-case runtime and product qualification pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
