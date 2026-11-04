@@ -126,6 +126,8 @@ def verify_resolution(proof: Path) -> None:
     baseline = tomllib.loads(run("git", "show", "HEAD:SRC/Cargo.lock").decode())["package"]
     current = tomllib.loads((ROOT / "SRC/Cargo.lock").read_text())["package"]
     revision_active = (ASSETS / "candle-core-0.8.4-pin-revision.json").exists()
+    ssh_successor = (ASSETS / "ssh0.65.0-pin-revision.json").exists()
+    require(not ssh_successor or revision_active, "SSH successor lacks predecessor")
     zip_version = "9.0.5" if revision_active else "9.0.0"
     zip_checksum = (
         "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
@@ -133,11 +135,22 @@ def verify_resolution(proof: Path) -> None:
     )
     if revision_active:
         russh = [p for p in current if p["name"] == "russh"]
-        require(len(russh) == 1 and russh[0]["version"] == "0.64.1"
+        russh_version, russh_checksum = (
+            ("0.65.0", "3bb77a4b259312b2abbc541bca1c13cb4e9b61c560a7fd894068c3b92e0c9dc3")
+            if ssh_successor else
+            ("0.64.1", "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58")
+        )
+        require(len(russh) == 1 and russh[0]["version"] == russh_version
                 and russh[0].get("source") == REGISTRY
-                and russh[0].get("checksum")
-                == "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58",
+                and russh[0].get("checksum") == russh_checksum,
                 "Russh revision resolution/checksum mismatch")
+        if ssh_successor:
+            pageant = [p for p in current if p["name"] == "pageant"]
+            require(len(pageant) == 1 and pageant[0]["version"] == "0.2.5"
+                    and pageant[0].get("source") == REGISTRY
+                    and pageant[0].get("checksum")
+                    == "e0bc922d9aa8cfcf598de27b3c6122cb2eeda9d6fe71527a22ebcb7f633540ff",
+                    "Pageant successor resolution/checksum mismatch")
         markdown = [p for p in current if p["name"] == "pulldown-cmark"
                     and p["version"].startswith("0.13.")]
         require(len(markdown) == 1 and markdown[0]["version"] == "0.13.5"

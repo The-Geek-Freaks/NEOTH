@@ -1,0 +1,75 @@
+{
+  "schema": "neoth.wave2665.ssh-provenance-successor.v1",
+  "base": "cafc89de50b7753329f77dc0faf65dc3d92e2877",
+  "status": "EXACT_ADDITIVE_CUSTODY_SUCCESSOR_PREPARED_HOSTED_GATES_PENDING",
+  "failedPreflight": {
+    "cause": "Existing pin receipt authenticated the previous full SRC/neothd/Cargo.toml postimage containing russh0.64.1",
+    "step": "Verify imported Candle ZIP source provenance before Cargo metadata",
+    "producer": "cafc89de50b7753329f77dc0faf65dc3d92e2877",
+    "run": 41810399683,
+    "error": "ValueError: effective source digest"
+  },
+  "unchangedHistoricalAssets": [
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4.crate",
+      "gitBlob": "a6326c842f56bdd444e9e16ebcfd17988bb0220c",
+      "sha256": "06CCF5EE3532E66868516D9B315F73AEC9F34EA1A37AE98514534D458915DBF1"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.json",
+      "gitBlob": "ae813dae19331b5b4814d70d2b693f625214e2f6",
+      "sha256": "2D1DC07ADD0B8FF945A493FE7C696FC155D3BB8BA45741356AC2A97C461B0157"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-zip9.patch",
+      "gitBlob": "9642841ff94c314bf7d70a2e3cf93aa8a401c8be",
+      "sha256": "B525955DFED52C03660A3173911737FCD410E66392865BEC2813CE051C7D4F2F"
+    },
+    {
+      "path": "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json",
+      "gitBlob": "a57e566971d3aac27a549c101a8a350272f392fc",
+      "sha256": "247601E2CA23E2002471BC3FB26C38D26FF944AEAA9584E0593D4D9B3CF16EAA"
+    },
+    {
+      "path": "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch",
+      "gitBlob": "9e62bf851783094bc04b1773a0e01784b6a49309",
+      "sha256": "FDEA622BAC60FAA46A23338134C24631ED8845F0D51A50A3D0037E9D4EA01080"
+    }
+  ],
+  "successor": {
+    "schema": "neoth.ssh-pin-successor.v1",
+    "predecessorRevisionSha256": "247601e2ca23e2002471bc3fb26c38d26ff944aeaa9584e0593d4d9b3cf16eaa",
+    "path": "SRC/neothd/Cargo.toml",
+    "before": "15aac037ffcfe73b3a54a08d991766facbfc97e8aa90daeb849d0ac7b9e67c58",
+    "after": "03d269218bbd9e32e72541caa6f99cb14957a86db91f3a4183696ab3c6071a5e",
+    "edit": {
+      "after": "\"=0.65.0\"",
+      "before": "\"=0.64.1\""
+    }
+  },
+  "implementation": "Exact-byte successor inversion reconstructs the prior reviewed manifest, then all original archive/patch/vendor checks remain active",
+  "resolution": "Successor requires exact russh0.65.0 and pageant0.2.5 registry identities/checksums; old branch remains exact russh0.64.1 when successor absent",
+  "hostedRegressions": {
+    "path": "packaging/test_ssh_pin_revision.py",
+    "cases": [
+      "exact chain and original postimages",
+      "missing successor",
+      "legacy predecessor without successor",
+      "stale predecessor with successor",
+      "rehashed unrelated source mutation",
+      "closed schema and binding mutations",
+      "unsupported pin",
+      "duplicate successor token",
+      "linked successor receipt",
+      "mixed resolved Russh and Pageant states"
+    ],
+    "count": 10
+  },
+  "review": "Independent prompt-only review found no concrete blocker; actual hosted provenance and regressions remain required",
+  "dependabotOpenCountObservedAfterSshPublication": 0,
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "securityAccepted": false,
+  "goldAccepted": false
+}

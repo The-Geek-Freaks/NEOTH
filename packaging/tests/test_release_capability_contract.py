@@ -122,7 +122,7 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             with self.subTest(bundle=bundle):
                 self.assertNotIn("ssh-tunnel", features[bundle])
 
-        self.assertEqual(russh["version"], "=0.64.1")
+        self.assertEqual(russh["version"], "=0.65.0")
         self.assertIs(russh["optional"], True)
         self.assertIs(russh["default-features"], False)
         self.assertSetEqual(set(russh["features"]), {"ring"})

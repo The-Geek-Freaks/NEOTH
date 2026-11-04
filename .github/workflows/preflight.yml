@@ -145,6 +145,7 @@ jobs:
           python3 packaging/tests/test_roadmap_release_gate.py
           python3 packaging/tests/test_release_asset_contract.py
           python3 packaging/tests/test_release_capability_contract.py
+          python3 packaging/test_ssh_pin_revision.py
           python3 packaging/tests/test_release_gate_contract.py
           python3 packaging/tests/test_workflow_replay_gate.py
           python3 packaging/tests/test_workflow_compare_gate.py

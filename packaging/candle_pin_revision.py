@@ -20,6 +20,7 @@ _ALLOWED = {
 _SPEC = "packaging/vendor-provenance/candle-core-0.8.4-zip9.json"
 _REVISION = "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json"
 _PATCH = "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch"
+_SSH_REVISION = "packaging/vendor-provenance/ssh0.65.0-pin-revision.json"
 
 
 def _require(condition, message):
@@ -54,6 +55,38 @@ def _object(pairs):
         _require(key not in result, f"duplicate JSON field: {key}")
         result[key] = value
     return result
+
+
+
+def _ssh_predecessor(root: Path, current: bytes, expected: str) -> bytes:
+    """Verify the exact SSH-only successor before the original pin custody."""
+    if not (Path(root) / _SSH_REVISION).exists():
+        return current
+    receipt = json.loads(_read(root, _SSH_REVISION), object_pairs_hook=_object)
+    _require(isinstance(receipt, dict) and set(receipt) == {
+        "schema", "predecessorRevisionSha256", "path", "before", "after", "edit"
+    }, "unexpected SSH successor fields")
+    _require(receipt["schema"] == "neoth.ssh-pin-successor.v1",
+             "SSH successor schema")
+    _require(_digest(_read(root, _REVISION))
+             == _sha(receipt["predecessorRevisionSha256"]),
+             "SSH predecessor receipt differs")
+    _require(receipt["path"] == "SRC/neothd/Cargo.toml",
+             "SSH successor path")
+    _require(receipt["edit"] == {
+        "before": '"=0.64.1"', "after": '"=0.65.0"'
+    }, "SSH successor edit")
+    _require(_sha(receipt["before"]) == _sha(expected),
+             "SSH successor predecessor differs")
+    _require(_digest(current) == _sha(receipt["after"]),
+             "SSH successor effective digest")
+    old, new = b'"=0.64.1"', b'"=0.65.0"'
+    _require(current.count(new) == 1 and current.count(old) == 0,
+             "ambiguous SSH successor substitution")
+    previous = current.replace(new, old, 1)
+    _require(_digest(previous) == receipt["before"],
+             "SSH successor reconstructed digest")
+    return previous
 
 
 def revision_sources(root: Path, spec: dict) -> dict[str, bytes]:
@@ -115,6 +148,8 @@ def revision_sources(root: Path, spec: dict) -> dict[str, bytes]:
         _require(_sha(change["before"]) == baseline[path]["after"],
                  "revision predecessor is not the original postimage")
         current = _read(root, path)
+        if path == "SRC/neothd/Cargo.toml":
+            current = _ssh_predecessor(root, current, change["after"])
         _require(_digest(current) == _sha(change["after"]), "effective source digest")
         previous = current
         for old, new in _ALLOWED[path]:

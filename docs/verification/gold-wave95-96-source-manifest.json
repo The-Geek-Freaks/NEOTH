@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-04T09:51:12.9326542Z",
-  "validationStatus": "SSH_CANDIDATE_IMPORTED_HOSTED_NATIVE_SECURITY_PENDING",
+  "capturedUtc": "2026-11-04T10:02:42.2591229Z",
+  "validationStatus": "SSH_EXACT_CUSTODY_SUCCESSOR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -293,8 +293,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 7989,
-      "sha256": "F34D11FC9C26905B174E8BC908C7F064F6A730A403D5E9AC280DEE3C47C51843"
+      "bytes": 8042,
+      "sha256": "ED4647BEE09EAB4AB73DE936B382E201CEE311CE31E6E899DA9306C26EE5C8C8"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -4807,6 +4807,11 @@
       "sha256": "603E4FFCD727D93B3D822063EBC61F9AC0C09C7B6C578271D9872B537B87E090"
     },
     {
+      "path": "docs/verification/gold-wave2665-ssh-provenance-successor.json",
+      "bytes": 3362,
+      "sha256": "2C47346222CB5331D3A10FA248F3A08B0EA2ACB6B1B8A1EEA7ADA61797134647"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5643,13 +5648,13 @@
     },
     {
       "path": "packaging/candle_pin_revision.py",
-      "bytes": 7464,
-      "sha256": "50131F71D7C00E22EFF53678A84876BB005B3A15C928698B612B39FDBA8B343D"
+      "bytes": 9146,
+      "sha256": "ED94B033E075D542C32F36EAAE8108AA7D5F09A7FAA0CB210CE69B435BBE11C2"
     },
     {
       "path": "packaging/candle_zip_migration.py",
-      "bytes": 12911,
-      "sha256": "08B82F4EBD3549EF28F81AFAAA0004B201D74CB5E28ACC615AA07EAB20C75005"
+      "bytes": 13714,
+      "sha256": "F895579C8A44A656ED9AA1247FBEBFE454A8D636BA640864CDA52B855B47F819"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -5792,6 +5797,11 @@
       "sha256": "5FC47E7317EB745EB782A87F834E3C74AD51FCBE3E18BC73D58DB70238170E55"
     },
     {
+      "path": "packaging/test_ssh_pin_revision.py",
+      "bytes": 6899,
+      "sha256": "7565399CCAD271987FAAB772D76D71E7FA021E3C1E4A3D787AC0CA92501E7F66"
+    },
+    {
       "path": "packaging/tests/citation_acceptance.py",
       "bytes": 24540,
       "sha256": "1B3C270A6343DE2D3D7D39C0E50B8C68A50A93711DEBA9BD6E6D015603295CDC"
@@ -5904,7 +5914,7 @@
     {
       "path": "packaging/tests/test_release_capability_contract.py",
       "bytes": 21733,
-      "sha256": "F0FB6FC713434528499279201B5B540FC96E07CC08EC04DBEAE3D86E6DB88CC5"
+      "sha256": "C5F0352AEC781C43766A009715B35F985B03E89F1350B88747C0A3006CF2FBDB"
     },
     {
       "path": "packaging/tests/test_roadmap_release_gate.py",
@@ -6002,6 +6012,11 @@
       "sha256": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF"
     },
     {
+      "path": "packaging/vendor-provenance/ssh0.65.0-pin-revision.json",
+      "bytes": 411,
+      "sha256": "00B5FADCCB8D85F4CA9C2440C186F1A5DC10046A6926DE9A179CF303F6403FE4"
+    },
+    {
       "path": "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch",
       "bytes": 2545,
       "sha256": "FDEA622BAC60FAA46A23338134C24631ED8845F0D51A50A3D0037E9D4EA01080"
@@ -6048,8 +6063,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2761983,
-      "sha256": "C45D825DDF629FF11F254A65C928A1670BA4B82417368A99C55382626352536B"
+      "bytes": 2763755,
+      "sha256": "68148A17C6FB08FC89295D46A2B49D5BF38F0644246B88F1C324C5DC881F0E57"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
