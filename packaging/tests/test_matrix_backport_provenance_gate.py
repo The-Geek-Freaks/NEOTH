@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import shutil
 import sys
@@ -42,7 +42,7 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
         (root / gate.AUDIT_RELATIVE).write_text(
             f'[advisories]\nignore = ["{gate.ADVISORY}"]\n', encoding="utf-8")
         (root / gate.DENY_RELATIVE).write_text(
-            f'[advisories]\nignore = [{{ id = "{gate.ADVISORY}", reason = "fixed vendor backport; re-evaluate 2026-11-01" }}]\n', encoding="utf-8")
+            f'[advisories]\nignore = [{{ id = "{gate.ADVISORY}", reason = "fixed vendor backport; re-evaluate 2026-12-01" }}]\n', encoding="utf-8")
         shutil.copy2(ROOT / ".trivyignore.yaml", root / ".trivyignore.yaml")
         return temporary
 
@@ -51,6 +51,20 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
             root = Path(temporary)
             gate.validate_sources(root)
             gate.validate(root, today=date(2026, 10, 31))
+
+    def test_reviewed_exception_boundaries_remain_exclusive(self) -> None:
+        with self.fixture_root() as temporary:
+            root = Path(temporary)
+            gate.validate(root, today=date(2026, 11, 4))
+            for check, expiry in (
+                (gate._require_0318_exception, gate.EXPIRY_DATE),
+                (gate._require_trivy_reference_lock_exception, gate.TRIVY_EXCEPTION_EXPIRY_DATE),
+            ):
+                with self.subTest(expiry=expiry, check=check.__name__):
+                    check(root, expiry - timedelta(days=1))
+                    for day in (expiry, expiry + timedelta(days=1)):
+                        with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "expired"):
+                            check(root, day)
 
     def test_source_mode_requires_neither_lock_nor_exceptions(self) -> None:
         with self.fixture_root() as temporary:
@@ -156,7 +170,7 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
             ("wildcard", lambda text: text.replace("SRC/vendor/matrix-sdk/Cargo.lock", "SRC/vendor/matrix-sdk/**", 1)),
             ("duplicate-path", lambda text: text.replace("      - SRC/vendor/matrix-sdk/Cargo.lock\n", "      - SRC/vendor/matrix-sdk/Cargo.lock\n      - SRC/Cargo.lock\n", 1)),
             ("duplicate-key", lambda text: text.replace("    expired_at:", "    paths:\n      - SRC/Cargo.lock\n    expired_at:", 1)),
-            ("changed-expiry", lambda text: text.replace("2026-11-01", "2026-11-02", 1)),
+            ("changed-expiry", lambda text: text.replace(gate.TRIVY_EXCEPTION_EXPIRY_DATE.isoformat(), (gate.TRIVY_EXCEPTION_EXPIRY_DATE + timedelta(days=1)).isoformat(), 1)),
             ("comment", lambda text: text + "# tampered\n"),
         )
         for label, mutate in mutations:

@@ -598,7 +598,13 @@ pub async fn run_email_ingest_tick(
                                 "email_ingest_cron: SC-16 rejection persisted in quarantine"
                             );
                             quarantined += 1;
-                            mark_processed_email(&seen_conn, &imap_cfg, uid_validity, email, now_unix)?;
+                            mark_processed_email(
+                                &seen_conn,
+                                &imap_cfg,
+                                uid_validity,
+                                email,
+                                now_unix,
+                            )?;
                         }
                         Err(_) => {
                             warn!(
@@ -987,7 +993,9 @@ mod tests {
             host: "imap.example.com".into(),
             port: 993,
             username: user.into(),
-            auth: AuthMethod::PasswordPlain { password: "unused-fixture".into() },
+            auth: AuthMethod::PasswordPlain {
+                password: "unused-fixture".into(),
+            },
             use_tls: true,
         }
     }
@@ -1026,7 +1034,8 @@ mod tests {
         let legacy = vault_identity_email("7", Some("<legacy>"));
         assert!(mark_processed_email(&conn, &cfg, 1, &legacy, 101).is_err());
         let fresh = vault_identity_email("8", Some("<fresh>"));
-        let (remaining, seen, ambiguous) = filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
+        let (remaining, seen, ambiguous) =
+            filter_unseen(&conn, &cfg, 1, vec![legacy, fresh]).unwrap();
         assert_eq!((remaining.len(), seen, ambiguous), (1, 0, 1));
         assert_eq!(remaining[0].dedup_key(), "<fresh>");
         mark_processed_email(&conn, &cfg, 1, &remaining[0], 101).unwrap();
@@ -1038,7 +1047,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
         let cfg = seen_test_config("alice");
-        conn.execute("DROP TABLE idx_email_seen_scoped", []).unwrap();
+        conn.execute("DROP TABLE idx_email_seen_scoped", [])
+            .unwrap();
         let mail = vault_identity_email("7", None);
         assert!(mark_processed_email(&conn, &cfg, 1, &mail, 100).is_err());
         assert!(filter_unseen(&conn, &cfg, 1, vec![mail]).is_err());

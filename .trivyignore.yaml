@@ -18,7 +18,7 @@ vulnerabilities:
   - id: GHSA-4w2j-m93h-cj5j
     paths:
       - SRC/vendor/matrix-sdk/Cargo.lock
-    expired_at: 2026-11-01
+    expired_at: 2026-12-01
     statement: >-
       The immutable authenticated Matrix SDK reference lock is not the root
       workspace resolver; the patched root workspace lock is enforced by the

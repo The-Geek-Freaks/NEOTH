@@ -28,10 +28,10 @@ DENY_RELATIVE = SRC / "deny.toml"
 REGISTRY_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 ANYMAP3_CHECKSUM = "fb5dfbc6d8d2675589ccbe4d0fd61df2419075625f8c1a62325e718e2b0049f9"
 ADVISORY = "RUSTSEC-2026-0318"
-EXPIRY_DATE = date(2026, 11, 1)
+EXPIRY_DATE = date(2026, 12, 1)
 TRIVY_ADVISORY = "GHSA-4w2j-m93h-cj5j"
 TRIVY_EXCEPTION_PATH = "SRC/vendor/matrix-sdk/Cargo.lock"
-TRIVY_EXCEPTION_EXPIRY_DATE = date(2026, 11, 1)
+TRIVY_EXCEPTION_EXPIRY_DATE = date(2026, 12, 1)
 TRIVY_EXCEPTION_STATEMENT = (
     "The immutable authenticated Matrix SDK reference lock is not the root\n"
     "workspace resolver; the patched root workspace lock is enforced by the\n"
@@ -40,7 +40,7 @@ TRIVY_EXCEPTION_STATEMENT = (
 QUINN_PROTO = "quinn-proto"
 QUINN_PROTO_VERSION = "0.11.18"
 QUINN_PROTO_CHECKSUM = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
-TRIVY_IGNORE_SHA256 = "00953345c472eba4a40348be4982e771365da8e9465f383b9a85f1f5198d0372"
+TRIVY_IGNORE_SHA256 = "f301c42597aea73f5fd93dcfc0204eef2302a976aff45da6f51f89a6affc5632"
 
 SDK = "matrix-sdk"
 CRYPTO = "matrix-sdk-crypto"

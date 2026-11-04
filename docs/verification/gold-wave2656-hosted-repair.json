@@ -1,0 +1,84 @@
+{
+  "schema": "neoth.wave2656.hosted-repair.v1",
+  "base": "19ab409d62596af0df0d394cf7d71ce38e51ece2",
+  "reviewedOn": "2026-11-04",
+  "status": "SOURCE_REPAIRED_HOSTED_PENDING",
+  "failures": [
+    {
+      "repair": "Import authenticated hosted rustfmt patch for exactly three owned Rust files",
+      "kind": "Rust formatting",
+      "run": "41183417105",
+      "job": "124485331592"
+    },
+    {
+      "repair": "Use Some(String) for InboundEmail.from_domain",
+      "kind": "E0277 in scoped email fixture",
+      "run": "41421289237",
+      "jobs": [
+        "125197170562",
+        "125197170617",
+        "125197170837",
+        "125197170869"
+      ]
+    },
+    {
+      "repair": "Re-review immutable postimages and exact root resolver; renew to exclusive 2026-12-01",
+      "kind": "Reviewed exception reached exclusive 2026-11-01 expiry",
+      "run": "41460585954",
+      "job": "125328333929"
+    }
+  ],
+  "format": {
+    "base": "19ab409d62596af0df0d394cf7d71ce38e51ece2",
+    "run": "41183417105",
+    "artifact": "13035459713",
+    "zipSha256": "1fc10affb3d48b4643cba4a586a060dca20c9c3ab9fae2bb5719c9ccc8c355d0",
+    "patchSha256": "76d7163b9cfdd358d288a7b40568d44be226309752086cc9141ddeda5272360c",
+    "paths": [
+      "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "SRC/neothd/src/email/seen_store/scoped.rs",
+      "SRC/neothd/src/email/seen_store/scoped/tests.rs"
+    ],
+    "fixtureRepair": "from_domain uses Some(String) to match InboundEmail",
+    "localRuntimeExecuted": false
+  },
+  "securityReview": {
+    "rootQuinnChecksum": "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc",
+    "advisoryVersionBoundary": "Registry releases >=0.19.0 include the fix; existing path-patched 0.18.0 remains authenticated by the source gate.",
+    "scopeExpanded": false,
+    "upstreamAdvisory": "https://rustsec.org/advisories/RUSTSEC-2026-0318.html",
+    "rootQuinnProto": "0.11.18",
+    "exclusiveExpiry": "2026-12-01",
+    "trivyIgnoreSha256": "F301C42597AEA73F5FD93DCFC0204EEF2302A976AFF45DA6F51F89A6AFFC5632",
+    "upstreamFix": "https://github.com/matrix-org/matrix-rust-sdk/commit/01b45b51299821ab03fecf46741392780f118d49",
+    "trivyScope": "SRC/vendor/matrix-sdk/Cargo.lock only; immutable reference lock. Reviewed workflow builds use root SRC resolver; historical isolated crypto regression uses its separate crypto fixture, not this SDK reference lock.",
+    "localRuntimeExecuted": false,
+    "trivyAdvisory": "https://github.com/quinn-rs/quinn/security/advisories/GHSA-4w2j-m93h-cj5j",
+    "vendor": {
+      "reviewedOn": "2026-11-04",
+      "base": "19ab409d62596af0df0d394cf7d71ce38e51ece2",
+      "files": 343,
+      "bytes": 7859635,
+      "allExpectedHashesMatch": true,
+      "exactTrackedSet": true,
+      "historicalManifestSha256": "4E9626BC579D902E7B26CCF73D418B17BD9A500AEC293A63D835ED9331ABCEFE",
+      "upstreamFix": "01b45b51299821ab03fecf46741392780f118d49",
+      "localRuntimeExecuted": false
+    },
+    "freshHostedGate": "pending",
+    "sourceFinding": "Both missing-identity panic sites retain the reviewed upstream WithheldCode::Unverified behavior. The retained upstream regression source is unchanged; not rerun in this local batch."
+  },
+  "regression": "packaging/tests/test_matrix_backport_provenance_gate.py::test_reviewed_exception_boundaries_remain_exclusive",
+  "paperlessSelectionCount": 52,
+  "portableRegisteredCount": 3219,
+  "remaining": [
+    "Fresh hosted preflight and 52-case email/Paperless compiled-product acceptance",
+    "Current native and security acceptance",
+    "CodeQL Rust runner shutdown is unresolved; no product-source cause established",
+    "A04 input/destination/revision and legacy effect reconciliation remain open"
+  ],
+  "localRuntimeExecuted": false,
+  "fullCiAccepted": false,
+  "releaseAccepted": false,
+  "goldAccepted": false
+}

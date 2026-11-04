@@ -37,7 +37,11 @@ pub(crate) struct Identity {
 }
 
 pub(crate) fn mail_key(email: &InboundEmail, uid_validity: u32) -> Result<String> {
-    if let Some(message_id) = email.message_id.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(message_id) = email
+        .message_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         return Ok(format!("message-id:{message_id}"));
     }
     ensure!(uid_validity > 0, "IMAP UID fallback requires UIDVALIDITY");
@@ -99,12 +103,13 @@ pub(crate) fn mark(
             "legacy email completion has unknown mailbox/purpose; reconciliation required"
         );
     }
-    let written = conn.execute(
-        "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix) \
+    let written = conn
+        .execute(
+            "INSERT INTO idx_email_seen_scoped (unit_sha256, purpose, first_seen_unix) \
          VALUES (?1, ?2, ?3) ON CONFLICT(unit_sha256, purpose) DO NOTHING",
-        rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix],
-    )
-    .context("record scoped email completion")?;
+            rusqlite::params![identity.unit_sha256, purpose.as_str(), now_unix],
+        )
+        .context("record scoped email completion")?;
     ensure!(
         written == 1 || state(conn, identity, purpose)? == SeenState::Seen,
         "scoped email completion was not recorded"
