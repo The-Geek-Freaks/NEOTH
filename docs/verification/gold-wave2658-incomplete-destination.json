@@ -14,21 +14,21 @@
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "newCase": true,
       "requiresImapFeature": false
     }

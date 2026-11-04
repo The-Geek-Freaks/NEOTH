@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 464158,
-    "sha256": "4BED6FA31C3366C173366BBF1FC39EC113D3D831C8EA74D14C8C3775E6560577"
+    "sha256": "0EFEEF6185EE3B9ABAF7D7251502B9464311F911D36D70C99AF74892EC627093"
   },
   "sourceInputs": 2534,
   "requiredNativeTests": [
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
@@ -19237,13 +19237,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
@@ -19381,19 +19381,19 @@
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D",
+      "sourceSha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
       "junitClass": "neoth"
     }
   ],
@@ -91615,6 +91615,32 @@
       }
     ],
     "note": "Incomplete configured Paperless destination blocks delivered completion; all59 preserved plus3 new;52 predecessor source/product archives admitted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2658Format": {
+    "base": "1410b14dc49a9c32ff2a2f990322df08bbade983",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 22558,
+        "sha256": "6BA5A39F7A6010DFE011021297686944F6900C98C23A3E7C57ED0ACC2042783D",
+        "blob": "4ad8c737d1bb888280e0891efed06fc6e73ed15c"
+      },
+      {
+        "path": "docs/verification/gold-wave2658-incomplete-destination.json",
+        "bytes": 2942,
+        "sha256": "8C53C5876E73DDDE734CA905E5C2CAE0495B8A89A6B4AC4BCBCC51948EE878DE",
+        "blob": "6eeeea64b4b0104d80a5056af89673e49523405e"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 59783,
+        "sha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC",
+        "blob": "89e856bfacd4d8b55c2ef00eb98b7fc4b0066d2a"
+      }
+    ],
+    "note": "Imported exact hosted formatter patch; Context trait also available in portable tests;62 case selection preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

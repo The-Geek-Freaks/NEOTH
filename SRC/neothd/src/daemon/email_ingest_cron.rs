@@ -58,7 +58,7 @@ use std::path::Path;
 #[cfg(feature = "imap_fetch")]
 use std::path::PathBuf;
 
-#[cfg(feature = "imap_fetch")]
+#[cfg(any(test, feature = "imap_fetch"))]
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "imap_fetch")]
@@ -222,8 +222,12 @@ impl<'a> PaperlessDestination<'a> {
             return Ok(false);
         }
         crate::email::seen_store::scoped::mark(
-            conn, identity, crate::email::seen_store::scoped::Purpose::Ingest, now_unix,
-        ).context("email_ingest_cron: persist proven delivery completion")?;
+            conn,
+            identity,
+            crate::email::seen_store::scoped::Purpose::Ingest,
+            now_unix,
+        )
+        .context("email_ingest_cron: persist proven delivery completion")?;
         Ok(true)
     }
 }
@@ -751,10 +755,18 @@ pub async fn run_email_ingest_tick(
             );
         } else {
             let identity = crate::email::seen_store::scoped::Identity::inbox(
-                &imap_cfg.host, imap_cfg.port, &imap_cfg.username, email, uid_validity,
+                &imap_cfg.host,
+                imap_cfg.port,
+                &imap_cfg.username,
+                email,
+                uid_validity,
             )?;
             paperless_destination.record_delivery(
-                &seen_conn, &identity, now_unix, (vault.is_some(), vault_succeeded), paperless_outcome,
+                &seen_conn,
+                &identity,
+                now_unix,
+                (vault.is_some(), vault_succeeded),
+                paperless_outcome,
             )?;
         }
     }
@@ -895,7 +907,9 @@ mod tests {
             assert!(!destination.delivery_complete(false, true, None));
             // Even an unrelated completion cannot repair missing configuration.
             assert!(!destination.delivery_complete(
-                true, true, Some(PaperlessReconcileOutcome::Completed)
+                true,
+                true,
+                Some(PaperlessReconcileOutcome::Completed)
             ));
         }
     }
@@ -908,9 +922,8 @@ mod tests {
         assert!(!disabled.delivery_complete(true, false, None));
         assert!(!disabled.delivery_complete(false, true, None));
 
-        let ready = PaperlessDestination::from_parts(
-            Some("https://paperless.example"), Some("token")
-        );
+        let ready =
+            PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
         assert!(ready.configured());
         for outcome in [
             None,
@@ -940,18 +953,28 @@ mod tests {
         let payload = ingest_ocr_text(&email.body, OcrSource::TesseractDirect, &doc_id).unwrap();
         let legacy_id = sanitize_doc_id(email.dedup_key());
         assert_eq!(
-            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH").unwrap(),
+            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH")
+                .unwrap(),
             EmailNoteOutcome::Created
         );
         let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), None);
-        assert!(!destination.record_delivery(&conn, &identity, 100, (true, true), None).unwrap());
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Unseen);
+        assert!(
+            !destination
+                .record_delivery(&conn, &identity, 100, (true, true), None)
+                .unwrap()
+        );
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            SeenState::Unseen
+        );
 
         assert_eq!(
-            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH").unwrap(),
+            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH")
+                .unwrap(),
             EmailNoteOutcome::AlreadyPresent
         );
-        let ready = PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
+        let ready =
+            PaperlessDestination::from_parts(Some("https://paperless.example"), Some("token"));
         match &ready {
             PaperlessDestination::Ready { url, token } => {
                 assert_eq!(*url, "https://paperless.example");
@@ -959,14 +982,36 @@ mod tests {
             }
             _ => panic!("complete credentials must remain ready"),
         }
-        assert!(!ready.record_delivery(
-            &conn, &identity, 200, (true, true), Some(PaperlessReconcileOutcome::UnknownOutcome)
-        ).unwrap());
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Unseen);
-        assert!(ready.record_delivery(
-            &conn, &identity, 300, (true, true), Some(PaperlessReconcileOutcome::Completed)
-        ).unwrap());
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest).unwrap(), SeenState::Seen);
+        assert!(
+            !ready
+                .record_delivery(
+                    &conn,
+                    &identity,
+                    200,
+                    (true, true),
+                    Some(PaperlessReconcileOutcome::UnknownOutcome)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            SeenState::Unseen
+        );
+        assert!(
+            ready
+                .record_delivery(
+                    &conn,
+                    &identity,
+                    300,
+                    (true, true),
+                    Some(PaperlessReconcileOutcome::Completed)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest).unwrap(),
+            SeenState::Seen
+        );
     }
 
     fn vault_identity_email(

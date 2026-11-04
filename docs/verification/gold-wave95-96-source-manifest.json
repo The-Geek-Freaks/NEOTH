@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-04T08:02:25.1745284Z",
+  "capturedUtc": "2026-11-04T08:05:16.3906559Z",
   "validationStatus": "SOURCE_PREPARED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -4379,7 +4379,7 @@
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
       "bytes": 22558,
-      "sha256": "BECE59BE4960478D5D9164BAA280C2826A3446C2EAD12C9029B618F48D4C24D6"
+      "sha256": "6BA5A39F7A6010DFE011021297686944F6900C98C23A3E7C57ED0ACC2042783D"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4779,7 +4779,7 @@
     {
       "path": "docs/verification/gold-wave2658-incomplete-destination.json",
       "bytes": 2942,
-      "sha256": "2D4C12743FEF22DAEBED55D1B5F7243874331F2C022869DA75B4976C84D52074"
+      "sha256": "8C53C5876E73DDDE734CA905E5C2CAE0495B8A89A6B4AC4BCBCC51948EE878DE"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -8123,8 +8123,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 59069,
-      "sha256": "757704BF1F01CF31FE13D09DE8115369149A4E05CA21C528B6536B1796DD9D0D"
+      "bytes": 59783,
+      "sha256": "9C809417230F29BE48E566376495A80D526FF51620B41A6DDC0451DBD09AEFBC"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
