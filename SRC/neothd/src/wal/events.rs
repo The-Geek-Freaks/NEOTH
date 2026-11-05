@@ -324,6 +324,8 @@ pub enum ExtendedSubtype {
     PaperlessPostReceipt = 0x3C,
     /// A02: historical successful budget acquisition, never spend or authority.
     ProviderBudgetAcquired = 0x3D,
+    /// Ordered Intent / FileBound / Completed email note-content receipts.
+    EmailVaultReceipt = 0x3E,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -439,6 +441,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::CompanionMutationReceipt => "companion_mutation_receipt",
             ExtendedSubtype::PaperlessPostReceipt => "paperless_post_receipt",
             ExtendedSubtype::ProviderBudgetAcquired => "provider_budget_acquired",
+            ExtendedSubtype::EmailVaultReceipt => "email_vault_receipt",
         }
     }
 
@@ -506,6 +509,7 @@ impl ExtendedSubtype {
             0x3B => Some(ExtendedSubtype::CompanionMutationReceipt),
             0x3C => Some(ExtendedSubtype::PaperlessPostReceipt),
             0x3D => Some(ExtendedSubtype::ProviderBudgetAcquired),
+            0x3E => Some(ExtendedSubtype::EmailVaultReceipt),
             _ => None,
         }
     }
@@ -575,6 +579,7 @@ impl ExtendedSubtype {
             Self::CompanionMutationReceipt,
             Self::PaperlessPostReceipt,
             Self::ProviderBudgetAcquired,
+            Self::EmailVaultReceipt,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4214,6 +4219,7 @@ mod tests {
             ExtendedSubtype::CompanionMutationReceipt,
             ExtendedSubtype::PaperlessPostReceipt,
             ExtendedSubtype::ProviderBudgetAcquired,
+            ExtendedSubtype::EmailVaultReceipt,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

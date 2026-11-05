@@ -1,19 +1,22 @@
 //! Cron-only, account-bound email notes. Existing notes are never replaced.
 //!
-//! Exact deterministic bytes are the local completion witness. Interrupted or
-//! edited files conflict; legacy names are not adopted or silently duplicated.
-//! This does not migrate the shared legacy email seen-state ledger.
+//! Production completion requires ordered authenticated WAL receipts, the same
+//! directory/file identities and exact synced bytes. Interrupted or edited files
+//! remain pending. Filesystem IDs can be reused after deletion; this is not a
+//! defense against an adversary controlling the same OS account or filesystem.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use cap_std::fs::Dir;
 use sha2::{Digest, Sha256};
 
 use crate::security::paperless_ingest::PaperlessOcrPayload;
-use crate::skills::store::{self, BoundDirectory, BoundDirectoryChild, PrivateChildCommit};
+use crate::skills::store::{self, BoundDirectory, BoundDirectoryChild};
+#[cfg(test)]
+use crate::skills::store::PrivateChildCommit;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmailNoteOutcome {
@@ -51,6 +54,23 @@ struct NoteDirectory {
 }
 
 impl NoteDirectory {
+    fn fingerprint(&self) -> io::Result<String> {
+        self.revalidate()?;
+        let mut digest = Sha256::new();
+        digest.update(b"neoth.email-vault-directory.v1\0");
+        let mut field = |value: &[u8]| {
+            digest.update((value.len() as u64).to_le_bytes());
+            digest.update(value);
+        };
+        field(self.anchor.display_path.as_os_str().as_encoded_bytes());
+        field(store::directory_identity_token(&self.anchor.dir).map_err(store_error)?.as_bytes());
+        for child in &self.children {
+            field(child.name.as_encoded_bytes());
+            field(child.binding.identity_token().as_bytes());
+        }
+        Ok(hex::encode(digest.finalize()))
+    }
+
     fn current(&self) -> (&Dir, &Path) {
         self.children.last().map_or(
             (&self.anchor.dir, self.anchor.display_path.as_path()),
@@ -95,7 +115,7 @@ impl NoteDirectory {
     }
 }
 
-fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<NoteDirectory> {
+fn note_directory(vault_root: &Path, subdir: &str, create: bool) -> io::Result<NoteDirectory> {
     let relative = Path::new(subdir);
     if relative
         .components()
@@ -121,7 +141,7 @@ fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<NoteDirectory> 
         .components()
         .chain(Path::new("Paperless").components())
     {
-        directory.descend(part.as_os_str(), true)?;
+        directory.descend(part.as_os_str(), create)?;
     }
     Ok(directory)
 }
@@ -161,6 +181,7 @@ fn observe_existing(
     directory: &NoteDirectory,
     name: &OsStr,
     expected: &[u8],
+    expected_identity: Option<&str>,
     observe: &mut impl FnMut(NoteObservation),
 ) -> io::Result<Option<EmailNoteOutcome>> {
     directory.revalidate()?;
@@ -181,6 +202,9 @@ fn observe_existing(
     // written and no truncate/create flag is set.
     let (mut file, binding) =
         store::open_bound_regular_file_readwrite(parent, name, &path).map_err(store_error)?;
+    if expected_identity.is_some_and(|token| binding.identity_token() != token) {
+        return Ok(Some(EmailNoteOutcome::Conflict));
+    }
     let mut observed = Vec::with_capacity(expected.len());
     Read::by_ref(&mut file)
         .take(expected.len() as u64 + 1)
@@ -205,12 +229,16 @@ fn observe_existing(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NoteObservation {
+    #[cfg(test)]
     DirectoryBound,
+    #[cfg(test)]
     BeforeCreate,
+    #[cfg(test)]
     Created,
     ExistingRead,
 }
 
+#[cfg(test)]
 pub(crate) fn sync_email_to_obsidian(
     payload: &PaperlessOcrPayload,
     input_text: &str,
@@ -228,6 +256,7 @@ pub(crate) fn sync_email_to_obsidian(
     )
 }
 
+#[cfg(test)]
 fn sync_email_to_obsidian_observed(
     payload: &PaperlessOcrPayload,
     input_text: &str,
@@ -248,14 +277,14 @@ fn sync_email_to_obsidian_observed(
     if !valid_unit || !super::is_safe_doc_id(legacy_doc_id) {
         return Err(invalid_path());
     }
-    let directory = note_directory(vault_root, subdir)?;
+    let directory = note_directory(vault_root, subdir, true)?;
     observe(NoteObservation::DirectoryBound);
     directory.revalidate()?;
     let (parent, parent_path) = directory.current();
     let name = OsString::from(format!("{}.md", payload.document_id));
     let target = parent_path.join(&name);
     let rendition = render_email_note(payload, input_text);
-    if let Some(outcome) = observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
+    if let Some(outcome) = observe_existing(&directory, &name, rendition.as_bytes(), None, &mut observe)?
     {
         return Ok(outcome);
     }
@@ -277,7 +306,7 @@ fn sync_email_to_obsidian_observed(
     ) {
         Ok(PrivateChildCommit::PublishedAndSynced) => {
             observe(NoteObservation::Created);
-            match observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)? {
+            match observe_existing(&directory, &name, rendition.as_bytes(), None, &mut observe)? {
                 Some(EmailNoteOutcome::AlreadyPresent) => Ok(EmailNoteOutcome::Created),
                 Some(outcome) => Ok(outcome),
                 None => Err(io::Error::other("published email note is absent")),
@@ -290,11 +319,105 @@ fn sync_email_to_obsidian_observed(
                 .downcast_ref::<io::Error>()
                 .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists) =>
         {
-            observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
+            observe_existing(&directory, &name, rendition.as_bytes(), None, &mut observe)?
                 .ok_or_else(|| io::Error::other(error))
         }
         Err(error) => Err(io::Error::other(error)),
     }
+}
+
+/// Read-only seen-state binding. Missing descendants do not create directories
+/// merely to filter mail; only an actual delivery attempt prepares them.
+pub(crate) fn vault_directory_fingerprint(vault: &Path, subdir: &str) -> io::Result<String> {
+    note_directory(vault, subdir, false)?.fingerprint()
+}
+
+pub(crate) struct VaultNoteRequest<'a> {
+    pub(crate) payload: &'a PaperlessOcrPayload,
+    pub(crate) input_text: &'a str,
+    pub(crate) input_sha256: &'a str,
+    pub(crate) legacy_doc_id: &'a str,
+    pub(crate) vault_root: &'a Path,
+    pub(crate) subdir: &'a str,
+}
+
+pub(crate) async fn sync_email_to_obsidian_receipted(
+    home: &Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    request: VaultNoteRequest<'_>,
+) -> io::Result<(EmailNoteOutcome, String)> {
+    use crate::wal::email_vault_receipts::{Descriptor, Outcome, Stage};
+    let VaultNoteRequest { payload, input_text, input_sha256, legacy_doc_id, vault_root, subdir } = request;
+    let unit = payload.document_id.strip_prefix("email-").ok_or_else(invalid_path)?;
+    if unit.len() != 64 || !unit.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || !super::is_safe_doc_id(legacy_doc_id)
+    {
+        return Err(invalid_path());
+    }
+    // Empty private directories are idempotent preparation. The receipt governs
+    // note-content effects; it does not claim to precede this metadata work.
+    let directory = note_directory(vault_root, subdir, true)?;
+    let fingerprint = directory.fingerprint()?;
+    let rendition = render_email_note(payload, input_text);
+    let intent = Descriptor::intent(unit, input_sha256, &hex::encode(Sha256::digest(rendition.as_bytes())), &fingerprint).map_err(store_error)?;
+    let receipt = writer.append_email_vault_receipt_once(home, intent.clone()).await
+        .map_err(|_| io::Error::other("email vault claim remains pending"))?;
+    let observed = match receipt {
+        Outcome::Appended => intent.clone(),
+        Outcome::Existing(value) => value,
+    };
+    directory.revalidate()?;
+    let (parent, parent_path) = directory.current();
+    let name = OsString::from(format!("{}.md", payload.document_id));
+    let target = parent_path.join(&name);
+    let mut created = false;
+    let bound = if observed.stage == Stage::Intent {
+        for candidate in [&name, &OsString::from(format!("{legacy_doc_id}.md"))] {
+            match parent.symlink_metadata(candidate) {
+                Ok(_) => return Ok((EmailNoteOutcome::LegacyAmbiguous, fingerprint)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        directory.revalidate()?;
+        let (mut file, binding) = store::create_private_regular_file_child_create_new(parent, &name, &target).map_err(store_error)?;
+        let bound = intent.bind_file(binding.identity_token()).map_err(store_error)?;
+        // A lost acknowledgement never authorizes bytes. The writer owns the
+        // request to its terminal result; an empty/partial file stays pending.
+        if !matches!(writer.append_email_vault_receipt_once(home, bound.clone()).await, Ok(Outcome::Appended)) {
+            return Err(io::Error::other("email vault file binding remains pending"));
+        }
+        directory.revalidate()?;
+        if !binding.matches_regular_file_child_readonly(parent, &name, &target).map_err(store_error)? {
+            return Err(io::Error::other("email vault file identity changed before write"));
+        }
+        file.write_all(rendition.as_bytes())?;
+        file.sync_all()?;
+        store::sync_parent_directory(parent, parent_path).map_err(store_error)?;
+        directory.revalidate()?;
+        if !binding.matches_regular_file_child_readonly(parent, &name, &target).map_err(store_error)? {
+            return Err(io::Error::other("email vault file identity changed after write"));
+        }
+        created = true;
+        bound
+    } else {
+        observed
+    };
+    // A second caller can see all bytes before the creator syncs them. Always
+    // perform the same file/parent durability checks even during reconciliation.
+    match observe_existing(&directory, &name, rendition.as_bytes(), bound.file_identity.as_deref(), &mut |_| {})? {
+        Some(EmailNoteOutcome::AlreadyPresent) => {}
+        _ => return Ok((EmailNoteOutcome::Conflict, fingerprint)),
+    }
+    if bound.stage != Stage::Completed {
+        let completed = bound.completed().map_err(store_error)?;
+        writer.append_email_vault_receipt_once(home, completed).await
+            .map_err(|_| io::Error::other("email vault completion remains pending"))?;
+    }
+    if observe_existing(&directory, &name, rendition.as_bytes(), bound.file_identity.as_deref(), &mut |_| {})? != Some(EmailNoteOutcome::AlreadyPresent) {
+        return Ok((EmailNoteOutcome::Conflict, fingerprint));
+    }
+    Ok((if created { EmailNoteOutcome::Created } else { EmailNoteOutcome::AlreadyPresent }, fingerprint))
 }
 
 #[cfg(test)]

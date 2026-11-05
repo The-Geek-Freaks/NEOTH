@@ -124,11 +124,16 @@ fn is_paperless_post_intent_header(header: &EventHeaderV2) -> bool {
         && header.event_subtype == crate::wal::events::ExtendedSubtype::PaperlessPostReceipt as u8
 }
 
+fn is_email_vault_receipt_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && header.event_subtype == crate::wal::events::ExtendedSubtype::EmailVaultReceipt as u8
+}
+
 fn refuse_generic_paperless_post_intent(header: &EventHeaderV2) -> Result<(), WalError> {
-    if is_paperless_post_intent_header(header) {
+    if is_paperless_post_intent_header(header) || is_email_vault_receipt_header(header) {
         return Err(WalError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "Paperless POST intents require the authenticated append-once writer API",
+            "Email sink receipts require the authenticated append-once writer API",
         )));
     }
     Ok(())
@@ -611,6 +616,7 @@ pub struct WriteRequest {
     trust_decision_once: Option<TrustDecisionOnce>,
     companion_mutation_receipt_once: Option<CompanionMutationReceiptOnce>,
     paperless_post_intent_once: Option<PaperlessPostIntentOnce>,
+    email_vault_once: Option<EmailVaultOnce>,
     /// Closed transcript-mining proof admission. Unlike a generic append, this
     /// carries a persisted exact descriptor whose authenticated read-back is
     /// the only successful terminal result.
@@ -732,6 +738,19 @@ struct PaperlessPostIntentOnce {
             Result<
                 crate::wal::paperless_post_receipts::PaperlessPostIntentOutcome,
                 crate::wal::paperless_post_receipts::PaperlessPostIntentError,
+            >,
+        >,
+    >,
+}
+
+struct EmailVaultOnce {
+    home: PathBuf,
+    expected: crate::wal::email_vault_receipts::Descriptor,
+    reply: Option<
+        oneshot::Sender<
+            Result<
+                crate::wal::email_vault_receipts::Outcome,
+                crate::wal::email_vault_receipts::Error,
             >,
         >,
     >,
@@ -941,6 +960,30 @@ impl Drop for PaperlessPostIntentOnce {
         if let Some(reply) = self.reply.take() {
             let _ = reply.send(Err(
                 crate::wal::paperless_post_receipts::PaperlessPostIntentError::Indeterminate,
+            ));
+        }
+    }
+}
+
+impl EmailVaultOnce {
+    fn finish(
+        mut self,
+        outcome: Result<
+            crate::wal::email_vault_receipts::Outcome,
+            crate::wal::email_vault_receipts::Error,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
+    }
+}
+
+impl Drop for EmailVaultOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::email_vault_receipts::Error::Indeterminate,
             ));
         }
     }
@@ -1892,6 +1935,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -1947,6 +1991,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2033,6 +2078,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2139,6 +2185,29 @@ impl WalWriterHandle {
             Ok(outcome) => outcome,
             Err(_) => {
                 Err(crate::wal::paperless_post_receipts::PaperlessPostIntentError::Indeterminate)
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) async fn append_email_vault_receipt_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::email_vault_receipts::Descriptor,
+    ) -> Result<
+        crate::wal::email_vault_receipts::Outcome,
+        crate::wal::email_vault_receipts::Error,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            writer.append_email_vault_receipt_once_blocking(&home, expected)
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                Err(crate::wal::email_vault_receipts::Error::Indeterminate)
             }
         }
     }
@@ -2253,6 +2322,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: Some(DreamAuditOnce {
@@ -2328,6 +2398,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2458,6 +2529,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             dream_audit_once: None,
             redaction_rewrite_once: None,
@@ -2531,6 +2603,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: Some(TranscriptMiningOnce {
                 home: home.to_path_buf(),
                 expected,
@@ -2603,6 +2676,7 @@ impl WalWriterHandle {
             }),
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2661,6 +2735,7 @@ impl WalWriterHandle {
                 reply: Some(reply_tx),
             }),
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2713,6 +2788,7 @@ impl WalWriterHandle {
             force_authentication_marker: true,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            email_vault_once: None,
             paperless_post_intent_once: Some(PaperlessPostIntentOnce {
                 home: home.to_path_buf(),
                 expected,
@@ -2740,6 +2816,65 @@ impl WalWriterHandle {
         reply_rx
             .blocking_recv()
             .unwrap_or(Err(PaperlessPostIntentError::Indeterminate))
+    }
+
+    #[cfg(any(test, feature = "imap_fetch"))]
+    fn append_email_vault_receipt_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::wal::email_vault_receipts::Descriptor,
+    ) -> Result<
+        crate::wal::email_vault_receipts::Outcome,
+        crate::wal::email_vault_receipts::Error,
+    > {
+        use crate::wal::email_vault_receipts::Error;
+        if !self.authentication_markers_enabled {
+            return Err(Error::Indeterminate);
+        }
+        let payload = expected
+            .payload()
+            .map_err(|_| Error::Indeterminate)?;
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(Error::Indeterminate);
+        }
+        let header = expected.header(&payload);
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
+            paperless_post_intent_once: None,
+            email_vault_once: Some(EmailVaultOnce {
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
+            }),
+            companion_mutation_receipt_once: None,
+            transcript_mining_once: None,
+            counterparty_consent_once: None,
+            dream_audit_once: None,
+            redaction_rewrite_once: None,
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.email_vault_once.take()
+        {
+            once.finish(Err(Error::Indeterminate));
+        }
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(Error::Indeterminate))
     }
 
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
@@ -2831,6 +2966,7 @@ impl WalWriterHandle {
                 trust_decision_once: None,
                 companion_mutation_receipt_once: None,
                 paperless_post_intent_once: None,
+            email_vault_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
@@ -2892,6 +3028,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             companion_mutation_receipt_once: None,
             paperless_post_intent_once: None,
+            email_vault_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -5566,6 +5703,7 @@ async fn run_writer(
         let mut trust_decision_once = req.trust_decision_once.take();
         let mut companion_mutation_receipt_once = req.companion_mutation_receipt_once.take();
         let mut paperless_post_intent_once = req.paperless_post_intent_once.take();
+        let mut email_vault_once = req.email_vault_once.take();
         let mut transcript_mining_once = req.transcript_mining_once.take();
         let mut counterparty_consent_once = req.counterparty_consent_once.take();
         let mut dream_audit_once = req.dream_audit_once.take();
@@ -5609,6 +5747,8 @@ async fn run_writer(
             || (is_receipt && req.force_authentication_marker)
             || is_durable_trust_decision != trust_decision_once.is_some()
             || (trust_decision_once.is_some() && !req.force_authentication_marker)
+            || is_email_vault_receipt_header(&req.header) != email_vault_once.is_some()
+            || (email_vault_once.is_some() && !req.force_authentication_marker)
             || is_paperless_post_intent != paperless_post_intent_once.is_some()
             || (paperless_post_intent_once.is_some() && !req.force_authentication_marker)
             || is_companion_mutation_receipt != companion_mutation_receipt_once.is_some()
@@ -6454,6 +6594,104 @@ async fn run_writer(
                 }
             }
         }
+        // Share the existing email claim authority; there is still one writer.
+        let mut email_vault_authority = None;
+        if let Some(once) = email_vault_once.take() {
+            use crate::wal::email_vault_receipts::{
+                Error, Lookup,
+            };
+            let expected_payload = match once.expected.payload() {
+                Ok(payload) => payload,
+                Err(_) => {
+                    once.finish(Err(Error::Indeterminate));
+                    continue;
+                }
+            };
+            // `HeaderBuilder::build` samples a new HLC/event identity.  The
+            // immutable binding here is therefore the closed payload plus its
+            // reserved extended kind, not a freshly rebuilt full header.
+            if req.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
+                || req.header.event_subtype
+                    != crate::wal::events::ExtendedSubtype::EmailVaultReceipt as u8
+                || expected_payload != req.payload
+            {
+                once.finish(Err(Error::Indeterminate));
+                continue;
+            }
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = matches!(
+                tokio::task::spawn_blocking(move || canonical_home_matches(
+                    &requested_home,
+                    &authoritative_home
+                ))
+                .await,
+                Ok(Ok(true))
+            );
+            if !homes_match {
+                once.finish(Err(Error::Indeterminate));
+                continue;
+            }
+            let authority = match acquire_paperless_post_intent_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(Error::Indeterminate));
+                    continue;
+                }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(Error::Indeterminate));
+                drop(authority);
+                continue;
+            };
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None)
+                    .await
+                    .is_err()
+            {
+                once.finish(Err(Error::Indeterminate));
+                drop(authority);
+                continue;
+            }
+            pending_unsynced = false;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::email_vault_receipts::lookup_exact_at_home(
+                    &lookup_home,
+                    &lookup_expected,
+                )
+            })
+            .await
+            {
+                Ok(Ok(Lookup::Capacity)) => {
+                    once.finish(Err(Error::Capacity));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::Existing(observed))) => {
+                    once.finish(Ok(
+                        crate::wal::email_vault_receipts::Outcome::Existing(observed),
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::Conflict)) => {
+                    once.finish(Err(Error::Conflict));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::AbsentComplete)) => {
+                    req.email_vault_once = Some(once);
+                    email_vault_authority = Some(authority);
+                }
+                _ => {
+                    once.finish(Err(Error::Indeterminate));
+                    drop(authority);
+                    continue;
+                }
+            }
+        }
         let mut context_evidence_receipt_authority = None;
         let frame = encode_frame(&req.header, &req.payload);
         let frame_triggers_marker = compaction_state.as_ref().is_some_and(|state| {
@@ -6637,6 +6875,12 @@ async fn run_writer(
                     ));
                 }
                 drop(paperless_post_intent_authority);
+                if let Some(once) = req.email_vault_once.take() {
+                    once.finish(Ok(
+                        crate::wal::email_vault_receipts::Outcome::Appended,
+                    ));
+                }
+                drop(email_vault_authority);
                 if let Some(once) = req.transcript_mining_once.take() {
                     let lookup_home = hmac_home.clone();
                     let lookup_expected = once.expected.clone();
@@ -9904,6 +10148,7 @@ mod tests {
                 trust_decision_once: None,
                 companion_mutation_receipt_once: None,
                 paperless_post_intent_once: None,
+            email_vault_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,

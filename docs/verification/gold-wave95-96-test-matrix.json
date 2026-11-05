@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2680_PAPERLESS_MACRO_REPAIR_HOSTED_PENDING",
+  "status": "W2681_VAULT_RECEIPTS_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 468779,
-    "sha256": "2BD4127102F11EBD158E6354EDD7DECA230EA88B2AB7A9F72274D3B67F923CDA"
+    "bytes": 469141,
+    "sha256": "262E686488207AE97FDF881B109818D96CF680965871324CB6503FE6B8319848"
   },
-  "sourceInputs": 2558,
+  "sourceInputs": 2560,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2256,25 +2256,25 @@
     {
       "test": "wal::writer::tests::writer_drain_flushes_batchable_only_writes_on_shutdown",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_syncs_batchable_tail_and_writer_remains_usable",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_after_closed_writer_returns_writer_closed",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::flush_pending_after_writer_failure_never_acknowledges_success",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -4368,19 +4368,19 @@
     {
       "test": "wal::writer::tests::counterparty_consent_subtypes_refuse_every_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::counterparty_consent_input_locator_conflict_fails_closed",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::counterparty_consent_input_once_is_durable_readback_and_idempotent",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -6270,31 +6270,31 @@
     {
       "test": "wal::writer::tests::dream_audit_subtype_refuses_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_once_returns_existing_exact_and_conflict_without_second_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_reserved_subtype_rejects_all_real_generic_handle_entrypoints",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_durable_before_ack_loss_recovers_exactly_once_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::dream_audit_rejects_different_home_and_incomplete_authenticated_scan_without_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -6666,31 +6666,31 @@
     {
       "test": "wal::writer::tests::redaction_rewrite_subtype_refuses_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_once_returns_existing_exact_and_conflict_without_second_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_reserved_subtype_rejects_all_real_generic_handle_entrypoints",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_durable_before_ack_loss_recovers_exactly_once_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::redaction_rewrite_rejects_different_home_and_incomplete_authenticated_scan_without_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -8760,13 +8760,13 @@
     {
       "test": "wal::events::tests::extended_event_escape_hatch_registered",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "98F8662B0953FF3FD6A66F2D0C28DC0B3AD52CCA8F13CD2D5ED706CD8CD07B14",
+      "sourceSha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
       "junitClass": "neoth"
     },
     {
       "test": "wal::events::tests::extended_frame_roundtrips_type_and_subtype",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "98F8662B0953FF3FD6A66F2D0C28DC0B3AD52CCA8F13CD2D5ED706CD8CD07B14",
+      "sourceSha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
       "junitClass": "neoth"
     },
     {
@@ -16261,13 +16261,13 @@
     {
       "test": "wal::writer::tests::microphone_realtime_subtypes_refuse_every_generic_writer_entry",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -16381,19 +16381,19 @@
     {
       "test": "wal::writer::tests::append_no_ack_refuses_closed_companion_mutation_receipt",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -17395,55 +17395,55 @@
     {
       "test": "wal::writer::tests::paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_blocks_retry_after_cancellation_inside_transport",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_completion_requires_intent_and_remains_terminal_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_pending_bound_allows_completion_to_release_capacity",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_real_http_cancellation_reconciles_original_without_second_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -17467,13 +17467,13 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
@@ -17605,7 +17605,7 @@
     {
       "test": "wal::writer::tests::paperless_blocked_invocation_and_existing_intent_have_distinct_outcomes_without_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
@@ -19237,49 +19237,49 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
@@ -19291,55 +19291,55 @@
     {
       "test": "email::seen_store::scoped::tests::scoped_completion_separates_accounts_hosts_ports_and_case_sensitive_users",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_triage_never_completes_ingest_and_ingest_never_completes_triage",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_legacy_ambiguity_survives_explicit_retriage_without_ingest_authority",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_query_and_write_errors_never_become_unseen_or_completed",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_completion_reopens_idempotently_without_rewriting_first_timestamp",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_preserves_legacy_bytes_without_claiming_an_account",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rejects_colliding_schema_without_adopting_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rolls_back_table_and_stamp_then_retries",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
@@ -19381,85 +19381,85 @@
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_bound_completion_rejects_every_changed_field_without_rewriting",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_column_collision_preserves_version_and_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::input_conflicting_concurrent_marks_cannot_adopt_the_winner",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_target_drift_keeps_original_completion_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::quarantine_completion_ignores_target_drift_without_becoming_delivery",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_migration_retains_unknown_disposition_and_rejects_invalid_pairs",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_column_collision_preserves_version_and_input",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_stamp_failure_rolls_back_both_columns_before_retry",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::competing_delivery_targets_cannot_adopt_the_first_completion",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
@@ -19531,19 +19531,19 @@
     {
       "test": "paperless::email_note::tests::email_note_create_race_requires_exact_existing_bytes",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_post_commit_failure_preserves_a_verifiable_retry",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::email_note::tests::email_note_bound_unicode_directories_preserve_exact_retry",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "junitClass": "neoth"
     },
     {
@@ -19699,31 +19699,31 @@
     {
       "test": "wal::writer::tests::paperless_legacy_and_foreign_principal_claims_block_repost_and_remote_adoption",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_failed_principal_lookup_leaves_no_claim_or_document_request",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "wal::writer::tests::paperless_rotated_token_same_principal_reconciles_without_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::email_ingest_cron::tests::authenticated_principal_is_bound_before_cron_seen_state",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "junitClass": "neoth"
     },
     {
       "test": "email::seen_store::scoped::tests::authenticated_paperless_context_never_reopens_legacy_or_other_principal_delivery",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     },
     {
@@ -19742,6 +19742,66 @@
       "test": "providers::gemini_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/gemini_api.rs",
       "sourceSha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_receipt_schema_and_transition_gate_reject_drift_and_capacity",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_writer_orders_and_reconciles_exact_receipts_across_restart",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_writer_rejects_generic_append_foreign_home_and_closed_writer",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_closed_wal_never_creates_note_content",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_reconciles_same_file_without_views_after_writer_restart",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_never_adopts_unbound_exact_or_legacy_files",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_preserves_unbound_empty_and_bound_partial_crash_residue",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_blocks_input_rendition_file_and_directory_drift",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_concurrent_creators_publish_one_file_and_reconcile",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::seen_store::scoped::tests::vault_receipt_context_distinguishes_legacy_absent_replaced_and_exact_directory",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "junitClass": "neoth"
     }
   ],
@@ -22140,25 +22200,25 @@
       {
         "test": "paperless::email_note::tests::email_note_replaced_root_or_ancestor_never_receives_a_note",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_leaf_replacement_after_read_is_not_completion",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_detached_publication_stays_incomplete_and_preserved",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_parent_sync_failure_cannot_acknowledge_publication",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       }
     ],
@@ -22574,25 +22634,25 @@
       {
         "test": "paperless::email_note::tests::email_note_replaced_root_or_ancestor_never_receives_a_note",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_leaf_replacement_after_read_is_not_completion",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_detached_publication_stays_incomplete_and_preserved",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       },
       {
         "test": "paperless::email_note::tests::email_note_parent_sync_failure_cannot_acknowledge_publication",
         "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-        "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+        "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
         "junitClass": "neoth"
       }
     ]
@@ -93173,6 +93233,86 @@
       }
     ],
     "note": "One fully qualified tracing macro repairs hosted cfg(test) without imap_fetch; no behavior/test-count change. Active full run preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2681EmailVaultReceipts": {
+    "base": "ecb7a569fd4145b7cd1bb0ae93610b3c799d6894",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+        "bytes": 35991,
+        "sha256": "E07DA3D766A411AC2121C405DA34D4A729DFC08E0C09837C1E9C316351B65355",
+        "blob": "be57d8de2e1686f104341a2b9bc76c764a9c7c2e"
+      },
+      {
+        "path": "docs/verification/gold-wave2681-email-vault-receipts.json",
+        "bytes": 5393,
+        "sha256": "529F1CD1E2F6FCC1866E480D6144AD5150A2EB31CBCFA5311010249895F66F20",
+        "blob": "8bc63af4210bc9c62ab7e249da3a28c79b2c0536"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2788636,
+        "sha256": "134A3CAF54A4E052E1D86B1DDEDAB3FE81B89FB7D2346C6A70E9CB4CBCC948AC",
+        "blob": "a9f46bcf2274f6ca6b69bbebe358796c10422d5d"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "bytes": 75183,
+        "sha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
+        "blob": "6681955fce7d6f1a40b2e0a620f183836950c940"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+        "bytes": 9620,
+        "sha256": "2E31D5FB657504BE33F26C176DC4EB36186C7D59FD054D4049CC4A78C475C133",
+        "blob": "28463c8f9710087f72d1227266b016c9c4a8e9a5"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+        "bytes": 34222,
+        "sha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
+        "blob": "c2c387e454d88d10ceb02746e34b2bc3b1ab8b6a"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note.rs",
+        "bytes": 16554,
+        "sha256": "29D7973895F7A4F2467F91711ED743E7D8541D93B5506B10594C5A6729F46AE7",
+        "blob": "61fde802210437483ec90fcdd8a27bf7a7f8cb07"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+        "bytes": 21680,
+        "sha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+        "blob": "20cce58c6f81a5602b9c1e2ed9cf1a0e0a812a16"
+      },
+      {
+        "path": "SRC/neothd/src/wal/email_vault_receipts.rs",
+        "bytes": 12453,
+        "sha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+        "blob": "0055cae695b43a52cedb8ca338cb927c3045a08e"
+      },
+      {
+        "path": "SRC/neothd/src/wal/events.rs",
+        "bytes": 276491,
+        "sha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
+        "blob": "2c44520490c3f3475fcf96a9f0939a93f271d2fb"
+      },
+      {
+        "path": "SRC/neothd/src/wal/mod.rs",
+        "bytes": 7056,
+        "sha256": "8B91A7E8346E6F5DCC0EC060B30BABA141DE794D98016F0616B5C57F36EEB74B",
+        "blob": "20dc73b10df98d46e66fe26ab28149d024e36ace"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "bytes": 544939,
+        "sha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
+        "blob": "125de7ba8f2c4bb68b902926cc3e0c7cacf846a4"
+      }
+    ],
+    "note": "Ordered authenticated vault intent/file/completion;3296 portable/101 focused cases. Two existing cron sink/collision tests now exercise real receipted writer. Hosted pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

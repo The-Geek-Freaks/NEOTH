@@ -19942,3 +19942,8 @@ Die offizielle Gemini-Referenz fuer Candidate/Part wurde abgeglichen. Terra6.1hi
 ### W2680 — Paperless principal macro configuration repair (2026-11-05)
 
 Run 42019451049 exposed a cfg(test)-without-imap_fetch compile failure at the new principal-error warning. Qualify that single call as tracing::warn! and retain all production semantics. Source, focused catalog and inventories rebound; 3286 portable and 91 focused cases remain. Static review only; hosted acceptance pending. The active full run remains on 57581d55 and is neither duplicated nor cancelled. No roadmap checkbox is closed.
+
+
+### W2681 — Authenticated cross-attempt email vault receipts (2026-11-05)
+
+B02 / ADOPT-20261012-A04: the production cron now uses ordered Intent, FileBound and Completed claims in the existing WAL writer. Full input, rendition, held directory chain and exclusive-created file identity are bound before content writes. Recovery syncs and compares exact bound bytes; unbound, partial or replaced notes remain pending without deletion or rewriting. Versioned seen context includes the actual vault directory identity. Ten new cases cover ordered restart, wrong-home/generic APIs, closed WAL, exact/unbound/partial notes, drift, concurrent creation and legacy seen context:3296 portable /101 focused email cases. Static source and snippet review only; hosted format/compile/native acceptance pending. Filesystem ID reuse, trusted ancestry and platform durability limits remain explicit. Full A04 and all existing raw roadmap rows remain open.

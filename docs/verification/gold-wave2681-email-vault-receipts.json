@@ -1,0 +1,82 @@
+{
+  "schema": "neoth.wave2681.email-vault-receipts.v1",
+  "producerBase": "ecb7a569fd4145b7cd1bb0ae93610b3c799d6894",
+  "batch": "B02",
+  "roadmap": [
+    "ADOPT-20261012-A04"
+  ],
+  "finding": "Exact note bytes and within-attempt handles did not prove provenance across attempts or after loss of the reconstructable views store.",
+  "change": [
+    "A dedicated ExtendedSubtype 0x3E uses the existing authenticated writer and shared email claim authority. Generic appends are rejected. Complete authenticated primary-WAL scans enforce Intent -> FileBound -> Completed, exact request/file binding, and at most128 pending units.",
+    "Intent binds immutable mailbox unit, full immutable email-input digest, deterministic rendition digest and retained directory-chain fingerprint. Empty private directory preparation precedes the note-content intent.",
+    "Exclusive empty-file creation returns a retained file identity. Its durable FileBound acknowledgement is mandatory before any content byte is written; a lost acknowledgement leaves an ambiguous empty file pending.",
+    "Only the successful creator writes. Existing bound/completed leaves require the exact persisted file token and exact bytes, file/parent synchronization and named-leaf/directory revalidation before and after completion. Partial, unbound, missing, edited and replaced files are never rewritten or deleted.",
+    "Seen-state adds a v3 vault directory/receipt context before filtering. A missing read-only probe creates no directories. Completion uses the actual retained target fingerprint; Paperless principal stays in delivery context but does not alter the independent vault WAL claim."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "sha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "sha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA"
+    },
+    {
+      "path": "SRC/neothd/src/wal/mod.rs",
+      "sha256": "8B91A7E8346E6F5DCC0EC060B30BABA141DE794D98016F0616B5C57F36EEB74B"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/email_note.rs",
+      "sha256": "29D7973895F7A4F2467F91711ED743E7D8541D93B5506B10594C5A6729F46AE7"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A"
+    },
+    {
+      "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+      "sha256": "2E31D5FB657504BE33F26C176DC4EB36186C7D59FD054D4049CC4A78C475C133"
+    },
+    {
+      "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
+    }
+  ],
+  "newCases": [
+    "wal::email_vault_receipts::tests::vault_receipt_schema_and_transition_gate_reject_drift_and_capacity",
+    "wal::email_vault_receipts::tests::vault_writer_orders_and_reconciles_exact_receipts_across_restart",
+    "wal::email_vault_receipts::tests::vault_writer_rejects_generic_append_foreign_home_and_closed_writer",
+    "paperless::email_note::tests::receipted_note_closed_wal_never_creates_note_content",
+    "paperless::email_note::tests::receipted_note_reconciles_same_file_without_views_after_writer_restart",
+    "paperless::email_note::tests::receipted_note_never_adopts_unbound_exact_or_legacy_files",
+    "paperless::email_note::tests::receipted_note_preserves_unbound_empty_and_bound_partial_crash_residue",
+    "paperless::email_note::tests::receipted_note_blocks_input_rendition_file_and_directory_drift",
+    "paperless::email_note::tests::receipted_note_concurrent_creators_publish_one_file_and_reconcile",
+    "email::seen_store::scoped::tests::vault_receipt_context_distinguishes_legacy_absent_replaced_and_exact_directory"
+  ],
+  "requiredPortableNativeTests": 3296,
+  "focusedEmailCases": 101,
+  "review": "GPT-6.1 Terra high prompt-only architectural and Rust review; reviewed supplied core transition/writer/filesystem snippets. Reconciliation durability finding incorporated. No concrete remaining snippet finding.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "No local compiler, formatter, runtime or tests ran. Hosted compile/native execution and formatting remain pending.",
+    "Existing filesystem ID semantics and platform durability limits apply. IDs may be reused after deletion; trusted anchor ancestry and same-OS adversarial mutation are not eliminated.",
+    "Unbound empty files and partial writes intentionally remain pending. This batch adds no automatic repair, deletion or legacy-adoption approval workflow.",
+    "A receipt proves the observed completion, not perpetual note existence. Full A04, raw roadmap and release acceptance remain open."
+  ],
+  "existingIntegrationCasesUpdated": [
+    "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
+    "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding"
+  ]
+}

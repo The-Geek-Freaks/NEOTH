@@ -1,6 +1,143 @@
 use super::*;
 use crate::security::paperless_ingest::{OcrSource, ingest_ocr_text};
 
+fn receipted_request<'a>(item: &'a PaperlessOcrPayload, input: &'a str, vault: &'a Path) -> VaultNoteRequest<'a> {
+    VaultNoteRequest { payload: item, input_text: "Original invoice", input_sha256: input, legacy_doc_id: "legacy", vault_root: vault, subdir: "mail" }
+}
+
+#[tokio::test]
+async fn receipted_note_closed_wal_never_creates_note_content() {
+    let vault = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let item = payload("Original invoice", 'a');
+    let writer = crate::wal::writer::closed_test_writer();
+    assert!(sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &"b".repeat(64), vault.path())).await.is_err());
+    assert!(!path(vault.path(), &item).exists());
+    assert_eq!(fs::read_dir(path(vault.path(), &item).parent().unwrap()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn receipted_note_reconciles_same_file_without_views_after_writer_restart() {
+    let vault = tempfile::tempdir().unwrap();
+    let item = payload("Original invoice", 'a');
+    let input = "b".repeat(64);
+    assert!(vault_directory_fingerprint(vault.path(), "mail").is_err());
+    assert!(!vault.path().join("mail").exists());
+    let (writer, join, home, segment) = crate::wal::writer::spawn_isolated_ready_test_writer("vault-note-restart").await.unwrap();
+    let first = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())).await.unwrap();
+    assert_eq!(first.0, EmailNoteOutcome::Created);
+    assert_eq!(first.1, vault_directory_fingerprint(vault.path(), "mail").unwrap());
+    let before = fs::read(path(vault.path(), &item)).unwrap();
+    drop(writer);
+    join.await.unwrap().unwrap();
+    let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf()).unwrap();
+    ready.wait().await.unwrap();
+    let replay = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())).await.unwrap();
+    assert_eq!(replay, (EmailNoteOutcome::AlreadyPresent, first.1));
+    assert_eq!(fs::read(path(vault.path(), &item)).unwrap(), before);
+    assert!(!home.path().join("views.db").exists());
+    drop(writer);
+    join.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn receipted_note_never_adopts_unbound_exact_or_legacy_files() {
+    for legacy in [false, true] {
+        let vault = tempfile::tempdir().unwrap();
+        let item = payload("Original invoice", 'a');
+        let directory = note_directory(vault.path(), "mail", true).unwrap();
+        let (_, parent_path) = directory.current();
+        let existing = if legacy { parent_path.join("legacy.md") } else { path(vault.path(), &item) };
+        let bytes = render_email_note(&item, "Original invoice");
+        fs::write(&existing, &bytes).unwrap();
+        let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("vault-unbound").await.unwrap();
+        let result = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &"b".repeat(64), vault.path())).await.unwrap();
+        assert_eq!(result.0, EmailNoteOutcome::LegacyAmbiguous);
+        assert_eq!(fs::read_to_string(existing).unwrap(), bytes);
+        if legacy { assert!(!path(vault.path(), &item).exists()); }
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn receipted_note_preserves_unbound_empty_and_bound_partial_crash_residue() {
+    use crate::wal::email_vault_receipts::{Descriptor, Outcome};
+    for stage in 0..3 {
+        let vault = tempfile::tempdir().unwrap();
+        let item = payload("Original invoice", 'a');
+        let input = "b".repeat(64);
+        let directory = note_directory(vault.path(), "mail", true).unwrap();
+        let fingerprint = directory.fingerprint().unwrap();
+        let rendition = render_email_note(&item, "Original invoice");
+        let intent = Descriptor::intent(&"a".repeat(64), &input, &hex::encode(Sha256::digest(rendition.as_bytes())), &fingerprint).unwrap();
+        let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("vault-partial").await.unwrap();
+        assert_eq!(writer.append_email_vault_receipt_once(home.path(), intent.clone()).await, Ok(Outcome::Appended));
+        let (parent, parent_path) = directory.current();
+        let name = OsString::from(format!("{}.md", item.document_id));
+        let (mut file, binding) = store::create_private_regular_file_child_create_new(parent, &name, &parent_path.join(&name)).unwrap();
+        let bytes = if stage == 2 { rendition.as_bytes() } else if stage == 1 { b"partial" } else { b"" };
+        if stage > 0 {
+            assert_eq!(writer.append_email_vault_receipt_once(home.path(), intent.bind_file(binding.identity_token()).unwrap()).await, Ok(Outcome::Appended));
+            // Deliberately omit sync: reconciliation must supply it itself.
+            file.write_all(bytes).unwrap();
+        }
+        let result = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())).await.unwrap();
+        assert_eq!(result.0, match stage { 0 => EmailNoteOutcome::LegacyAmbiguous, 1 => EmailNoteOutcome::Conflict, _ => EmailNoteOutcome::AlreadyPresent });
+        assert_eq!(fs::read(path(vault.path(), &item)).unwrap(), bytes);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn receipted_note_blocks_input_rendition_file_and_directory_drift() {
+    for drift in 0..4 {
+        let vault = tempfile::tempdir().unwrap();
+        let item = payload("Original invoice", 'a');
+        let input = "b".repeat(64);
+        let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("vault-drift").await.unwrap();
+        sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())).await.unwrap();
+        let target = path(vault.path(), &item);
+        let bytes = fs::read(&target).unwrap();
+        let changed_input = "c".repeat(64);
+        let changed_item = payload("Changed invoice", 'a');
+        if drift == 2 {
+            fs::rename(&target, target.with_extension("retained")).unwrap();
+            fs::write(&target, &bytes).unwrap();
+        } else if drift == 3 {
+            let parent = target.parent().unwrap();
+            fs::rename(parent, parent.with_file_name("retained-directory")).unwrap();
+            fs::create_dir(parent).unwrap();
+            fs::write(&target, &bytes).unwrap();
+        }
+        let result = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(if drift == 1 { &changed_item } else { &item }, if drift == 0 { &changed_input } else { &input }, vault.path())).await;
+        assert!(result.is_err() || matches!(result, Ok((EmailNoteOutcome::Conflict, _))));
+        assert_eq!(fs::read(target).unwrap(), bytes);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn receipted_note_concurrent_creators_publish_one_file_and_reconcile() {
+    let vault = tempfile::tempdir().unwrap();
+    let item = payload("Original invoice", 'a');
+    let input = "b".repeat(64);
+    let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("vault-race").await.unwrap();
+    let (left, right) = tokio::join!(
+        sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())),
+        sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())),
+    );
+    assert_eq!([&left, &right].iter().filter(|result| matches!(result, Ok((EmailNoteOutcome::Created, _)))).count(), 1);
+    let replay = sync_email_to_obsidian_receipted(home.path(), &writer, receipted_request(&item, &input, vault.path())).await.unwrap();
+    assert_eq!(replay.0, EmailNoteOutcome::AlreadyPresent);
+    assert_eq!(fs::read_dir(path(vault.path(), &item).parent().unwrap()).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(path(vault.path(), &item)).unwrap(), render_email_note(&item, "Original invoice"));
+    drop(writer);
+    join.await.unwrap().unwrap();
+}
+
 fn payload(input: &str, digit: char) -> PaperlessOcrPayload {
     let id = format!("email-{}", digit.to_string().repeat(64));
     ingest_ocr_text(input, OcrSource::TesseractDirect, &id).unwrap()

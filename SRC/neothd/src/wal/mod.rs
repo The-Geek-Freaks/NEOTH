@@ -46,6 +46,7 @@ pub mod master_key;
 pub(crate) mod microphone_receipts;
 /// W2557 writer-owned pre-send claims for non-idempotent Paperless POSTs.
 pub(crate) mod paperless_post_receipts;
+pub(crate) mod email_vault_receipts;
 pub mod payloads_u04;
 pub mod payloads_w08;
 pub mod proof_bundle;

@@ -1,68 +1,68 @@
 {
   "schema": "neoth.email-paperless-recovery.v1",
-  "status": "PRINCIPAL_BOUND_SOURCE_PREPARED_HOSTED_PENDING",
+  "status": "VAULT_WAL_RECEIPTS_SOURCE_PREPARED_HOSTED_PENDING",
   "feature": "imap_fetch",
   "requiredTests": [
     {
       "test": "wal::writer::tests::paperless_post_intent_once_claims_one_transport_and_rejects_binding_drift",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_survives_uncertain_transport_restart_and_allows_other_unit",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_keeps_owned_claim_after_caller_cancellation_before_ack",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_blocks_retry_after_cancellation_inside_transport",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_post_intent_rejects_generic_append_wrong_home_and_invalid_descriptor",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_completion_requires_intent_and_remains_terminal_after_restart",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_pending_bound_allows_completion_to_release_capacity",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_real_http_cancellation_reconciles_original_without_second_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_http_success_without_document_stays_pending_and_unsupported_api_does_not_claim",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -90,14 +90,14 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -160,84 +160,84 @@
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": false,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": false,
       "requiresImapFeature": false
     },
     {
       "test": "wal::events::tests::extended_event_escape_hatch_registered",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "98F8662B0953FF3FD6A66F2D0C28DC0B3AD52CCA8F13CD2D5ED706CD8CD07B14",
+      "sourceSha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
       "newCase": false,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_blocked_invocation_and_existing_intent_have_distinct_outcomes_without_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -253,91 +253,91 @@
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_uid_reuse_requires_current_epoch_and_preserves_message_id_identity",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_triage_never_completes_ingest_and_ingest_never_completes_triage",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_legacy_ambiguity_survives_explicit_retriage_without_ingest_authority",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_query_and_write_errors_never_become_unseen_or_completed",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_completion_reopens_idempotently_without_rewriting_first_timestamp",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_preserves_legacy_bytes_without_claiming_an_account",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rejects_colliding_schema_without_adopting_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "email::seen_store::scoped::tests::scoped_v52_migration_rolls_back_table_and_stamp_then_retries",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "requiresImapFeature": false,
       "newCase": true,
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_seen_filter_separates_accounts_epochs_and_triage_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_legacy_ambiguity_blocks_only_its_unit_without_claiming_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_scoped_ledger_error_aborts_filter_and_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_seen_filter_uses_durable_message_id_key",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": false,
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
     },
     {
       "test": "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
@@ -412,168 +412,168 @@
     {
       "test": "daemon::email_ingest_cron::tests::cron_quarantine_binds_accounts_and_blocks_conflicting_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": true
     },
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_bound_completion_rejects_every_changed_field_without_rewriting",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_migration_preserves_unbound_rows_and_rejects_invalid_digests",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_column_collision_preserves_version_and_rows",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_v53_stamp_failure_rolls_back_column_and_retries_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::input_conflicting_concurrent_marks_cannot_adopt_the_winner",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_changed_input_conflicts_without_acknowledging_mixed_batch",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": true
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_target_drift_keeps_original_completion_without_adoption",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::quarantine_completion_ignores_target_drift_without_becoming_delivery",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_migration_retains_unknown_disposition_and_rejects_invalid_pairs",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_column_collision_preserves_version_and_input",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::delivery_v54_stamp_failure_rolls_back_both_columns_before_retry",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::competing_delivery_targets_cannot_adopt_the_first_completion",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_target_drift_preserves_quarantine_and_only_processes_fresh_units",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": true
     },
     {
       "test": "paperless::email_note::tests::email_note_create_race_requires_exact_existing_bytes",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_post_commit_failure_preserves_a_verifiable_retry",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_bound_unicode_directories_preserve_exact_retry",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_replaced_root_or_ancestor_never_receives_a_note",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_leaf_replacement_after_read_is_not_completion",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_detached_publication_stays_incomplete_and_preserved",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_parent_sync_failure_cannot_acknowledge_publication",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -608,35 +608,105 @@
     {
       "test": "wal::writer::tests::paperless_legacy_and_foreign_principal_claims_block_repost_and_remote_adoption",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_failed_principal_lookup_leaves_no_claim_or_document_request",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "wal::writer::tests::paperless_rotated_token_same_principal_reconciles_without_post",
       "sourcePath": "SRC/neothd/src/wal/writer.rs",
-      "sourceSha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1",
+      "sourceSha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::authenticated_principal_is_bound_before_cron_seen_state",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
+      "sourceSha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "email::seen_store::scoped::tests::authenticated_paperless_context_never_reopens_legacy_or_other_principal_delivery",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sourceSha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_receipt_schema_and_transition_gate_reject_drift_and_capacity",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_writer_orders_and_reconciles_exact_receipts_across_restart",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "wal::email_vault_receipts::tests::vault_writer_rejects_generic_append_foreign_home_and_closed_writer",
+      "sourcePath": "SRC/neothd/src/wal/email_vault_receipts.rs",
+      "sourceSha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_closed_wal_never_creates_note_content",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_reconciles_same_file_without_views_after_writer_restart",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_never_adopts_unbound_exact_or_legacy_files",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_preserves_unbound_empty_and_bound_partial_crash_residue",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_blocks_input_rendition_file_and_directory_drift",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::receipted_note_concurrent_creators_publish_one_file_and_reconcile",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "email::seen_store::scoped::tests::vault_receipt_context_distinguishes_legacy_absent_replaced_and_exact_directory",
+      "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sourceSha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8",
       "newCase": true,
       "requiresImapFeature": false
     }
@@ -664,7 +734,8 @@
     "SRC/neothd/src/wal/events.rs",
     "SRC/neothd/src/wal/mod.rs",
     "SRC/neothd/src/wal/paperless_post_receipts.rs",
-    "SRC/neothd/src/wal/writer.rs"
+    "SRC/neothd/src/wal/writer.rs",
+    "SRC/neothd/src/wal/email_vault_receipts.rs"
   ],
   "upstream": {
     "commit": "7575d6078227ebdb4cf443f263d53ebc7575aa37",

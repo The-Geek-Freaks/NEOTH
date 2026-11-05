@@ -54,6 +54,11 @@ pub(crate) fn mail_key(email: &InboundEmail, uid_validity: u32) -> Result<String
 }
 
 impl Identity {
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) fn input_sha256(&self) -> &str {
+        &self.input_sha256
+    }
+
     pub(crate) fn inbox(
         host: &str,
         port: u16,
@@ -97,6 +102,19 @@ pub(crate) struct DeliveryContext {
 }
 
 impl DeliveryContext {
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) fn with_vault_directory(self, directory_sha256: Option<&str>) -> Result<Self> {
+        if let Some(value) = directory_sha256 {
+            ensure!(value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()), "invalid vault directory fingerprint");
+        }
+        let encoded = serde_json::to_vec(&(
+            "neoth.email-delivery-vault-receipt.v3",
+            self.sha256,
+            directory_sha256,
+        )).context("bind receipted vault delivery directory")?;
+        Ok(Self { sha256: format!("{:x}", Sha256::digest(&encoded)) })
+    }
+
     #[cfg(any(test, feature = "imap_fetch"))]
     pub(crate) fn with_unavailable_paperless_principal(self) -> Self {
         let encoded = format!(

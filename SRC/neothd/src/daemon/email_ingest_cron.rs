@@ -27,7 +27,8 @@
 //!
 //! 5. **Obsidian note** — the cron-only writer uses an account-bound full unit
 //!    digest under `<vault>/<subdir>/Paperless/email-<digest>.md`. It creates
-//!    without replacement and recognizes only exact synced rendition bytes.
+//!    without replacement. Ordered WAL claims bind the input, rendition,
+//!    directory chain and file identity before content writes and completion.
 //!    Conflicting or legacy notes remain pending and are never overwritten or
 //!    silently duplicated. This local gate runs before the external upload.
 //!
@@ -518,8 +519,14 @@ pub async fn run_email_ingest_tick(
             .is_some_and(|token| !token.is_empty()),
     )?;
 
-    let (delivery_context, paperless_principal) =
+    let (base_delivery_context, paperless_principal) =
         bind_paperless_delivery_context(&mut paperless_destination, delivery_context).await;
+    let delivery_context = if let Some(vault_path) = vault.as_ref() {
+        let observed = crate::paperless::email_note::vault_directory_fingerprint(vault_path, &subdir).ok();
+        base_delivery_context.clone().with_vault_directory(observed.as_deref())?
+    } else {
+        base_delivery_context.clone()
+    };
     let (emails, skipped_seen, legacy_ambiguous, completion_conflicts) = filter_unseen(
         &seen_conn,
         &delivery_context,
@@ -651,6 +658,7 @@ pub async fn run_email_ingest_tick(
         }
 
         let has_configured_sink = vault.is_some() || paperless_destination.configured();
+        let mut message_delivery_context = delivery_context.clone();
         let mut vault_succeeded = true;
         let mut paperless_outcome = None;
 
@@ -669,13 +677,25 @@ pub async fn run_email_ingest_tick(
             match ingest_ocr_text(clean_body, OcrSource::TesseractDirect, &doc_id) {
                 Ok(payload) => {
                     use crate::paperless::email_note::EmailNoteOutcome;
-                    match crate::paperless::email_note::sync_email_to_obsidian(
-                        &payload,
-                        clean_body,
-                        &legacy_doc_id,
-                        vault_path,
-                        &subdir,
-                    ) {
+                    let identity = crate::email::seen_store::scoped::Identity::inbox(
+                        &imap_cfg.host, imap_cfg.port, &username, email, uid_validity,
+                    )?;
+                    let note_result = crate::paperless::email_note::sync_email_to_obsidian_receipted(
+                        neoth_home,
+                        writer,
+                        crate::paperless::email_note::VaultNoteRequest {
+                            payload: &payload,
+                            input_text: clean_body,
+                            input_sha256: identity.input_sha256(),
+                            legacy_doc_id: &legacy_doc_id,
+                            vault_root: vault_path,
+                            subdir: &subdir,
+                        },
+                    ).await;
+                    if let Ok((_, fingerprint)) = &note_result {
+                        message_delivery_context = base_delivery_context.clone().with_vault_directory(Some(fingerprint))?;
+                    }
+                    match note_result.map(|(outcome, _)| outcome) {
                         Ok(EmailNoteOutcome::Created) => {
                             info!(email_key_len, "email_ingest_cron: vault note created");
                             vault_written += 1;
@@ -832,7 +852,7 @@ pub async fn run_email_ingest_tick(
             paperless_destination.record_delivery(
                 &seen_conn,
                 &identity,
-                &delivery_context,
+                &message_delivery_context,
                 now_unix,
                 (vault.is_some(), vault_succeeded),
                 paperless_outcome,
@@ -1011,12 +1031,12 @@ mod tests {
         assert!(!ready.delivery_complete(true, false, completed));
     }
 
-    #[test]
-    fn persisted_vault_with_missing_paperless_token_leaves_ingest_pending() {
+    #[tokio::test]
+    async fn persisted_vault_with_missing_paperless_token_leaves_ingest_pending() {
         use crate::email::seen_store::scoped::{self, Identity, Purpose, SeenState};
-        use crate::paperless::email_note::{EmailNoteOutcome, sync_email_to_obsidian};
+        use crate::paperless::email_note::{EmailNoteOutcome, VaultNoteRequest, sync_email_to_obsidian_receipted, vault_directory_fingerprint};
 
-        let home = tempfile::tempdir().unwrap();
+        let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("cron-vault-pending").await.unwrap();
         let vault = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
         let email = vault_identity_email("7", Some("<pending@example.com>"));
@@ -1025,17 +1045,18 @@ mod tests {
         let payload = ingest_ocr_text(&email.body, OcrSource::TesseractDirect, &doc_id).unwrap();
         let legacy_id = sanitize_doc_id(email.dedup_key());
         assert_eq!(
-            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH")
-                .unwrap(),
+            sync_email_to_obsidian_receipted(home.path(), &writer, VaultNoteRequest { payload: &payload, input_text: &email.body, input_sha256: identity.input_sha256(), legacy_doc_id: &legacy_id, vault_root: vault.path(), subdir: "NEOTH" }).await.unwrap().0,
             EmailNoteOutcome::Created
         );
+        let fingerprint = vault_directory_fingerprint(vault.path(), "NEOTH").unwrap();
+        let context = target_test_context().with_vault_directory(Some(&fingerprint)).unwrap();
         let destination = PaperlessDestination::from_parts(Some("https://paperless.example"), None);
         assert!(
             !destination
                 .record_delivery(
                     &conn,
                     &identity,
-                    &target_test_context(),
+                    &context,
                     100,
                     (true, true),
                     None
@@ -1047,15 +1068,14 @@ mod tests {
                 &conn,
                 &identity,
                 Purpose::Ingest,
-                Some(&target_test_context())
+                Some(&context)
             )
             .unwrap(),
             SeenState::Unseen
         );
 
         assert_eq!(
-            sync_email_to_obsidian(&payload, &email.body, &legacy_id, vault.path(), "NEOTH")
-                .unwrap(),
+            sync_email_to_obsidian_receipted(home.path(), &writer, VaultNoteRequest { payload: &payload, input_text: &email.body, input_sha256: identity.input_sha256(), legacy_doc_id: &legacy_id, vault_root: vault.path(), subdir: "NEOTH" }).await.unwrap().0,
             EmailNoteOutcome::AlreadyPresent
         );
         let ready =
@@ -1072,7 +1092,7 @@ mod tests {
                 .record_delivery(
                     &conn,
                     &identity,
-                    &target_test_context(),
+                    &context,
                     200,
                     (true, true),
                     Some(PaperlessReconcileOutcome::UnknownOutcome)
@@ -1084,7 +1104,7 @@ mod tests {
                 &conn,
                 &identity,
                 Purpose::Ingest,
-                Some(&target_test_context())
+                Some(&context)
             )
             .unwrap(),
             SeenState::Unseen
@@ -1094,7 +1114,7 @@ mod tests {
                 .record_delivery(
                     &conn,
                     &identity,
-                    &target_test_context(),
+                    &context,
                     300,
                     (true, true),
                     Some(PaperlessReconcileOutcome::Completed)
@@ -1106,11 +1126,13 @@ mod tests {
                 &conn,
                 &identity,
                 Purpose::Ingest,
-                Some(&target_test_context())
+                Some(&context)
             )
             .unwrap(),
             SeenState::Seen
         );
+        drop(writer);
+        join.await.unwrap().unwrap();
     }
 
     #[cfg(feature = "imap_fetch")]
@@ -1392,8 +1414,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding() {
+    #[tokio::test]
+    async fn mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding() {
         let pairs = [
             (
                 "<invoice:a@example.com>".to_owned(),
@@ -1414,21 +1436,16 @@ mod tests {
                 sanitize_doc_id(&right).to_ascii_lowercase()
             );
             let vault = tempfile::tempdir().unwrap();
+            let (writer, join, home, _) = crate::wal::writer::spawn_isolated_ready_test_writer("cron-vault-collisions").await.unwrap();
             let mut ids = Vec::new();
             for (ordinal, message_id) in [&left, &right].into_iter().enumerate() {
                 let email = vault_identity_email(&ordinal.to_string(), Some(message_id));
                 let id = mail_vault_doc_id("imap.example.com", 993, "alice", &email, 11).unwrap();
+                let identity = crate::email::seen_store::scoped::Identity::inbox("imap.example.com", 993, "alice", &email, 11).unwrap();
                 let body = format!("Invoice number {ordinal}");
                 let payload = ingest_ocr_text(&body, OcrSource::TesseractDirect, &id).unwrap();
                 assert_eq!(
-                    crate::paperless::email_note::sync_email_to_obsidian(
-                        &payload,
-                        &body,
-                        &sanitize_doc_id(message_id),
-                        vault.path(),
-                        "mail",
-                    )
-                    .unwrap(),
+                    crate::paperless::email_note::sync_email_to_obsidian_receipted(home.path(), &writer, crate::paperless::email_note::VaultNoteRequest { payload: &payload, input_text: &body, input_sha256: identity.input_sha256(), legacy_doc_id: &sanitize_doc_id(message_id), vault_root: vault.path(), subdir: "mail" }).await.unwrap().0,
                     crate::paperless::email_note::EmailNoteOutcome::Created
                 );
                 let note = vault
@@ -1446,6 +1463,8 @@ mod tests {
                     .count(),
                 2
             );
+            drop(writer);
+            join.await.unwrap().unwrap();
         }
     }
 
