@@ -153,7 +153,7 @@ async fn receipted_note_preserves_unbound_empty_and_bound_partial_crash_residue(
             &parent_path.join(&name),
         )
         .unwrap();
-        let bytes = if stage == 2 {
+        let bytes: &[u8] = if stage == 2 {
             rendition.as_bytes()
         } else if stage == 1 {
             b"partial"

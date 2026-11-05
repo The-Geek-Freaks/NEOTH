@@ -1,0 +1,19 @@
+{
+  "schema": "neoth.wave2687.email-fixture-slice.v1",
+  "producer": "30463b3b993d2ab9e241472749799dd710c50fb4",
+  "run": 42036319947,
+  "batch": "B02",
+  "failure": "E0308 at paperless/email_note/tests.rs:161; nested branches inferred incompatible byte arrays7 and0",
+  "change": "Explicit &[u8] destination type coerces both byte-string branches to slices; test behavior and production code unchanged",
+  "source": {
+    "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+    "sha256": "881B07ACA4C4123D17D6498E6230F1A315A033AD9D3B57A72B166146882D7156"
+  },
+  "publicCliBuildPassed": true,
+  "focusedTestsRan": false,
+  "focusedCases": 101,
+  "review": "GPT-6.1 Terra high Rust build resolver prompt-only review confirms minimal Rust1.91 coercion fix",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false
+}

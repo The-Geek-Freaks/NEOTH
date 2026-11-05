@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T13:27:53.7746056Z",
-  "validationStatus": "mobile-source86-hosted-passed-rust-native-pending",
+  "capturedUtc": "2026-11-05T13:47:11.3302149Z",
+  "validationStatus": "email-fixture-type-repair-static-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4379,7 +4379,7 @@
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
       "bytes": 35991,
-      "sha256": "AF052BB6B2F6CE561F753C715967BC9FDA8060B7EFA58426D4B31DBD82A59133"
+      "sha256": "D58750D751B0A464FA93113FE32D2591A4D61A6A643605EB4A51C0A3BDF32F3C"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4910,6 +4910,11 @@
       "path": "docs/verification/gold-wave2686-section-omission-integrity.json",
       "bytes": 2204,
       "sha256": "F46B6D08A941F81ECF87A250DC122C87EC3929C02D6D3B0089FAE35D351E033F"
+    },
+    {
+      "path": "docs/verification/gold-wave2687-email-fixture-slice.json",
+      "bytes": 854,
+      "sha256": "4A36643E425158919D4C5F272CF6F7C325AD34A99DC4F361B89852D16B138AC8"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6163,8 +6168,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2795451,
-      "sha256": "8FC0D9CAADFFECE2FD3962FD16B9FAE923ADA57BB022600D66819E5774C325C6"
+      "bytes": 2796109,
+      "sha256": "F9D02756E56CDF91203DE32CC3CB31B0A207EF59ADB6B5F6876C857D713F1DD6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9343,8 +9348,8 @@
     },
     {
       "path": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "bytes": 23335,
-      "sha256": "9A18626FDF29A5E2C19293943D200BA5BD6E8F57F153F63742CF9C6A66F28874"
+      "bytes": 23342,
+      "sha256": "881B07ACA4C4123D17D6498E6230F1A315A033AD9D3B57A72B166146882D7156"
     },
     {
       "path": "SRC/neothd/src/paperless/findings.rs",

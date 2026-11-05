@@ -19980,3 +19980,7 @@ Der bestehende Dokumentleser prueft jetzt denselben begrenzten Auslassungsvertra
 ### W2684/W2685 — Flutter-Quellabnahme
 
 Run42035196908 auf1f1773fc29e0af58c21a0984749210d03847b2c7 bestand Flutter-Analyse und alle86 Pakettests einschliesslich aller sieben neuen Startup-/Speicherfaelle. Root pruefte Originaljoblog, einzelne Fallnamen, Abschlusszaehler, Job-/Runidentitaet und Produzentenblobs; ROOT_ADMISSION.json liegt in work/gold-20260906/wave2684-mobile-save-recovery. Native Jobs waren im ausdruecklichen source_qa_only-Modus ausgelassen; daraus folgt keine native/Geraete-/Release-Abnahme. W2686 erhielt ausschliesslich den auf GitHub erzeugten, mit API-/ZIP-/Memberhashes sowie exakten Git-Vor-/Nachbildern geprueften Formatpatch.
+
+### W2687 — E-Mail-Regressionen: Byte-Slice-Typ explizit
+
+Run42036319947 auf30463b3b baute den aktuellen produktiven CLI erfolgreich. Beim Kompilieren der101 fokussierten Tests meldete Rust1.91 genau einen E0308-Typfehler im neuen Partial-Write-Test: die inneren Zweige lieferten Byte-Arrays der Laengen7 und0. Ein explizites &[u8] am Ziel ermoeglicht die vorgesehene Slice-Koerzierung aller Zweige. Kein Produktionsverhalten und keine Testanforderung wurden geaendert. Fallkatalog/Inventare neu gebunden; erneute Hosted-Abnahme erforderlich. Parallel vorbereitete Session-Praeferenzen bleiben uncommittet und sind nicht Teil dieses Reparaturproduzenten.
