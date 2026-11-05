@@ -459,13 +459,30 @@ impl McpServerConfig {
         &self,
         store: Option<&dyn crate::config::keychain::SecretStore>,
     ) -> Result<HashMap<String, String>> {
+        self.resolve_env_with_sources(
+            store,
+            crate::config::keychain::open_store,
+            |key| std::env::var(key),
+        )
+    }
+
+    fn resolve_env_with_sources(
+        &self,
+        store: Option<&dyn crate::config::keychain::SecretStore>,
+        open_store: impl Fn() -> Result<Box<dyn crate::config::keychain::SecretStore>>,
+        read_env: impl Fn(&str) -> std::result::Result<String, std::env::VarError>,
+    ) -> Result<HashMap<String, String>> {
         let mut out = HashMap::with_capacity(self.env.len());
         let mut opened: Option<Box<dyn crate::config::keychain::SecretStore>> = None;
         for (k, v) in &self.env {
             if v == "from_env" {
-                let actual = std::env::var(k).with_context(|| {
-                    format!(
-                        "MCP server `{}`: env `{k}` requested via `from_env` but no such                          variable in the NEOTH process environment",
+                let actual = read_env(k).map_err(|error| {
+                    let reason = match error {
+                        std::env::VarError::NotPresent => "is not set",
+                        std::env::VarError::NotUnicode(_) => "is not valid Unicode",
+                    };
+                    anyhow::anyhow!(
+                        "MCP server `{}`: env `{k}` requested via `from_env` {reason}",
                         self.id
                     )
                 })?;
@@ -481,22 +498,23 @@ impl McpServerConfig {
                     Some(store) => store,
                     None => {
                         if opened.is_none() {
-                            opened =
-                                Some(crate::config::keychain::open_store().with_context(|| {
-                                    format!(
-                                        "MCP server `{}`: env `{k}` needs the secret store",
-                                        self.id
-                                    )
-                                })?);
+                            opened = Some(open_store().map_err(|_| {
+                                anyhow::anyhow!(
+                                    "MCP server `{}`: cannot open secret store for env `{k}`",
+                                    self.id
+                                )
+                            })?);
                         }
                         opened.as_deref().expect("just opened")
                     }
                 };
                 let found = store
                     .get(&crate::config::keychain::store_key(name))
-                    .with_context(|| {
-                        format!(
-                            "MCP server `{}`: read secret `{name}` for env `{k}`",
+                    .map_err(|_| {
+                        // Backend causes may contain credential bytes. Do not
+                        // retain them in Display, Debug or the source chain.
+                        anyhow::anyhow!(
+                            "MCP server `{}`: cannot read secret `{name}` for env `{k}`",
                             self.id
                         )
                     })?;
@@ -1150,6 +1168,115 @@ mod tests {
         fn backend_name(&self) -> &'static str {
             "fake"
         }
+    }
+
+    struct ErrorStore;
+
+    impl crate::config::keychain::SecretStore for ErrorStore {
+        fn get(&self, _key: &str) -> anyhow::Result<Option<crate::secret::SecretString>> {
+            Err(anyhow::anyhow!("inner-secret-payload").context("outer-secret-payload"))
+        }
+
+        fn set(&self, _key: &str, _value: &crate::secret::SecretString) -> anyhow::Result<()> {
+            unreachable!("resolution never writes secrets")
+        }
+
+        fn delete(&self, _key: &str) -> anyhow::Result<()> {
+            unreachable!("resolution never deletes secrets")
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "error-fixture"
+        }
+    }
+
+    fn assert_safe_resolution_error(error: &anyhow::Error, operation: &str) {
+        assert_eq!(error.chain().count(), 1, "backend causes must be discarded");
+        for rendered in [
+            format!("{error}"),
+            format!("{error:#}"),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+        ] {
+            assert!(rendered.contains("srv"));
+            assert!(rendered.contains("GITHUB_TOKEN"));
+            assert!(rendered.contains(operation));
+            assert!(!rendered.contains("inner-secret-payload"));
+            assert!(!rendered.contains("outer-secret-payload"));
+        }
+    }
+
+    #[test]
+    fn secret_store_read_errors_discard_backend_payloads() {
+        let cfg = server_with_env(&[("GITHUB_TOKEN", "from_secret:github_pat")]);
+        let error = cfg.resolve_env_with_store(Some(&ErrorStore)).unwrap_err();
+        assert_safe_resolution_error(&error, "cannot read secret");
+        assert!(error.to_string().contains("github_pat"));
+    }
+
+    #[test]
+    fn secret_store_open_errors_discard_backend_payloads() {
+        let cfg = server_with_env(&[("GITHUB_TOKEN", "from_secret:github_pat")]);
+        let error = cfg
+            .resolve_env_with_sources(
+                None,
+                || Err(anyhow::anyhow!("inner-secret-payload").context("outer-secret-payload")),
+                |_| panic!("secret reference must not read the process environment"),
+            )
+            .unwrap_err();
+        assert_safe_resolution_error(&error, "cannot open secret store");
+    }
+
+    #[test]
+    fn environment_errors_distinguish_missing_and_unicode_without_payloads() {
+        let cfg = server_with_env(&[("GITHUB_TOKEN", "from_env")]);
+        for (source_error, reason) in [
+            (std::env::VarError::NotPresent, "is not set"),
+            (
+                std::env::VarError::NotUnicode("outer-secret-payload".into()),
+                "is not valid Unicode",
+            ),
+        ] {
+            let error = cfg
+                .resolve_env_with_sources(
+                    None,
+                    || panic!("environment reference must not open the secret store"),
+                    |_| Err(source_error.clone()),
+                )
+                .unwrap_err();
+            assert_safe_resolution_error(&error, reason);
+        }
+    }
+
+    #[test]
+    fn injected_secret_source_opens_once_and_preserves_values() {
+        let opened = std::cell::Cell::new(0);
+        let cfg = server_with_env(&[
+            ("GITHUB_TOKEN", "from_secret:github_pat"),
+            ("OTHER_TOKEN", "from_secret:other"),
+        ]);
+        let env = cfg
+            .resolve_env_with_sources(
+                None,
+                || {
+                    opened.set(opened.get() + 1);
+                    Ok(Box::new(FakeStore(std::collections::HashMap::from([
+                        (
+                            crate::config::keychain::store_key("github_pat"),
+                            "first-value".to_string(),
+                        ),
+                        (
+                            crate::config::keychain::store_key("other"),
+                            "second-value".to_string(),
+                        ),
+                    ]))))
+                },
+                |_| panic!("secret references must not read the process environment"),
+            )
+            .unwrap();
+        assert_eq!(opened.get(), 1);
+        assert_eq!(env.get("GITHUB_TOKEN").unwrap(), "first-value");
+        assert_eq!(env.get("OTHER_TOKEN").unwrap(), "second-value");
     }
 
     fn server_with_env(pairs: &[(&str, &str)]) -> McpServerConfig {

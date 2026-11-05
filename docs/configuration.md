@@ -770,6 +770,15 @@ and npm registry/userconfig overrides are also rejected. `neoth doctor` reports
 invalid enabled launchers as failures; `neoth mcp list` shows each static launcher
 posture. Server arguments may follow the exact package spec.
 
+For a server's `env` mapping, `from_secret:NAME` resolves a reference from the
+configured secret store when preparing the child. The store opens lazily, once
+per resolution; missing references or failed store access prevent launch.
+`from_env` reads the same-named NEOTH environment variable and rejects missing
+or non-Unicode values. Resolution errors retain the server, key and failed
+operation, while discarding backend error payloads and their cause chains.
+These references avoid storing values in `mcp_servers.yaml`; the selected MCP
+child still receives its resolved credentials in its environment.
+
 The optional `neoth init --force` hex-graph offer writes the full canonical
 13-tool allowlist and checks Node >=20.19.0 plus npx. Its first use can still
 download through npm: the exact top-level pin prevents tag drift, but transitive

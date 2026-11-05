@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "ROADMAP_261_BOUND_AND_PREFLIGHT_ALLOWLIST_REPAIRED_HOSTED_PENDING",
+  "status": "MCP_SECRET_ERROR_BOUNDARIES_SOURCE_READY_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 465909,
-    "sha256": "0DC2CC862F1E5263E543E1F88FA6223C7D2F7EB00245C74BD7D4BAF76CBDF5A6"
+    "bytes": 466092,
+    "sha256": "63ADF27AC65E904E2898EDC4E3DF6782C5FC43177A857D940403FFC9E6719828"
   },
-  "sourceInputs": 2543,
+  "sourceInputs": 2544,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -19460,6 +19460,54 @@
       "test": "email::seen_store::scoped::tests::competing_delivery_targets_cannot_adopt_the_first_completion",
       "sourcePath": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
       "sourceSha256": "84C8AEC45D10E4471A8E0D68DDC0381A71ABCC44765503FD00CB64B70A70F8AF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::secret_store_read_errors_discard_backend_payloads",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::secret_store_open_errors_discard_backend_payloads",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::environment_errors_distinguish_missing_and_unicode_without_payloads",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::injected_secret_source_opens_once_and_preserves_values",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::from_secret_resolves_through_the_store",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::a_missing_secret_fails_loud_and_never_echoes_a_value",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::an_empty_secret_name_is_refused",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::config::tests::plain_values_and_from_env_are_untouched_by_the_new_path",
+      "sourcePath": "SRC/neothd/src/mcp/config.rs",
+      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
       "junitClass": "neoth"
     }
   ],
@@ -92179,6 +92227,38 @@
       }
     ],
     "note": "All261 unfinished raw checklist entries retained and assigned; exact SSH regression allowlist repaired; no local runtime or Gold closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2667McpCredentialErrors": {
+    "base": "e02945fa4ce5667aec2d515b14d9375a8155ba98",
+    "sources": [
+      {
+        "path": "docs/configuration.md",
+        "bytes": 52729,
+        "sha256": "C2A0F73A31FF58F996AACAEF3BEA380552BFE61964995216E2B0D55FBB9F3325",
+        "blob": "5a1e92b01b70615b7a9641c5081a5d261338be44"
+      },
+      {
+        "path": "docs/verification/gold-wave2667-mcp-credential-errors.json",
+        "bytes": 2624,
+        "sha256": "80BACDB37A6BD174B0804B3D51D0A5EFABB3900AC6AA5395CDDF5D7684D853F7",
+        "blob": "b2f0aa3e4ab839237e6bc2bfe817fcdbe3c0c36f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2767771,
+        "sha256": "AB96BEFB8C81BCE294240B3D18152709D0D9141729C7D8E47F213FB10A7AC682",
+        "blob": "8f0bc9b73445f92e9b44127880f7bb67f78814ea"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/config.rs",
+        "bytes": 98937,
+        "sha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+        "blob": "03d916cbbcff9e0fd6a575d8ab3bee664b9119bd"
+      }
+    ],
+    "note": "Four new safe-error regressions plus four existing MCP credential cases registered; current compile/runtime/native pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
