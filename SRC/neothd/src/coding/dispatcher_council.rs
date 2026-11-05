@@ -88,7 +88,10 @@ impl Admission {
         target: &CanonicalRepoRoot,
         original: &str,
     ) -> Result<(), String> {
-        if target != &self.target
+        if CanonicalRepoRoot::discover(self.target.path())
+            .map_err(|_| "dispatcher target identity unavailable")?
+            != self.target
+            || target != &self.target
             || CanonicalRepoRoot::discover(self.source_repo.path())
                 .map_err(|_| "source repository unavailable")?
                 != self.source_repo
@@ -117,8 +120,11 @@ impl Admission {
 
     pub(super) fn verify_worktree(&self, worktree: &Path) -> Result<(), String> {
         let actual = self_source_gate::capture_base_snapshot(worktree)?;
-        if actual.head_sha != self.base.head_sha {
-            return Err("reviewed worktree did not start at the exact admitted commit".into());
+        if actual.head_sha != self.base.head_sha
+            || crate::coding::worktree::is_worktree_dirty(worktree)
+                .map_err(|_| "reviewed worktree state unavailable")?
+        {
+            return Err("reviewed worktree is not clean at the exact admitted commit".into());
         }
         Ok(())
     }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "focused seven admitted; dispatcher/full native pending",
+  "status": "source effect revalidation; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474319,
-    "sha256": "7B7814FAA0DDE041124D9D1D8D6FD1916F07D980FBE298AF3F6A4D3C2725A36A"
+    "bytes": 474307,
+    "sha256": "7DC7434BAD444B3150C117DD3F13F049191053FD912EDF1AF544C72C929B2CDE"
   },
   "sourceInputs": 2588,
   "requiredNativeTests": [
@@ -19963,19 +19963,19 @@
     {
       "test": "coding::dispatcher::council_tests::dispatcher_reviews_before_real_worktree_and_never_inherits_dissent_override",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "979D0CB64A91D227EB7A70E4AFC86F895BF63A2D286611C2BF6A38FEFCD44D0C",
+      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
       "junitClass": "neoth"
     },
     {
       "test": "coding::dispatcher::council_tests::dispatcher_review_rejects_changed_base_and_expiry_at_blocking_effect",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "979D0CB64A91D227EB7A70E4AFC86F895BF63A2D286611C2BF6A38FEFCD44D0C",
+      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
       "junitClass": "neoth"
     },
     {
       "test": "coding::dispatcher::council_tests::dispatcher_source_scope_covers_moves_deletions_and_rejects_ambiguous_paths",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "979D0CB64A91D227EB7A70E4AFC86F895BF63A2D286611C2BF6A38FEFCD44D0C",
+      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
       "junitClass": "neoth"
     },
     {
@@ -94411,6 +94411,32 @@
       }
     ],
     "note": "Retain exact macOS bounds assertion with190/300 allocation; seven actual Linux focused cases independently admitted; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2694FinalEffect": {
+    "base": "1fbc94b0711ae1c08b05aacca16bc920ea2211d1",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
+        "bytes": 4310,
+        "sha256": "3A476C8B4E54D432CEC6469B33D8D84C06438B58AB01809825F552FAACA222B8",
+        "blob": "95d3c672e63f1c624d45105f7593f68f3dfed8ca"
+      },
+      {
+        "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+        "bytes": 11315,
+        "sha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
+        "blob": "de29205bb3953602001a8c89808809d08d32a6bb"
+      },
+      {
+        "path": "SRC/neothd/src/coding/dispatcher_council.rs",
+        "bytes": 12392,
+        "sha256": "DA4728B8E79FAE8508C614F54DAB0127AD18E1013F88E67B1300669FA83B7696",
+        "blob": "ff35985f25a3d3c777ba10d010b767849cb6940e"
+      }
+    ],
+    "note": "Fresh physical target discovery and clean pinned worktree at actual apply; existing native fixture extended; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

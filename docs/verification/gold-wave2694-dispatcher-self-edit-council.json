@@ -24,11 +24,11 @@
   "sources": [
     {
       "path": "SRC/neothd/src/coding/dispatcher_council.rs",
-      "sha256": "D4252418B806C1A754244CC5C8FC296F727CA01B72F8872DC3B789046F83C612"
+      "sha256": "DA4728B8E79FAE8508C614F54DAB0127AD18E1013F88E67B1300669FA83B7696"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sha256": "979D0CB64A91D227EB7A70E4AFC86F895BF63A2D286611C2BF6A38FEFCD44D0C"
+      "sha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
@@ -82,5 +82,6 @@
     "apiZipAndMembersVerified": true,
     "runtimeAccepted": false
   },
-  "windowsGitTransport": "Source base snapshots and dispatcher root lookup reuse the existing identity-checked Git transport path; avoids direct verbatim-path Git calls. Native verification pending."
+  "windowsGitTransport": "Source base snapshots and dispatcher root lookup reuse the existing identity-checked Git transport path; avoids direct verbatim-path Git calls. Native verification pending.",
+  "finalEffectRevalidation": "Re-discover target physical identity on every final validation; require the pinned worktree to remain clean immediately before patch application. Existing positive actual-apply regression also proves a dirty pinned worktree is refused."
 }
