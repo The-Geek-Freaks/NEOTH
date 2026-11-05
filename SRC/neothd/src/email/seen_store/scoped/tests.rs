@@ -43,6 +43,28 @@ fn db() -> Connection {
 }
 
 #[test]
+fn authenticated_paperless_context_never_reopens_legacy_or_other_principal_delivery() {
+    let endpoint = "https://paperless.example/api/documents/post_document/";
+    for legacy in [true, false] {
+        let conn = db();
+        let mail = email("1", Some("<principal@example.com>"));
+        let unit = identity("alice", &mail, 1);
+        let previous = if legacy { target_context() } else {
+            target_context().with_authenticated_paperless_principal(endpoint, 17).unwrap()
+        };
+        mark(&conn, &unit, Completion::Delivery(&previous), 100).unwrap();
+        let matching = target_context().with_authenticated_paperless_principal(endpoint, 17).unwrap();
+        assert_eq!(state(&conn, &unit, Purpose::Ingest, Some(&matching)).unwrap(),
+            if legacy { SeenState::ContextConflict } else { SeenState::Seen });
+        let other = target_context().with_authenticated_paperless_principal(endpoint, 29).unwrap();
+        assert_eq!(state(&conn, &unit, Purpose::Ingest, Some(&other)).unwrap(), SeenState::ContextConflict);
+        assert!(mark(&conn, &unit, Completion::Delivery(&other), 101).is_err());
+        assert_eq!(state(&conn, &unit, Purpose::Ingest, Some(&previous)).unwrap(), SeenState::Seen);
+    }
+    assert!(target_context().with_authenticated_paperless_principal(endpoint, 0).is_err());
+}
+
+#[test]
 fn scoped_completion_separates_accounts_hosts_ports_and_case_sensitive_users() {
     let conn = db();
     let mail = email("1", Some("<same@example.com>"));

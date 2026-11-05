@@ -88,12 +88,31 @@ impl Identity {
     }
 }
 
-/// Non-secret target configuration only, not principal or approval evidence.
+/// Delivery target binding. The constructor binds configuration only; the cron
+/// path adds its authenticated Paperless principal before reading seen-state.
+/// Neither digest grants approval or authority to send a document.
+#[derive(Clone)]
 pub(crate) struct DeliveryContext {
     sha256: String,
 }
 
 impl DeliveryContext {
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) fn with_unavailable_paperless_principal(self) -> Self {
+        let encoded = format!("neoth.email-delivery-principal-unavailable.v2\0{}", self.sha256);
+        Self { sha256: format!("{:x}", Sha256::digest(encoded.as_bytes())) }
+    }
+
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) fn with_authenticated_paperless_principal(self, endpoint: &str, user_id: u64) -> Result<Self> {
+        ensure!(user_id > 0, "Paperless delivery principal is unavailable");
+        let encoded = serde_json::to_vec(&(
+            "neoth.email-delivery-principal.v2", self.sha256, endpoint, user_id,
+        ))
+        .context("bind authenticated Paperless delivery principal")?;
+        Ok(Self { sha256: format!("{:x}", Sha256::digest(&encoded)) })
+    }
+
     pub(crate) fn new(
         vault: Option<&str>,
         subdir: &str,

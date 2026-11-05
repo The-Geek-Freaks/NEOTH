@@ -1,0 +1,94 @@
+{
+  "schema": "neoth.wave2677.paperless-principal.v1",
+  "producerBase": "3b403a8c9bc80d9b7dae21fa807b640bb8862962",
+  "batch": "B02",
+  "roadmap": [
+    "ADOPT-20261012-A04"
+  ],
+  "finding": "Endpoint-only WAL and delivery-context hashes could treat a different authenticated Paperless account as the old destination. Seen-state filtering occurred before account verification.",
+  "change": [
+    "Authenticate a positive user.id from pinned UI settings using the captured token, no redirects, exact version/API headers and a64KiB bound.",
+    "Bind principal to the same canonical endpoint in v2 receipt and marker hashes, retaining mailbox-unit claim identity across versions. v1 bytes and decoding remain valid; legacy/foreign open or completed claims block repost and adoption.",
+    "Bind the current principal before cron seen-state filtering and revalidate the expected principal before document reconciliation. A failed lookup makes Paperless unavailable while preserving independent triage/quarantine/vault processing; delivery cannot be recorded.",
+    "Same-account token rotation retains the binding; no token, username or profile payload is persisted."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+      "sha256": "7F3974E210EBB56C3119CCFA71AA6C47BC0A19F2445C5B79D02722C0194314DF"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+      "sha256": "00DA90B51952E3720734A2F641EF44FC00835B21C7032DC51CAD88032FEA6FC0"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "sha256": "9DF2321BD609F2022F64794A0FFB107A4E090B2C8C27218CEE80CD80A4FA7AAA"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sha256": "C5EFD9804BFEA3B8547DD2074FF2B049AADAE710D05330C4C001B08AACAD0CB9"
+    },
+    {
+      "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+      "sha256": "528EFD3D5841F4312F3945EC5EC23DEDD9786E0303018BE8BF02ABCC004716AD"
+    },
+    {
+      "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+      "sha256": "EA8840BFEC5C90E1365BABEB40743578D8309DB5DE234588ABEE6CFD5AC55E2E"
+    }
+  ],
+  "upstream": {
+    "repository": "paperless-ngx/paperless-ngx",
+    "commit": "7575d6078227ebdb4cf443f263d53ebc7575aa37",
+    "files": [
+      {
+        "html_url": "https://github.com/paperless-ngx/paperless-ngx/blob/7575d6078227ebdb4cf443f263d53ebc7575aa37/src/paperless/serialisers.py",
+        "path": "src/paperless/serialisers.py",
+        "sha": "7b32230f8fc9c4eb0f3beea89fce67e53ea6028b",
+        "size": 11790
+      },
+      {
+        "html_url": "https://github.com/paperless-ngx/paperless-ngx/blob/7575d6078227ebdb4cf443f263d53ebc7575aa37/src/paperless/urls.py",
+        "path": "src/paperless/urls.py",
+        "sha": "0c02d172b87889dd77507a0de13139cffe2c7914",
+        "size": 17667
+      },
+      {
+        "html_url": "https://github.com/paperless-ngx/paperless-ngx/blob/7575d6078227ebdb4cf443f263d53ebc7575aa37/src/documents/views.py",
+        "path": "src/documents/views.py",
+        "sha": "cc09709a4458d2c289a891fb8f6feaa5fef8d06d",
+        "size": 210866
+      }
+    ],
+    "observedContract": "ProfileSerializer omits stable id. UiSettingsView requires IsAuthenticated/PaperlessObjectPermissions and derives response.user.id from request.user.id. Existing /api/ui_settings/ route retained under canonical prefix.",
+    "execution": "Bounded source text read only"
+  },
+  "newCases": [
+    "wal::paperless_post_receipts::tests::principal_binding_preserves_legacy_bytes_and_single_mailbox_unit",
+    "wal::paperless_post_receipts::tests::principal_schema_rejects_missing_mismatched_and_malformed_bindings",
+    "daemon::email_ingest_cron::paperless_client::tests::principal_binding_uses_authenticated_id_and_preserves_base_path",
+    "daemon::email_ingest_cron::paperless_client::tests::principal_lookup_rejects_unproven_identity_without_document_requests",
+    "wal::writer::tests::paperless_legacy_and_foreign_principal_claims_block_repost_and_remote_adoption",
+    "wal::writer::tests::paperless_failed_principal_lookup_leaves_no_claim_or_document_request",
+    "wal::writer::tests::paperless_rotated_token_same_principal_reconciles_without_post",
+    "daemon::email_ingest_cron::tests::authenticated_principal_is_bound_before_cron_seen_state",
+    "email::seen_store::scoped::tests::authenticated_paperless_context_never_reopens_legacy_or_other_principal_delivery"
+  ],
+  "registration": {
+    "portable": 3283,
+    "focusedSources": 23,
+    "focusedLinux": 91
+  },
+  "coverage": "Nine new cases: versioned descriptor identity/byte compatibility/validation, authenticated HTTP identity and invalid envelopes, real WAL legacy/foreign account conflicts for open/completed and remote present/absent, failed lookup without claim, rotated-token recovery, real SQLite seen-context fencing, cron-helper HTTP/seen/unavailable/quarantine behavior. Three existing real HTTP/WAL recovery tests retain their original assertions with principal fixtures.",
+  "review": "GPT-6.1 Terra high prompt-only review of supplied design/snippets. Review identified seen-filter ordering and independent processing on lookup failure; both addressed in production and regression coverage.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "No protection against coordinated remote database restore/user-id reuse at the same origin or credential reassignment between HTTP requests.",
+    "UI-settings permission is required; unavailable/malformed/unsupported account proof keeps Paperless delivery pending.",
+    "No automatic legacy-effect adoption, approved rendition changes or cross-attempt vault identity. Whole A04 remains open.",
+    "No live service, new current-producer native or release acceptance."
+  ]
+}

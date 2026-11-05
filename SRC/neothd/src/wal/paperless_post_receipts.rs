@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 
 pub(crate) const PAPERLESS_POST_INTENT_SCHEMA_VERSION: u8 = 1;
+const PRINCIPAL_BOUND_SCHEMA_VERSION: u8 = 2;
 pub(crate) const MAX_OPEN_PAPERLESS_INTENTS: usize = 128;
 
 /// Shared mailbox-unit identity. Preserve the v1 bytes for existing WAL claims.
@@ -57,6 +58,8 @@ pub(crate) struct PaperlessPostIntentDescriptor {
     pub(crate) body_sha256: String,
     pub(crate) title_sha256: String,
     pub(crate) destination_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    principal_sha256: Option<String>,
     completion: Option<PaperlessCompletion>,
 }
 
@@ -80,11 +83,43 @@ impl PaperlessPostIntentDescriptor {
                 b"neoth.paperless.destination.v1\0",
                 &[destination.as_bytes()],
             ),
+            principal_sha256: None,
             completion: None,
         }
     }
 
+    #[cfg(any(test, feature = "imap_fetch"))]
+    pub(crate) fn with_authenticated_principal(mut self, user_id: u64) -> Result<Self> {
+        self.validate()?;
+        ensure!(user_id > 0 && !self.is_completion(), "invalid Paperless principal binding");
+        let principal = digest_parts(
+            b"neoth.paperless.principal.v2\0",
+            &[self.destination_sha256.as_bytes(), &user_id.to_le_bytes()],
+        );
+        ensure!(
+            self.principal_sha256.as_ref().is_none_or(|bound| bound == &principal),
+            "Paperless authenticated principal differs from intent"
+        );
+        self.schema_version = PRINCIPAL_BOUND_SCHEMA_VERSION;
+        self.principal_sha256 = Some(principal);
+        self.validate()?;
+        Ok(self)
+    }
+
     pub(crate) fn marker_filename(&self) -> String {
+        if let Some(principal) = self.principal_sha256.as_ref() {
+            let binding = digest_parts(
+                b"neoth.paperless.original-filename.v2\0",
+                &[
+                    self.unit_sha256.as_bytes(),
+                    self.body_sha256.as_bytes(),
+                    self.title_sha256.as_bytes(),
+                    self.destination_sha256.as_bytes(),
+                    principal.as_bytes(),
+                ],
+            );
+            return format!("neoth-{binding}.txt");
+        }
         let binding = digest_parts(
             b"neoth.paperless.original-filename.v1\0",
             &[
@@ -132,11 +167,15 @@ impl PaperlessPostIntentDescriptor {
             && self.body_sha256 == other.body_sha256
             && self.title_sha256 == other.title_sha256
             && self.destination_sha256 == other.destination_sha256
+            && self.principal_sha256 == other.principal_sha256
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema_version == PAPERLESS_POST_INTENT_SCHEMA_VERSION,
+            (self.schema_version == PAPERLESS_POST_INTENT_SCHEMA_VERSION
+                && self.principal_sha256.is_none())
+                || (self.schema_version == PRINCIPAL_BOUND_SCHEMA_VERSION
+                    && self.principal_sha256.is_some()),
             "unsupported paperless post receipt schema"
         );
         for value in [
@@ -144,7 +183,10 @@ impl PaperlessPostIntentDescriptor {
             &self.body_sha256,
             &self.title_sha256,
             &self.destination_sha256,
-        ] {
+        ]
+        .into_iter()
+        .chain(self.principal_sha256.iter())
+        {
             ensure!(
                 value.len() == 64
                     && value
@@ -320,6 +362,56 @@ pub(crate) fn lookup_exact_at_home(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn principal_binding_preserves_legacy_bytes_and_single_mailbox_unit() {
+        let legacy = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example", 993, "fixture", "mail", "body", "title", "https://paperless.example/api/documents/post_document/",
+        );
+        let expected = format!(
+            "{{\"schema_version\":1,\"unit_sha256\":\"{}\",\"body_sha256\":\"{}\",\"title_sha256\":\"{}\",\"destination_sha256\":\"{}\",\"completion\":null}}",
+            legacy.unit_sha256, legacy.body_sha256, legacy.title_sha256, legacy.destination_sha256,
+        );
+        assert_eq!(legacy.payload().unwrap(), expected.as_bytes());
+        assert_eq!(decode(expected.as_bytes()).unwrap(), legacy);
+        let bound = legacy.clone().with_authenticated_principal(17).unwrap();
+        assert_eq!(bound.schema_version, 2);
+        assert_eq!(bound.unit_sha256, legacy.unit_sha256);
+        assert!(!bound.same_request(&legacy));
+        assert_ne!(bound.marker_filename(), legacy.marker_filename());
+        assert_eq!(decode(&bound.payload().unwrap()).unwrap(), bound);
+        assert_eq!(bound.clone().with_authenticated_principal(17).unwrap(), bound);
+        assert!(bound.clone().with_authenticated_principal(29).is_err());
+        let other = legacy.with_authenticated_principal(29).unwrap();
+        assert_eq!(other.unit_sha256, bound.unit_sha256);
+        assert_ne!(other.marker_filename(), bound.marker_filename());
+        let completed = bound.with_verified_document(71, &bound.body_sha256).unwrap();
+        assert_eq!(decode(&completed.payload().unwrap()).unwrap(), completed);
+        assert!(completed.with_authenticated_principal(17).is_err());
+    }
+
+    #[test]
+    fn principal_schema_rejects_missing_mismatched_and_malformed_bindings() {
+        let legacy = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example", 993, "fixture", "mail", "body", "title", "https://paperless.example/api/documents/post_document/",
+        );
+        assert!(legacy.clone().with_authenticated_principal(0).is_err());
+        let mut missing = legacy.clone();
+        missing.schema_version = 2;
+        assert!(missing.validate().is_err());
+        let bound = legacy.with_authenticated_principal(17).unwrap();
+        let mut wrong_version = bound.clone();
+        wrong_version.schema_version = 1;
+        assert!(wrong_version.validate().is_err());
+        for value in [String::new(), "a".repeat(63), "A".repeat(64), "g".repeat(64)] {
+            let mut malformed = bound.clone();
+            malformed.principal_sha256 = Some(value);
+            assert!(malformed.validate().is_err());
+        }
+        let mut unknown = bound;
+        unknown.schema_version = 3;
+        assert!(unknown.validate().is_err());
+    }
 
     #[test]
     fn paperless_descriptor_separates_unit_identity_from_request_drift_and_private_text() {

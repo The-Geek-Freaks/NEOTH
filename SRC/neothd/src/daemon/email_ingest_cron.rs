@@ -269,6 +269,32 @@ where
 #[cfg(any(test, feature = "imap_fetch"))]
 mod paperless_client;
 
+#[cfg(any(test, feature = "imap_fetch"))]
+async fn bind_paperless_delivery_context(
+    destination: &mut PaperlessDestination<'_>,
+    context: crate::email::seen_store::scoped::DeliveryContext,
+) -> (crate::email::seen_store::scoped::DeliveryContext, Option<u64>) {
+    let PaperlessDestination::Ready { url, token } = destination else {
+        return (context, None);
+    };
+    let verified: Result<_> = async {
+        let (endpoint, _) = paperless_request_binding(url, "")?;
+        let principal = paperless_client::PaperlessClient::new(&endpoint, token)?
+            .authenticated_principal().await?;
+        Ok((context.clone().with_authenticated_paperless_principal(&endpoint, principal)?, Some(principal)))
+    }.await;
+    match verified {
+        Ok(binding) => binding,
+        Err(_) => {
+            // Keep triage/quarantine and the independent vault path available.
+            // This destination cannot record delivery while its principal is unknown.
+            *destination = PaperlessDestination::Unavailable;
+            warn!("email_ingest_cron: Paperless principal unavailable; Paperless delivery remains pending");
+            (context.with_unavailable_paperless_principal(), None)
+        }
+    }
+}
+
 /// Read-only capability/document proof precedes any new claim. The single POST
 /// is admitted only by the existing authenticated writer transaction; completion
 /// is a second ordered transaction after observing the exact original bytes.
@@ -291,6 +317,7 @@ pub(crate) async fn reconcile_or_upload_paperless(
     );
     let client = PaperlessClient::new(endpoint, token)?;
     client.validate_request_parts(&descriptor, title, body)?;
+    let descriptor = client.bind_authenticated_principal(descriptor).await?;
     let observed_before = client.reconcile(&descriptor).await?;
     let observed = if observed_before.is_some() {
         match writer
@@ -456,7 +483,7 @@ pub async fn run_email_ingest_tick(
         .paperless_token
         .as_ref()
         .map(|secret| secret.expose().to_string());
-    let paperless_destination = PaperlessDestination::from_parts(
+    let mut paperless_destination = PaperlessDestination::from_parts(
         runtime.credentials.paperless_url.as_deref(),
         paperless_token.as_deref(),
     );
@@ -479,6 +506,8 @@ pub async fn run_email_ingest_tick(
             .is_some_and(|token| !token.is_empty()),
     )?;
 
+    let (delivery_context, paperless_principal) =
+        bind_paperless_delivery_context(&mut paperless_destination, delivery_context).await;
     let (emails, skipped_seen, legacy_ambiguous, completion_conflicts) = filter_unseen(
         &seen_conn,
         &delivery_context,
@@ -729,7 +758,10 @@ pub async fn run_email_ingest_tick(
                         clean_body,
                         &title,
                         &endpoint,
-                    );
+                    )
+                    .with_authenticated_principal(
+                        paperless_principal.context("Paperless delivery principal is unavailable")?,
+                    )?;
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(30),
                     reconcile_or_upload_paperless(
@@ -774,7 +806,7 @@ pub async fn run_email_ingest_tick(
             paperless_admission_blocked += 1;
             warn!(
                 email_key_len,
-                "email_ingest_cron: configured Paperless destination lacks complete credentials; delivery remains pending"
+                "email_ingest_cron: configured Paperless destination lacks usable credentials or an authenticated principal; delivery remains pending"
             );
         } else {
             let identity = crate::email::seen_store::scoped::Identity::inbox(
@@ -1182,6 +1214,55 @@ mod tests {
             true,
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn authenticated_principal_is_bound_before_cron_seen_state() {
+        use crate::email::seen_store::scoped::{self, Completion, DeliveryContext, Identity, Purpose, SeenState};
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        for (token, user_id) in [("alice-token", 17), ("bob-token", 29)] {
+            Mock::given(method("GET")).and(path("/api/ui_settings/"))
+                .and(header("authorization", format!("Token {token}")))
+                .respond_with(ResponseTemplate::new(200)
+                    .insert_header("X-Version", "3.2.1").insert_header("X-Api-Version", "10")
+                    .set_body_json(serde_json::json!({"user":{"id":user_id}})))
+                .expect(1).mount(&server).await;
+        }
+        let endpoint = server.uri();
+        let base = || DeliveryContext::new(None, "NEOTH", Some(&endpoint), true, true).unwrap();
+        let mut alice = PaperlessDestination::from_parts(Some(&endpoint), Some("alice-token"));
+        let (alice_context, alice_id) = bind_paperless_delivery_context(&mut alice, base()).await;
+        assert_eq!(alice_id, Some(17));
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let email = vault_identity_email("1", Some("<principal@example.com>"));
+        let identity = Identity::inbox("imap.example", 993, "fixture", &email, 1).unwrap();
+        scoped::mark(&conn, &identity, Completion::Delivery(&alice_context), 100).unwrap();
+        let mut bob = PaperlessDestination::from_parts(Some(&endpoint), Some("bob-token"));
+        let (bob_context, bob_id) = bind_paperless_delivery_context(&mut bob, base()).await;
+        assert_eq!(bob_id, Some(29));
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&bob_context)).unwrap(), SeenState::ContextConflict);
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&alice_context)).unwrap(), SeenState::Seen);
+        let mut disabled = PaperlessDestination::from_parts(None, None);
+        assert!(bind_paperless_delivery_context(&mut disabled, base()).await.1.is_none());
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        Mock::given(method("GET")).and(path("/api/ui_settings/"))
+            .and(header("authorization", "Token denied-token"))
+            .respond_with(ResponseTemplate::new(403)).expect(1).mount(&server).await;
+        let mut denied = PaperlessDestination::from_parts(Some(&endpoint), Some("denied-token"));
+        let (unavailable, principal) = bind_paperless_delivery_context(&mut denied, base()).await;
+        assert!(principal.is_none());
+        assert!(matches!(denied, PaperlessDestination::Unavailable));
+        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::ContextConflict);
+        let fresh = vault_identity_email("2", Some("<quarantine@example.com>"));
+        let fresh = Identity::inbox("imap.example", 993, "fixture", &fresh, 1).unwrap();
+        assert!(!denied.record_delivery(&conn, &fresh, &unavailable, 101, (true, true), Some(PaperlessReconcileOutcome::Completed)).unwrap());
+        assert_eq!(scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::Unseen);
+        scoped::mark(&conn, &fresh, Completion::Quarantine, 102).unwrap();
+        assert_eq!(scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::Seen);
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
     }
 
     fn vault_identity_email(

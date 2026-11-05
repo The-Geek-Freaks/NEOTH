@@ -12314,6 +12314,17 @@ mod tests {
         join.await.unwrap();
     }
 
+    async fn mount_paperless_principal(server: &wiremock::MockServer, token: &str, user_id: u64) {
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/ui_settings/"))
+            .and(wiremock::matchers::header("authorization", format!("Token {token}")))
+            .respond_with(wiremock::ResponseTemplate::new(200)
+                .insert_header("X-Version", "3.2.1")
+                .insert_header("X-Api-Version", "10")
+                .set_body_json(serde_json::json!({"user":{"id":user_id}})))
+            .mount(server).await;
+    }
+
     #[tokio::test]
     async fn paperless_real_http_cancellation_reconciles_original_without_second_post() {
         use crate::daemon::email_ingest_cron::{
@@ -12330,6 +12341,7 @@ mod tests {
         use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
+        mount_paperless_principal(&server, "fixture-token", 17).await;
         let endpoint = format!("{}/api/documents/post_document/", server.uri());
         let descriptor = PaperlessPostIntentDescriptor::from_mail(
             "mail.example",
@@ -12339,7 +12351,9 @@ mod tests {
             "invoice body",
             "invoice",
             &endpoint,
-        );
+        )
+        .with_authenticated_principal(17)
+        .unwrap();
         let marker = descriptor.marker_filename();
         let stored = Arc::new(AtomicBool::new(false));
         let started = Arc::new(tokio::sync::Notify::new());
@@ -12471,6 +12485,7 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
+        mount_paperless_principal(&server, "fixture-token", 17).await;
         let endpoint = format!("{}/api/documents/post_document/", server.uri());
         let descriptor = PaperlessPostIntentDescriptor::from_mail(
             "mail.example",
@@ -12480,7 +12495,9 @@ mod tests {
             "invoice body",
             "invoice",
             &endpoint,
-        );
+        )
+        .with_authenticated_principal(17)
+        .unwrap();
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
@@ -12527,8 +12544,11 @@ mod tests {
             "invoice body",
             "invoice",
             &endpoint,
-        );
+        )
+        .with_authenticated_principal(17)
+        .unwrap();
         server.reset().await;
+        mount_paperless_principal(&server, "fixture-token", 17).await;
         Mock::given(method("GET"))
             .and(path("/api/documents/"))
             .respond_with(
@@ -12585,6 +12605,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
+        mount_paperless_principal(&server, "fixture-token", 17).await;
         let endpoint = format!("{}/api/documents/post_document/", server.uri());
         let descriptor = PaperlessPostIntentDescriptor::from_mail(
             "mail.example",
@@ -12594,7 +12615,9 @@ mod tests {
             "invoice body",
             "invoice",
             &endpoint,
-        );
+        )
+        .with_authenticated_principal(17)
+        .unwrap();
         Mock::given(method("GET"))
             .and(path("/api/documents/"))
             .respond_with(
@@ -12672,6 +12695,137 @@ mod tests {
         drop(writer);
         join.await.unwrap();
     }
+    #[tokio::test]
+    async fn paperless_legacy_and_foreign_principal_claims_block_repost_and_remote_adoption() {
+        use crate::daemon::email_ingest_cron::{PaperlessReconcileOutcome, reconcile_or_upload_paperless};
+        use crate::wal::paperless_post_receipts::{PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        for legacy in [true, false] {
+            for completed in [true, false] {
+                for remote_present in [true, false] {
+                    let server = MockServer::start().await;
+                    mount_paperless_principal(&server, "new-account-token", 29).await;
+                    let endpoint = format!("{}/api/documents/post_document/", server.uri());
+                    let raw = PaperlessPostIntentDescriptor::from_mail(
+                        "mail.example", 993, "fixture", "principal-conflict", "invoice body", "invoice", &endpoint,
+                    );
+                    let prior = if legacy { raw.clone() } else {
+                        raw.clone().with_authenticated_principal(17).unwrap()
+                    };
+                    let incoming = raw.clone().with_authenticated_principal(29).unwrap();
+                    let result = if remote_present {
+                        serde_json::json!({"count":1,"next":null,"previous":null,"results":[{"id":88,"original_file_name":incoming.marker_filename()}]})
+                    } else {
+                        serde_json::json!({"count":0,"next":null,"previous":null,"results":[]})
+                    };
+                    Mock::given(method("GET")).and(path("/api/documents/"))
+                        .respond_with(ResponseTemplate::new(200)
+                            .insert_header("X-Version", "3.2.1").insert_header("X-Api-Version", "10")
+                            .set_body_json(result))
+                        .expect(1).mount(&server).await;
+                    Mock::given(method("GET")).and(path("/api/documents/88/download/"))
+                        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"invoice body".to_vec()))
+                        .mount(&server).await;
+                    Mock::given(method("POST")).respond_with(ResponseTemplate::new(202))
+                        .expect(0).mount(&server).await;
+                    let home = tempdir().unwrap();
+                    let wal = home.path().join("wal");
+                    std::fs::create_dir(&wal).unwrap();
+                    let (writer, join) = spawn_test_writer_at_home(
+                        wal.join("principal-conflict-000001.wal"), home.path(),
+                        RotationPolicy::default(), CompressionPolicy::None,
+                    ).unwrap();
+                    assert_eq!(writer.append_paperless_post_receipt_once(home.path(), prior.clone()).await, Ok(Outcome::Appended));
+                    if completed {
+                        let receipt = prior.with_verified_document(71, &prior.body_sha256).unwrap();
+                        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), receipt).await, Ok(Outcome::Appended));
+                    }
+                    let outcome = reconcile_or_upload_paperless(
+                        home.path(), &writer, raw, &endpoint, "new-account-token", "invoice", "invoice body",
+                    ).await.unwrap();
+                    assert_eq!(outcome, if remote_present { PaperlessReconcileOutcome::UnknownOutcome } else { PaperlessReconcileOutcome::AdmissionBlocked });
+                    assert_eq!(writer.append_paperless_post_receipt_once(home.path(), prior).await,
+                        Ok(if completed { Outcome::Completed(71) } else { Outcome::Existing }));
+                    assert_eq!(server.received_requests().await.unwrap().iter().filter(|r| r.method.as_str() == "POST").count(), 0);
+                    drop(writer);
+                    join.await.unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn paperless_failed_principal_lookup_leaves_no_claim_or_document_request() {
+        use crate::daemon::email_ingest_cron::reconcile_or_upload_paperless;
+        use crate::wal::paperless_post_receipts::{PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/api/ui_settings/"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("private-peer-error"))
+            .expect(1).mount(&server).await;
+        let endpoint = format!("{}/api/documents/post_document/", server.uri());
+        let raw = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example", 993, "fixture", "no-principal", "invoice body", "invoice", &endpoint,
+        );
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("principal-denied-000001.wal"), home.path(),
+            RotationPolicy::default(), CompressionPolicy::None,
+        ).unwrap();
+        let error = reconcile_or_upload_paperless(home.path(), &writer, raw.clone(), &endpoint, "denied-token", "invoice", "invoice body").await.unwrap_err();
+        assert!(!format!("{error:#}").contains("private-peer-error"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let bound = raw.with_authenticated_principal(17).unwrap();
+        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), bound).await, Ok(Outcome::Appended));
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn paperless_rotated_token_same_principal_reconciles_without_post() {
+        use crate::daemon::email_ingest_cron::{PaperlessReconcileOutcome, reconcile_or_upload_paperless};
+        use crate::wal::paperless_post_receipts::{PaperlessPostIntentDescriptor, PaperlessPostIntentOutcome as Outcome};
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        mount_paperless_principal(&server, "rotated-token", 17).await;
+        let endpoint = format!("{}/api/documents/post_document/", server.uri());
+        let raw = PaperlessPostIntentDescriptor::from_mail(
+            "mail.example", 993, "fixture", "rotated-principal", "invoice body", "invoice", &endpoint,
+        );
+        let prior = raw.clone().with_authenticated_principal(17).unwrap();
+        Mock::given(method("GET")).and(path("/api/documents/"))
+            .and(header("authorization", "Token rotated-token"))
+            .and(query_param("original_filename__iexact", prior.marker_filename()))
+            .respond_with(ResponseTemplate::new(200).insert_header("X-Version", "3.2.1")
+                .insert_header("X-Api-Version", "10")
+                .set_body_json(serde_json::json!({"count":1,"next":null,"previous":null,"results":[{"id":71,"original_file_name":prior.marker_filename()}]})))
+            .expect(1).mount(&server).await;
+        Mock::given(method("GET")).and(path("/api/documents/71/download/"))
+            .and(header("authorization", "Token rotated-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"invoice body".to_vec()))
+            .expect(1).mount(&server).await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(202))
+            .expect(0).mount(&server).await;
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("principal-rotation-000001.wal"), home.path(),
+            RotationPolicy::default(), CompressionPolicy::None,
+        ).unwrap();
+        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), prior.clone()).await, Ok(Outcome::Appended));
+        assert_eq!(reconcile_or_upload_paperless(home.path(), &writer, raw, &endpoint, "rotated-token", "invoice", "invoice body").await.unwrap(), PaperlessReconcileOutcome::Completed);
+        assert_eq!(writer.append_paperless_post_receipt_once(home.path(), prior).await, Ok(Outcome::Completed(71)));
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
+        drop(writer);
+        join.await.unwrap();
+    }
+
     fn companion_mutation_descriptor(
         kind: crate::wal::companion_mutation_receipts::CompanionMutationKind,
     ) -> crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor {
