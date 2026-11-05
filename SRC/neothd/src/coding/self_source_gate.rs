@@ -1659,10 +1659,12 @@ fn verify_git_truth(
 /// Both values are used by [`verify_base_snapshot`] right before the live
 /// apply to detect any concurrent mutation of the repo state.
 pub(in crate::coding) fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
+    let git_root = crate::coding::worktree::verified_git_transport_path(git_root)
+        .map_err(|_| "Git transport changed the physical source root")?;
     let run_git = |args: &[&str]| -> Result<String, String> {
         let out = std::process::Command::new("git")
             .arg("-C")
-            .arg(git_root)
+            .arg(&git_root)
             .args(args)
             .output()
             .map_err(|e| format!("git {args:?} failed to launch: {e}"))?;
@@ -1694,11 +1696,16 @@ pub(in crate::coding) fn capture_base_snapshot(git_root: &Path) -> Result<BaseSh
 /// the live apply runs. The error message names the old/new values (first 12
 /// chars) so the operator understands what happened without needing to grep
 /// the WAL.
-pub(in crate::coding) fn verify_base_snapshot(git_root: &Path, base: &BaseShaSnapshot) -> Result<(), String> {
+pub(in crate::coding) fn verify_base_snapshot(
+    git_root: &Path,
+    base: &BaseShaSnapshot,
+) -> Result<(), String> {
+    let git_root = crate::coding::worktree::verified_git_transport_path(git_root)
+        .map_err(|_| "Git transport changed the physical source root")?;
     let run_git = |args: &[&str]| -> Result<String, String> {
         let out = std::process::Command::new("git")
             .arg("-C")
-            .arg(git_root)
+            .arg(&git_root)
             .args(args)
             .output()
             .map_err(|e| format!("git {args:?} failed to launch: {e}"))?;

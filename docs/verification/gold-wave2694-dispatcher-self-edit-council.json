@@ -24,35 +24,35 @@
   "sources": [
     {
       "path": "SRC/neothd/src/coding/dispatcher_council.rs",
-      "sha256": "F55010B51C787E9E198E5CC1750D58FB44C1B9A3C95795B28959C32B32E71B3C"
+      "sha256": "D4252418B806C1A754244CC5C8FC296F727CA01B72F8872DC3B789046F83C612"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sha256": "C7522D580FE5AFEB730FEE3B9ED9FC775197EA46E4AF9E7061891F7FA140104E"
+      "sha256": "979D0CB64A91D227EB7A70E4AFC86F895BF63A2D286611C2BF6A38FEFCD44D0C"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
-      "sha256": "B52048CB90B6778473BD217F5C824D9F6824DB7D12D94783479DA6C0A69539C5"
+      "sha256": "1D1D2823AFADA10199BFFC7AA1F9FA761BAE4DCE2441477B9F368F511E9F7C00"
     },
     {
       "path": "SRC/neothd/src/coding/service.rs",
-      "sha256": "D1BF1ABC287EF5727338174D4C6C585531A6A575CA41205B53605BD87ADE9B59"
+      "sha256": "B05857BE23C5220FF65059850DFC1E65EE79A69F6FAB7B925944D3623D077F67"
     },
     {
       "path": "SRC/neothd/src/cli/code.rs",
-      "sha256": "9993DACE20D9EB3B88AB0639B170A74F032E0F5E343F4EC2079A6E12C9C593C0"
+      "sha256": "EAE7DECFEA97BFC65B1ED7A37DACB9A3F0D82A5035AD697662BC9A18444D233F"
     },
     {
       "path": "SRC/neothd/src/coding/worktree.rs",
-      "sha256": "F859D7530FB50D30F6B9708C79B6C98F92EA8292FA41D1DB2BB64BF92E56C294"
+      "sha256": "ACFDEB227DC190705D0851D9AEB702C6E754CF873149A7051879397331D6A781"
     },
     {
       "path": "SRC/neothd/src/coding/self_source.rs",
-      "sha256": "55C98071D1882818FEEEAE425D83DF67BA73B12B93FEC52886073A15CDCCBC7A"
+      "sha256": "A6F2A294829EE081AEB306C90ED2C68E7D9C66E9BCDBC74D27CE8E20FAC741DB"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "sha256": "4E4B8257419511EC31F6F56F1AB8E356929C8BFA93F72D500E0841497F150E93"
+      "sha256": "C9511D28B3FB859B486C3F4B444DB6305339C3CCA055A228DD344974A2B747C6"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
@@ -73,5 +73,14 @@
     "Positive interactive TTY, native paid-provider and cross-OS evidence remain open",
     "Strict supported diff grammar and no-follow behavior require native regression acceptance; no entire transitive source protection claim"
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42075082136,
+    "artifact": 13437344212,
+    "producer": "3249a1c90993ee6cc8396df51edfafaf87bdcf7f",
+    "exactPrePostImages": 7,
+    "apiZipAndMembersVerified": true,
+    "runtimeAccepted": false
+  },
+  "windowsGitTransport": "Source base snapshots and dispatcher root lookup reuse the existing identity-checked Git transport path; avoids direct verbatim-path Git calls. Native verification pending."
 }

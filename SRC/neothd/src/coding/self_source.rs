@@ -277,7 +277,8 @@ pub fn diff_line_count(diff: &str) -> usize {
         if line.starts_with("@@ ") {
             let mut fields = line.split_whitespace().skip(1);
             let count = |field: Option<&str>, sign| {
-                field?.strip_prefix(sign)?
+                field?
+                    .strip_prefix(sign)?
                     .split_once(',')
                     .map_or(Some(1), |(_, count)| count.parse::<u64>().ok())
             };
@@ -294,12 +295,16 @@ pub fn diff_line_count(diff: &str) -> usize {
             if in_hunk || !line.starts_with("+++") {
                 changed = changed.saturating_add(1);
             }
-            if in_hunk { remaining.1 = remaining.1.saturating_sub(1); }
+            if in_hunk {
+                remaining.1 = remaining.1.saturating_sub(1);
+            }
         } else if line.starts_with('-') {
             if in_hunk || !line.starts_with("---") {
                 changed = changed.saturating_add(1);
             }
-            if in_hunk { remaining.0 = remaining.0.saturating_sub(1); }
+            if in_hunk {
+                remaining.0 = remaining.0.saturating_sub(1);
+            }
         } else if line.starts_with(' ') && in_hunk {
             remaining.0 = remaining.0.saturating_sub(1);
             remaining.1 = remaining.1.saturating_sub(1);
@@ -319,9 +324,19 @@ mod tests {
         let patch = "--- a/src/x.rs\n+++ b/src/x.rs\n@@ -1,2 +1,2 @@\n---old\n-old2\n+++new\n+new2\n--- a/src/y.rs\n+++ b/src/y.rs\n@@ -0,0 +1 @@\n+added\n";
         assert_eq!(diff_line_count(patch), 5);
         let policy = crate::config::ops::SelfEditCouncilConfig {
-            enabled: true, changed_line_threshold: 5, risky_paths: vec![], ..Default::default()
+            enabled: true,
+            changed_line_threshold: 5,
+            risky_paths: vec![],
+            ..Default::default()
         };
-        assert!(crate::coding::self_source_gate::council_review::required(&policy, &["src/x.rs".into()], diff_line_count(patch)).unwrap());
+        assert!(
+            crate::coding::self_source_gate::council_review::required(
+                &policy,
+                &["src/x.rs".into()],
+                diff_line_count(patch)
+            )
+            .unwrap()
+        );
     }
     #[test]
     fn source_roots_resolve_for_nested_repo_layout() {

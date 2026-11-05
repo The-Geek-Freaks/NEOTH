@@ -137,7 +137,7 @@ fn git_transport_path(path: &Path) -> PathBuf {
 /// the same physical directory. This prevents Win32 normalization of a valid
 /// verbatim path (for example, one containing a trailing dot or space) from
 /// silently retargeting a previously admitted capability.
-fn verified_git_transport_path(path: &Path) -> Result<PathBuf> {
+pub(in crate::coding) fn verified_git_transport_path(path: &Path) -> Result<PathBuf> {
     let transport = git_transport_path(path);
     if transport != path {
         let admitted = crate::code_map::CanonicalRepoRoot::discover(path)

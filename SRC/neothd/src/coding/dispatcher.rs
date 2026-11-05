@@ -1374,9 +1374,19 @@ async fn authorize_patch_apply_before_worktree(
         task_id: task.task_id.raw() as u64,
     };
     let council = council_review::admit(
-        &cfg.council_context, &target, patch, &binding, writer, cfg.confirmation,
-    ).await?;
-    let permission_binding = council.as_ref().map(|review| review.permission_binding(&binding)).transpose()?.unwrap_or_else(|| binding.clone());
+        &cfg.council_context,
+        &target,
+        patch,
+        &binding,
+        writer,
+        cfg.confirmation,
+    )
+    .await?;
+    let permission_binding = council
+        .as_ref()
+        .map(|review| review.permission_binding(&binding))
+        .transpose()?
+        .unwrap_or_else(|| binding.clone());
     let mut gate = crate::permissions::Gate::for_policy(policy.clone())
         .with_confirm(crate::permissions::ConfirmStrategy::FailClosed);
     if let Some(confirmation_source) = confirmation_source {
@@ -1650,10 +1660,20 @@ fn apply_admitted_patch_in_worktree(
     let wt_path = match &admission.council {
         Some(review) => {
             review.validate(&cfg.council_context, &current_target, &binding)?;
-            crate::coding::worktree::create_task_worktree_at(current_target.path(), task.task_id, review.commit())
+            crate::coding::worktree::create_task_worktree_at(
+                current_target.path(),
+                task.task_id,
+                review.commit(),
+            )
         }
         None => crate::coding::worktree::create_task_worktree(current_target.path(), task.task_id),
-    }.map_err(|e| format!("worktree create failed for task {}: {e}", task.task_id.raw()))?;
+    }
+    .map_err(|e| {
+        format!(
+            "worktree create failed for task {}: {e}",
+            task.task_id.raw()
+        )
+    })?;
 
     // WS-BUG P1: the worktree path is deterministic per task_id, so leaking it
     // on ANY error path below made every retry fail at git "already checked
@@ -3479,10 +3499,15 @@ mod tests {
         repo: &std::path::Path,
         writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
     ) -> DispatchApplyConfig {
-        DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full)
-            .with_local_cli_confirmation()
-            .with_wal_writer(std::sync::Arc::clone(writer))
+        DispatchApplyConfig::new(
+            repo,
+            ApplyOrigin::CliConfirmed,
+            &crate::config::FreedomConfig::default(),
+            repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Full)
+        .with_local_cli_confirmation()
+        .with_wal_writer(std::sync::Arc::clone(writer))
     }
 
     fn indexed_pre_apply_advisory(
@@ -4476,10 +4501,15 @@ mod tests {
         writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
         broker: crate::coding::service::GuiPatchApprovalBroker,
     ) -> DispatchApplyConfig {
-        let mut config = DispatchApplyConfig::new(repo, ApplyOrigin::GuiRequested, &crate::config::FreedomConfig::default(), repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full)
-            .with_gui_interactive_confirmation()
-            .with_wal_writer(std::sync::Arc::clone(writer));
+        let mut config = DispatchApplyConfig::new(
+            repo,
+            ApplyOrigin::GuiRequested,
+            &crate::config::FreedomConfig::default(),
+            repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Full)
+        .with_gui_interactive_confirmation()
+        .with_wal_writer(std::sync::Arc::clone(writer));
         config.attach_gui_patch_approval_broker(broker);
         config
     }
@@ -4820,10 +4850,15 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         let home = dir.path().join("neoth-home");
         let (writer, _writer_join) = authenticated_apply_writer(&home);
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Strict)
-            .with_local_cli_confirmation()
-            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let apply_cfg = DispatchApplyConfig::new(
+            &repo,
+            ApplyOrigin::CliConfirmed,
+            &crate::config::FreedomConfig::default(),
+            &repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Strict)
+        .with_local_cli_confirmation()
+        .with_wal_writer(std::sync::Arc::clone(&writer));
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -5032,10 +5067,15 @@ mod tests {
                 name: "native-gui-missing-broker",
             }),
         );
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::GuiRequested, &crate::config::FreedomConfig::default(), &repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full)
-            .with_gui_interactive_confirmation()
-            .with_wal_writer(writer);
+        let cfg = DispatchApplyConfig::new(
+            &repo,
+            ApplyOrigin::GuiRequested,
+            &crate::config::FreedomConfig::default(),
+            &repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Full)
+        .with_gui_interactive_confirmation()
+        .with_wal_writer(writer);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -5238,9 +5278,14 @@ mod tests {
                 name: "missing-required-writer",
             }),
         );
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full)
-            .with_local_cli_confirmation();
+        let cfg = DispatchApplyConfig::new(
+            &repo,
+            ApplyOrigin::CliConfirmed,
+            &crate::config::FreedomConfig::default(),
+            &repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Full)
+        .with_local_cli_confirmation();
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -5404,9 +5449,14 @@ mod tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::DaemonScheduled, &crate::config::FreedomConfig::default(), &repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full)
-            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let apply_cfg = DispatchApplyConfig::new(
+            &repo,
+            ApplyOrigin::DaemonScheduled,
+            &crate::config::FreedomConfig::default(),
+            &repo,
+        )
+        .with_autonomy(crate::permissions::AutonomyLevel::Full)
+        .with_wal_writer(std::sync::Arc::clone(&writer));
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -5500,7 +5550,12 @@ mod tests {
             );
 
             let repo = dir.path().join("never-created-repo");
-            let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo);
+            let apply_cfg = DispatchApplyConfig::new(
+                &repo,
+                ApplyOrigin::CliConfirmed,
+                &crate::config::FreedomConfig::default(),
+                &repo,
+            );
             let result = (if with_apply {
                 dispatch_session_with_apply(
                     &conn,
