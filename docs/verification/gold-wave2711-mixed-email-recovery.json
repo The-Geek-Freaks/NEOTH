@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.wave2711.mixed-email-recovery.v1",
+  "producerBase": "31f3da0f096b6b420db7eecff968ade9e5c5ca3b",
+  "batch": "B02",
+  "roadmap": [
+    "ADOPT-20261012-A04"
+  ],
+  "finding": "Existing source keeps per-unit completion separate and never resends an existing intent. Existing tests lacked one combined real-HTTP/mixed-unit/seen-store/restart proof.",
+  "changes": [
+    "One committed and one unknown HTTP outcome both enter the existing production record_delivery decision. Only the confirmed unit becomes Seen.",
+    "Drain the actual authenticated WAL writer and reopen the actual views database. Reconcile the unresolved unit without a second POST.",
+    "Expose exact original bytes later, require authenticated completion, then require idempotent repeated completion and exactly one POST per unit."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sha256": "0188988E7E00A42FD35594D83EC6726FC32E30D6CF709C5EFA45DA7FB3C52798"
+    },
+    {
+      "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
+      "sha256": "0825638FB8DD6C7818D4C73949D85AAD83B55356A5B0C8AF9B0B6A7D336DDC08"
+    },
+    {
+      "path": ".github/workflows/paperless-product.yml",
+      "sha256": "D418C0692B33B267AC37B8C3D664BCE96161A7D6AAD52D49E58DDEBE63187ECF"
+    }
+  ],
+  "tests": [
+    "daemon::email_ingest_cron::tests::cron_mixed_http_outcomes_preserve_completed_units_and_reconcile_after_restart"
+  ],
+  "newPortableCases": 1,
+  "totalPortableCases": 3349,
+  "focusedEmailCases": 102,
+  "validation": {
+    "static": "Root traced production per-unit record, BODY.PEEK and wrapping in-memory selection cursor; GPT-6.1 Terra high prompt-only review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Acceptance fixture only; no production behavior or owner changed.",
+    "Uses real HTTP adapter against Wiremock and real local WAL/database in hosted execution; no live IMAP, entire cron invocation, actual Paperless deployment or release acceptance.",
+    "Named retryable/terminal_failure product projection and approved rendition-revision controls remain separate A04 scope.",
+    "Prior101-case acceptance is bound to5003a482; this102-case successor remains pending."
+  ],
+  "rawRoadmapRowsClosed": 0
+}
