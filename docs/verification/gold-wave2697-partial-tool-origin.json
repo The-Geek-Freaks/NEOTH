@@ -85,5 +85,11 @@
     "scope": "Prompt-only production algorithms and actual request binding/snapshot codec excerpts",
     "outcome": "Presence/null and stale historical tax questions resolved by existing explicit guards; no remaining concrete issue in excerpts",
     "executedTests": false
+  },
+  "selectionOrdering": {
+    "run": 42082092627,
+    "diagnostic": "PowerShell culture sort disagreed with hosted Python ordinal order at providers::cost versus providers::cost_authorization",
+    "repair": "Ordinal StringComparer order for all135 same identities; no selection or assertion removed",
+    "hostedRevalidation": "pending"
   }
 }

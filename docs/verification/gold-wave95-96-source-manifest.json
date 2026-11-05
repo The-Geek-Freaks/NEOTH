@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T18:12:38.0322797Z",
-  "validationStatus": "Exact hosted formatting admitted; partial-origin135 runtime pending",
+  "capturedUtc": "2026-11-05T18:14:42.0657532Z",
+  "validationStatus": "Exact135 identity ordering corrected; hosted static/runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4953,8 +4953,8 @@
     },
     {
       "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
-      "bytes": 4082,
-      "sha256": "F46390FB404C8C1695A7310D405D7FBE20F8EFBC6F5E3B83B27CFCC53192C7DF"
+      "bytes": 4424,
+      "sha256": "9DA6A63C5416CCCAF6DFBA5C71AF874129E2725C4DE46B6AFDBE5FE739C9E09B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",

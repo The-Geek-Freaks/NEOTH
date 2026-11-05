@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted formatting admitted; partial-origin135 runtime pending",
+  "status": "Exact135 identity ordering corrected; hosted static/runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 474704,
-    "sha256": "D9462D8E4583CDC4AFCA36549E3C145DCFEC20FC7092EC88AD43FE7A517CF374"
+    "sha256": "A9115E859587393A361C7D247515A947EA27F4AD49455E75515E36173B8CE7AD"
   },
   "sourceInputs": 2590,
   "requiredNativeTests": [
@@ -94591,6 +94591,8 @@
       "mcp::dispatch_loop::tests::loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it",
       "mcp::dispatch_loop::tests::manifest_scan_without_wal_survives_feedback_but_never_issues_a_permit",
       "pipeline::enriched_request::tests::enriched_producers_label_components_independently_of_authority",
+      "providers::cost::authorization_price_observation_tests::bound_observation_keeps_unknown_price_distinct_from_local_zero",
+      "providers::cost::authorization_price_observation_tests::bound_observation_preserves_missing_empty_and_nonempty_systems",
       "providers::cost_authorization::tests::append_only_continuation_reaches_leaf_with_exact_components",
       "providers::cost_authorization::tests::authorization_id_and_binding_match_cost_and_permission_frames",
       "providers::cost_authorization::tests::budget_acquisition_absent_scopes_preserve_old_lifecycle_frames",
@@ -94629,8 +94631,6 @@
       "providers::cost_authorization::tests::unknown_bound_standard_channel_approval_proceeds_and_is_audited",
       "providers::cost_authorization::tests::unknown_bound_standard_fail_closed_audits_then_blocks_before_dispatch",
       "providers::cost_authorization::tests::wal_and_paid_gate_use_each_leaf_output_ceiling",
-      "providers::cost::authorization_price_observation_tests::bound_observation_keeps_unknown_price_distinct_from_local_zero",
-      "providers::cost::authorization_price_observation_tests::bound_observation_preserves_missing_empty_and_nonempty_systems",
       "providers::pricing_basis::authorization_bound_tests::frozen_bound_keeps_synthetic_and_zero_prices_without_table_lookup",
       "providers::pricing_basis::authorization_bound_tests::frozen_bound_preserves_exact_legacy_arithmetic_and_roundtrip",
       "providers::pricing_basis::authorization_bound_tests::frozen_bound_rejects_tampered_inputs_identity_and_policy",
@@ -94802,6 +94802,20 @@
       }
     ],
     "note": "Original artifact13441976241 from77aac1cc, API/ZIP/member digests and eight exact Git before/after images checked; no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2697OrdinalSelection": {
+    "base": "b1212ad35980054ccc3068f368e5c4042caa2d4c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
+        "bytes": 4424,
+        "sha256": "9DA6A63C5416CCCAF6DFBA5C71AF874129E2725C4DE46B6AFDBE5FE739C9E09B",
+        "blob": "e26992fe7611b0ca3d78299e80a592ebccc0a69d"
+      }
+    ],
+    "note": "Preflight42082092627 passed formatting; exact case-order contract caught culture sort. Same135 cases now ordinal, matching hosted validator.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
