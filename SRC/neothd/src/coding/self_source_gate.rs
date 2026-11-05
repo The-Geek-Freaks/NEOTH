@@ -852,16 +852,15 @@ where
             .await
             .map_err(|_| GateError::StateDrift("final reviewed source check failed".into()))?
             .map_err(GateError::StateDrift)?;
-            if let Some(plan) = source_edit_pre_apply_plan {
-                if !plan.binds_source_root(&roots.crate_dir)
+            if let Some(plan) = source_edit_pre_apply_plan
+                && (!plan.binds_source_root(&roots.crate_dir)
                     || !plan.exact_base_images_still_match().await.map_err(|_| {
                         GateError::StateDrift("final reviewed preimage proof unavailable".into())
-                    })?
-                {
-                    return Err(GateError::StateDrift(
-                        "final reviewed preimages changed".into(),
-                    ));
-                }
+                    })?)
+            {
+                return Err(GateError::StateDrift(
+                    "final reviewed preimages changed".into(),
+                ));
             }
         }
         if let Some(reviewed) = reviewed.take() {

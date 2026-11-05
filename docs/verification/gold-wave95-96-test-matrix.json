@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "source effect revalidation; hosted pending",
+  "status": "Focused central seven accepted on predecessor; exact workspace lint corrected; dispatcher eleven pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474307,
-    "sha256": "7DC7434BAD444B3150C117DD3F13F049191053FD912EDF1AF544C72C929B2CDE"
+    "bytes": 474369,
+    "sha256": "9AE6111F0754F51C691AA32A726E16640EE9AE248C566E927A8BBE20F36FBB5A"
   },
   "sourceInputs": 2588,
   "requiredNativeTests": [
@@ -19963,19 +19963,19 @@
     {
       "test": "coding::dispatcher::council_tests::dispatcher_reviews_before_real_worktree_and_never_inherits_dissent_override",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
+      "sourceSha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42",
       "junitClass": "neoth"
     },
     {
       "test": "coding::dispatcher::council_tests::dispatcher_review_rejects_changed_base_and_expiry_at_blocking_effect",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
+      "sourceSha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42",
       "junitClass": "neoth"
     },
     {
       "test": "coding::dispatcher::council_tests::dispatcher_source_scope_covers_moves_deletions_and_rejects_ambiguous_paths",
       "sourcePath": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sourceSha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F",
+      "sourceSha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42",
       "junitClass": "neoth"
     },
     {
@@ -94437,6 +94437,44 @@
       }
     ],
     "note": "Fresh physical target discovery and clean pinned worktree at actual apply; existing native fixture extended; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2696CouncilClippy": {
+    "base": "f262c586bcb00fb69bd2abaee5138123297f1c7f",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2691-self-edit-council.json",
+        "bytes": 4064,
+        "sha256": "92C4FC35BFD88BB2005F820ADBFEA8CF37FD6724AA80BC0A1DEB63DA9D9908D3",
+        "blob": "a894c63afc815ab17954f62e00ebb5f39ee4736b"
+      },
+      {
+        "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
+        "bytes": 4922,
+        "sha256": "1A9886890A6066BBB3F7280FE34CE2A22D481C50AB9B9249D00D3F3AE8DE43B3",
+        "blob": "01e134c0b639d3953e53625f73af336c826a9125"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2806385,
+        "sha256": "85178066DA85B832F6E6D52D04245218C67B3489A768FA92C33BA4B0C398F007",
+        "blob": "9aad26925c5557828d497326714f976b7c4f0266"
+      },
+      {
+        "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+        "bytes": 11372,
+        "sha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42",
+        "blob": "288bf712c5689e2314428fd1c6905eed65ec2485"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_gate.rs",
+        "bytes": 116619,
+        "sha256": "8D6DCFA19F2D1995FBE0DF74A15F5FE95F9140785C358AFFA0BC03D3FFB61BC9",
+        "blob": "ecec3dc18bd0a00aa70f0b9858e29fac31539601"
+      }
+    ],
+    "note": "Run42071015391 passed seven exact tests and current CLI build, failed one collapsible_if. W2696 imports exact one-file hosted format receipt and preserves check semantics. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

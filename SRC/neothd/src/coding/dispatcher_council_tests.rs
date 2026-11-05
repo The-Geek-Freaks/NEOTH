@@ -136,8 +136,11 @@ async fn dispatcher_reviews_before_real_worktree_and_never_inherits_dissent_over
             if mode == "pass" {
                 let reviewed = admission.council.as_ref().unwrap();
                 let scratch = crate::coding::worktree::create_task_worktree_at(
-                    &repo, task.task_id, reviewed.commit(),
-                ).unwrap();
+                    &repo,
+                    task.task_id,
+                    reviewed.commit(),
+                )
+                .unwrap();
                 std::fs::write(scratch.join("src/cli/dummy.rs"), "unreviewed state\n").unwrap();
                 assert!(reviewed.verify_worktree(&scratch).is_err());
                 crate::coding::worktree::cleanup_worktree(&repo, &scratch, true).unwrap();

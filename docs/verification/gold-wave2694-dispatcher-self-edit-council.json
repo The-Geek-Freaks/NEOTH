@@ -28,7 +28,7 @@
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F"
+      "sha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
@@ -52,7 +52,7 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "sha256": "C9511D28B3FB859B486C3F4B444DB6305339C3CCA055A228DD344974A2B747C6"
+      "sha256": "8D6DCFA19F2D1995FBE0DF74A15F5FE95F9140785C358AFFA0BC03D3FFB61BC9"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
@@ -83,5 +83,21 @@
     "runtimeAccepted": false
   },
   "windowsGitTransport": "Source base snapshots and dispatcher root lookup reuse the existing identity-checked Git transport path; avoids direct verbatim-path Git calls. Native verification pending.",
-  "finalEffectRevalidation": "Re-discover target physical identity on every final validation; require the pinned worktree to remain clean immediately before patch application. Existing positive actual-apply regression also proves a dirty pinned worktree is refused."
+  "finalEffectRevalidation": "Re-discover target physical identity on every final validation; require the pinned worktree to remain clean immediately before patch application. Existing positive actual-apply regression also proves a dirty pinned worktree is refused.",
+  "workspaceClippyFollowup": {
+    "run": 42071015391,
+    "producer": "f06584e8e84d2a01d86e005c81ad27b53c704aa2",
+    "conclusion": "failure",
+    "diagnostic": "one collapsible_if in final reviewed preimage check",
+    "repair": "Equivalent let-chain keeps optional-plan, root and awaited exact-preimage checks",
+    "revalidation": "pending",
+    "localExecutableValidationRan": false
+  },
+  "finalEffectHostedFormatting": {
+    "run": 42077185446,
+    "artifact": 13439920718,
+    "producer": "f262c586bcb00fb69bd2abaee5138123297f1c7f",
+    "exactPrePostImages": 1,
+    "apiZipAndMembersVerified": true
+  }
 }

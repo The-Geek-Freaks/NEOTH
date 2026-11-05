@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T17:41:41.0615424Z",
-  "validationStatus": "source effect revalidation; hosted pending",
+  "capturedUtc": "2026-11-05T17:50:21.6325322Z",
+  "validationStatus": "Focused central seven accepted on predecessor; exact workspace lint corrected; dispatcher eleven pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4933,8 +4933,8 @@
     },
     {
       "path": "docs/verification/gold-wave2691-self-edit-council.json",
-      "bytes": 3671,
-      "sha256": "98CC2AF5E210C165B329A1492B2DA6AE4E266472AC5F5B7C1A2C1DA83CAFA17F"
+      "bytes": 4064,
+      "sha256": "92C4FC35BFD88BB2005F820ADBFEA8CF37FD6724AA80BC0A1DEB63DA9D9908D3"
     },
     {
       "path": "docs/verification/gold-wave2692-ci-followup.json",
@@ -4948,8 +4948,8 @@
     },
     {
       "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
-      "bytes": 4310,
-      "sha256": "3A476C8B4E54D432CEC6469B33D8D84C06438B58AB01809825F552FAACA222B8"
+      "bytes": 4922,
+      "sha256": "1A9886890A6066BBB3F7280FE34CE2A22D481C50AB9B9249D00D3F3AE8DE43B3"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6213,8 +6213,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2805560,
-      "sha256": "E81366C48262B8BDAE2D1D92E7CA72DD03944C5162B2CC4F1D40899604E3152E"
+      "bytes": 2806385,
+      "sha256": "85178066DA85B832F6E6D52D04245218C67B3489A768FA92C33BA4B0C398F007"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7898,8 +7898,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "bytes": 11315,
-      "sha256": "2399ADCA2F106F5CD786DB765BABF10705705C8CCD03D935F6807896ED6F357F"
+      "bytes": 11372,
+      "sha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council.rs",
@@ -7943,8 +7943,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "bytes": 116653,
-      "sha256": "C9511D28B3FB859B486C3F4B444DB6305339C3CCA055A228DD344974A2B747C6"
+      "bytes": 116619,
+      "sha256": "8D6DCFA19F2D1995FBE0DF74A15F5FE95F9140785C358AFFA0BC03D3FFB61BC9"
     },
     {
       "path": "SRC/neothd/src/coding/self_source.rs",
