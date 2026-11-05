@@ -72,8 +72,7 @@
     "Ten new regression cases are registered, not executed locally. Hosted compilation/runtime admission pending.",
     "State and control audit remain separate commits; required audit failure reports already-committed state. No cross-file atomicity claim.",
     "No device override or native GUI control added. No arbitrary checkpoint-resume/new-session or reconnect/compaction acceptance.",
-    "Existing all-surface controls and whole A07/GOLD-R4-11 completion remain open; raw roadmap unchanged.",
-    "Generated CLI reference refresh remains pending current-producer hosted artifact."
+    "Existing all-surface controls and whole A07/GOLD-R4-11 completion remain open; raw roadmap unchanged."
   ],
   "rawRoadmapRowsClosed": 0,
   "hostedFormatting": {
@@ -81,5 +80,12 @@
     "artifact": 13420916476,
     "patch": "verified exact pre/postimages, original API/ZIP/member hashes",
     "runtimeAccepted": false
+  },
+  "generatedReference": {
+    "run": 42044284023,
+    "artifact": 13423153080,
+    "producer": "056bcde7ea225290299153af37d784a4876660b9",
+    "proof": "docs/verification/gold-wave2690-cli-reference.json",
+    "correctedDocTestPending": true
   }
 }

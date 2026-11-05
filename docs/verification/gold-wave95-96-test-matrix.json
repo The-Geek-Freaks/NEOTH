@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "email101-hosted-accepted-session-native-pending",
+  "status": "self-edit-council-static-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 471941,
-    "sha256": "E80520493BEC6359F64BDAC3760C1D1D8EBF8ACA9AAD95CDF116C4FBC3C6C91B"
+    "bytes": 473016,
+    "sha256": "59E4920D86C2BDA5C6BAE6A646C28FCDC93CE753DCDD78A1453A4A010E3FFE5C"
   },
-  "sourceInputs": 2575,
+  "sourceInputs": 2581,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -264,13 +264,13 @@
     {
       "test": "config::ops::tests::impact_policy_converts_validated_bounds_without_widening",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "ABCA46A4D6DB4CF4C10E4AFFCEA66B953CD95EFD4670DD041E81716E361A0F8C",
+      "sourceSha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C",
       "junitClass": "neoth"
     },
     {
       "test": "config::ops::tests::impact_policy_invalid_values_reject_before_dispatch_conversion",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "ABCA46A4D6DB4CF4C10E4AFFCEA66B953CD95EFD4670DD041E81716E361A0F8C",
+      "sourceSha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C",
       "junitClass": "neoth"
     },
     {
@@ -8760,13 +8760,13 @@
     {
       "test": "wal::events::tests::extended_event_escape_hatch_registered",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
+      "sourceSha256": "031561435DC7917DBE9350C03BBCB7673D3E44D1F15A79A07828D1E650698FB4",
       "junitClass": "neoth"
     },
     {
       "test": "wal::events::tests::extended_frame_roundtrips_type_and_subtype",
       "sourcePath": "SRC/neothd/src/wal/events.rs",
-      "sourceSha256": "98D58184427955A4E97D633A8C86F92D8014AA6637E94D37C2357CDDC34EC9DA",
+      "sourceSha256": "031561435DC7917DBE9350C03BBCB7673D3E44D1F15A79A07828D1E650698FB4",
       "junitClass": "neoth"
     },
     {
@@ -15036,13 +15036,13 @@
     {
       "test": "config::ops::tests::automatic_context_limit_remains_off_when_coding_recall_limit_is_positive",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "ABCA46A4D6DB4CF4C10E4AFFCEA66B953CD95EFD4670DD041E81716E361A0F8C",
+      "sourceSha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C",
       "junitClass": "neoth"
     },
     {
       "test": "config::ops::tests::automatic_context_limit_uses_the_lower_of_auto_and_requested_bounds",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "ABCA46A4D6DB4CF4C10E4AFFCEA66B953CD95EFD4670DD041E81716E361A0F8C",
+      "sourceSha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C",
       "junitClass": "neoth"
     },
     {
@@ -19928,6 +19928,36 @@
       "test": "cli::chat::tests::session_presentation_uses_prepared_identity_in_primary_and_agent_prompts",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "B89B4D4DC98D97AA61B7E45E6C1C584A626A6E2B5170AA44BF1D3CB86AE32D76",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::self_source_gate::council_review::tests::risk_policy_uses_component_boundaries_and_rejects_invalid_configuration",
+      "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::self_source_gate::council_review::tests::three_strict_role_verdicts_bind_action_policy_and_separate_override",
+      "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::self_source_gate::council_review::tests::malformed_missing_and_timed_out_reviews_never_mint_a_capability",
+      "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::self_source_gate::council_review::tests::required_review_receipt_refuses_a_closed_writer",
+      "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::self_source_gate::council_review::tests::central_self_edit_review_reaches_real_effect_only_after_all_gates_and_receipt",
+      "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
       "junitClass": "neoth"
     }
   ],
@@ -93991,6 +94021,92 @@
       }
     ],
     "note": "101 exact focused cases plus compiled Paperless product passed on5003a482; C3 separate earned-rights design, C5 risk-based Council with audited operator override selected. New session native/full CI pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2691SelfEditCouncil": {
+    "base": "056bcde7ea225290299153af37d784a4876660b9",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 269905,
+        "sha256": "C1E6939E84A71D7804309777795BFDAFC271F0A9B25D3B68449AE7FA91824AD2",
+        "blob": "91bb0150d7b0db525600a7a4bb1119f283094be3"
+      },
+      {
+        "path": "docs/configuration.md",
+        "bytes": 54407,
+        "sha256": "788A05E10BE2F7108FC9006604E19B4872750AF580992BDF6F31D73586DB843F",
+        "blob": "c27225890825dc2611496146f8bc531b116a4e3e"
+      },
+      {
+        "path": "docs/verification/gold-wave2688-session-presentation.json",
+        "bytes": 4755,
+        "sha256": "AB64AD3C7B16EF4ED1EFBE203DF1803877841BD18B4D45630183D4A6E1871A9C",
+        "blob": "3df2484e1ca65673b177604ca2abe3f41da9901b"
+      },
+      {
+        "path": "docs/verification/gold-wave2690-cli-reference.json",
+        "bytes": 901,
+        "sha256": "CF6EE89064457DD581325B652BC48635B1622E803550E4DF7BDF4467C1B18855",
+        "blob": "a91d1c63955d8c539faf93c5db15109addcf18ec"
+      },
+      {
+        "path": "docs/verification/gold-wave2691-self-edit-council.json",
+        "bytes": 3393,
+        "sha256": "A4FD38BD45D97B7699862B324D4FFF4BF298F770CA4BD9D748832AE1C2F3BB3C",
+        "blob": "b78fd6ef705d28468afce2dfbf5cf041e5766e15"
+      },
+      {
+        "path": "PLAN/ADOPT31_C5_SELF_EDIT_COUNCIL_DESIGN.md",
+        "bytes": 6657,
+        "sha256": "3F8FC659DA3655BB47A557482D3AD2A56B164C721F65777DADE1C2E5FBD5DE8D",
+        "blob": "c69d8b5992e2af71d4a8c7ba51595316b4006ed6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2800824,
+        "sha256": "3B3E85EE54546D57B46AAA30F9E4E679207EDC29C495A6D31A1A2B9D07BB0BB6",
+        "blob": "4b62d44930bc461548d60c860443fab549ecb264"
+      },
+      {
+        "path": "SRC/neothd/src/cli/self_edit.rs",
+        "bytes": 20753,
+        "sha256": "52AB9DA024C4D0320222E1CBE165AA105DF6477F78D59C4A380ED739444B9127",
+        "blob": "ab1d8b3c2683be194a62372a3896462e4b5a5b12"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_council_tests.rs",
+        "bytes": 9789,
+        "sha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+        "blob": "8bd81fcc340ac9398a58016641662c33c04d32c1"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_council.rs",
+        "bytes": 12501,
+        "sha256": "F66B89BF4A436A3E6259768F0BA65C96C3BAC45CB7552ED31D2DCA78278AD201",
+        "blob": "a311cbc4b1d21b99a7055f7191530e9344c6dd31"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_gate.rs",
+        "bytes": 114834,
+        "sha256": "710CAD222694D769707DACEA7BE0245FFCDC6D3964D73CCF60AA67D5ED170553",
+        "blob": "4e2304967b1dcb07a5675e7efade3210f34ea297"
+      },
+      {
+        "path": "SRC/neothd/src/config/ops.rs",
+        "bytes": 71278,
+        "sha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C",
+        "blob": "4f6eaafc4154662af09d3e60317be41899c35788"
+      },
+      {
+        "path": "SRC/neothd/src/wal/events.rs",
+        "bytes": 276864,
+        "sha256": "031561435DC7917DBE9350C03BBCB7673D3E44D1F15A79A07828D1E650698FB4",
+        "blob": "eb51281c02505f6d45fc2f8566963d400c6c6633"
+      }
+    ],
+    "note": "Five portable review regressions and actual central effect seam registered; no local runtime. Hosted CLI reference copied from bound producer. Full predecessor CI still running.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

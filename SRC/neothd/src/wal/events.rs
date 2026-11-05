@@ -326,6 +326,8 @@ pub enum ExtendedSubtype {
     ProviderBudgetAcquired = 0x3D,
     /// Ordered Intent / FileBound / Completed email note-content receipts.
     EmailVaultReceipt = 0x3E,
+    /// Content-poor observation of a completed self-edit Council review; never replay authority.
+    SelfEditCouncilReview = 0x3F,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -442,6 +444,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::PaperlessPostReceipt => "paperless_post_receipt",
             ExtendedSubtype::ProviderBudgetAcquired => "provider_budget_acquired",
             ExtendedSubtype::EmailVaultReceipt => "email_vault_receipt",
+            ExtendedSubtype::SelfEditCouncilReview => "self_edit_council_review",
         }
     }
 
@@ -510,6 +513,7 @@ impl ExtendedSubtype {
             0x3C => Some(ExtendedSubtype::PaperlessPostReceipt),
             0x3D => Some(ExtendedSubtype::ProviderBudgetAcquired),
             0x3E => Some(ExtendedSubtype::EmailVaultReceipt),
+            0x3F => Some(ExtendedSubtype::SelfEditCouncilReview),
             _ => None,
         }
     }
@@ -580,6 +584,7 @@ impl ExtendedSubtype {
             Self::PaperlessPostReceipt,
             Self::ProviderBudgetAcquired,
             Self::EmailVaultReceipt,
+            Self::SelfEditCouncilReview,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4220,6 +4225,7 @@ mod tests {
             ExtendedSubtype::PaperlessPostReceipt,
             ExtendedSubtype::ProviderBudgetAcquired,
             ExtendedSubtype::EmailVaultReceipt,
+            ExtendedSubtype::SelfEditCouncilReview,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

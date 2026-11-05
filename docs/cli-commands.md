@@ -1855,7 +1855,7 @@ Import one operator-selected completed task as a bounded replay corpus
 Execute a versioned workflow replay corpus through the current chat path
 
 - `<CORPUS>` — Versioned operator-curated workflow replay corpus
-- `--out-dir <OUT_DIR>` — Persist reports here. Without it, reports remain in the contained temp root
+- `--out-dir <OUT_DIR>` — Parent for a new trial directory. Without it, use the contained temp root
 - `--json` — Print the machine report to stdout as JSON
 
 ## `neoth events`
@@ -3785,6 +3785,29 @@ Control what the local compiler may inject into provider prompts
 Remove one dimension, or the complete operator communication profile
 
 - `<DIMENSION>`
+
+#### `neoth profile communication session`
+
+Inspect or override presentation for one existing conversation identity
+
+- `<SESSION_ID>` — Exact session id shown by the conversation receipt; never an Incognito id
+
+##### `neoth profile communication session reset`
+
+Clear this session's dimension and reveal the underlying preference
+
+- `<DIMENSION>`
+
+##### `neoth profile communication session set`
+
+Pin a presentation value for this session, without replacing the global pin
+
+- `<DIMENSION>`
+- `<VALUE>`
+
+##### `neoth profile communication session show`
+
+Show only this session's explicit overrides
 
 #### `neoth profile communication set`
 

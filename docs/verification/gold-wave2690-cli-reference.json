@@ -1,0 +1,29 @@
+{
+  "schema": "neoth.wave2690.cli-reference-admission.v1",
+  "run": 42044284023,
+  "producer": "056bcde7ea225290299153af37d784a4876660b9",
+  "artifact": 13423153080,
+  "zipSha256": "aa90bc16c84063557b81c3e226ada14d238ad8ae14ff8631eb73d47b37f43c21",
+  "bytes": 92276,
+  "innerSourceHeadVerified": true,
+  "innerSha256SumsVerified": true,
+  "copiedSource": "docs/cli-commands.md",
+  "sha256": "C1E6939E84A71D7804309777795BFDAFC271F0A9B25D3B68449AE7FA91824AD2",
+  "changes": [
+    "workflow replay output-parent help",
+    "profile communication session show/set/reset"
+  ],
+  "windows": {
+    "job": 127302922448,
+    "passed": 19671,
+    "failed": 1,
+    "skipped": 34,
+    "onlyFailure": "cli::docgen::tests::cli_commands_md_is_up_to_date"
+  },
+  "validation": {
+    "referenceProducerVerified": true,
+    "correctedDocTestPassed": false,
+    "fullCiPassed": false,
+    "localRuntimeRan": false
+  }
+}

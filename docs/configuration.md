@@ -1075,3 +1075,42 @@ neoth doctor
 neoth doctor --explain freedom.yaml
 neoth privacy audit --last 24h
 ```
+
+### Risk-based Self-Edit Council
+
+Optional additional review is configured under coding.self_edit.council_review.
+It is disabled on upgrade. Example opt-in:
+
+~~~yaml
+coding:
+  self_edit:
+    council_review:
+      enabled: true
+      risky_paths: [src/coding]
+      changed_line_threshold: 50
+      timeout_secs: 120
+      receipt_ttl_secs: 300
+      max_total_tokens: 60000
+      max_cost_microusd: 200000
+      max_output_tokens: 2048
+~~~
+
+An admitted path matching a component prefix, or an edit reaching the changed
+line threshold, requires all three configured Council roles. Existing source
+allowlists, permission, green checks and budgets still apply. Prefix matching
+is case-insensitive conservatively on every platform. Dry-run reports the
+review requirement without provider calls. Paid-call consent must already
+permit the review; a denied provider call stops it.
+
+Three valid passes clear this additional stage. A valid fail/blocked verdict
+shows bounded dissent and asks for a fresh terminal confirmation; --yes does
+not override it. Missing, malformed, refused, truncated or timed-out provider
+responses stop the edit. The receipt expires after review completion, including
+time spent awaiting an operator answer. A response must carry a bound provider
+identity and an explicit successful finish reason.
+
+The loaded configuration is a fixed snapshot for one invocation; config edits
+during the review take effect on the next invocation. Review resolution and
+permission are durably recorded before apply. Neither an old WAL receipt nor a
+provider verdict independently grants permission. The general patch dispatcher
+is outside this first self-source integration.

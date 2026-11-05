@@ -21,14 +21,14 @@ Perform cheap denial and existing worktree/green checks before paid review.
 Classify risk using canonical admitted paths and bounded diff metadata, under
 an explicit versioned policy. Bind policy, exact diff hash, actual path set,
 source/base identity and expiry. After the bounded review and any operator
-interaction, repeat drift/preimage/policy checks before the existing final
+interaction, repeat drift/preimage checks before the existing final
 permission gate and effect. The existing cross-process self-edit exclusion
 must remain effective; do not release it merely to avoid holding it during a
 bounded await. Do not introduce an unrelated global mutex around network I/O.
 
 ## Reuse rather than a second Council
 
-Use the existing `cli/chat.rs::build_hemisphere_for_loop` provider adapter,
+Use a thin protected coding/self_source_council.rs review adapter over the existing provider factory and model resolver,
 configured Left/Right/Cerebellum roles, ProviderCallAuthorizer, per-leaf consent,
 model binding, input/output limits, one shared operation budget and the existing
 Council daily cap. Recursive review is disabled for this slice. Review input is
@@ -79,3 +79,34 @@ effect; post-apply failures keep their existing inconsistent-state semantics.
 
 Implementation and hosted acceptance are outstanding. No raw roadmap checkbox
 is changed by this design/decision record.
+
+
+## W2691 implementation boundary
+
+The central gate now implements the first SelfSourceEdit slice, with five
+registered regression identities pending hosted execution. The immutable loaded
+FreedomConfig is the authority for one CLI invocation. Its review-policy digest
+is bound to the receipt; changes to freedom.yaml affect the next invocation.
+This does not claim immediate revocation of an in-flight operation.
+
+The adapter collects three strict validated QaVerdict responses without ordinary
+debate quorum, recursion, tools or memory. It uses fail-closed paid-call consent,
+the shared operation token/cost budget, three-attempt Council budget and the
+existing daily cap. Provider/terminal errors cannot be overridden. Current
+review requires an explicit successful provider finish reason; legacy adapters
+without it fail closed. A canonical untrusted envelope carries the complete
+patch (64 KiB maximum).
+
+The immutable review and separate optional operator confirmation digest form
+the resolution receipt (EXTENDED 0x3F). The same resolution digest binds final
+permission. No deserialized receipt grants authority. WAL flush_pending is the
+existing FIFO sync_data barrier. HEAD/index and available proposal preimages
+are checked again after required writes and before consuming the capability.
+
+Existing installations remain disabled until coding.self_edit.council_review
+is configured. No local config was enabled. Native provider execution and a
+positive interactive TTY ceremony remain separate acceptance requirements.
+The shared provider infrastructure is an existing trusted dependency; the new
+module, verdict validator and call-budget implementation are hard-denied as
+self-edit targets. This is not a claim that every transitive source dependency
+is protected against arbitrary code changes.

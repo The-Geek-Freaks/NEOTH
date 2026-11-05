@@ -269,6 +269,7 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         args.yes,
         wal_handle.as_ref(),
         source_edit_pre_apply_plan.as_ref(),
+        &home,
     )
     .await;
 
@@ -361,6 +362,9 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         }
         Err(GateError::GreenTest(reason)) => {
             anyhow::bail!("REFUSED (layer 5 green-test): {reason}")
+        }
+        Err(GateError::CouncilReview(reason)) => {
+            anyhow::bail!("REFUSED (Council self-edit review): {reason}")
         }
         Err(GateError::Cooldown(reason)) => {
             anyhow::bail!("REFUSED (apply cooldown): {reason}")

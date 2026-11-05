@@ -58,6 +58,9 @@
 //! nested self-edits — nothing spawned by layer 5's build can start another
 //! self-edit while one is in flight.
 
+#[path = "self_source_council.rs"]
+mod council_review;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -109,6 +112,9 @@ static HARD_DENY_PREFIXES: &[&str] = &[
     "src/permissions/",
     // The gate's own source — self-edit may never rewrite the gate.
     "src/coding/self_source_gate.rs",
+    "src/coding/self_source_council.rs",
+    "src/council/qa_verdict.rs",
+    "src/council/budget.rs",
     "src/coding/self_source.rs",
     // The CLI orchestrator: editable via a `src/cli` allowlist entry, it could
     // hardcode operator_acked=true / skip the WAL requirement — same class of
@@ -209,6 +215,10 @@ pub struct SelfEditAudit {
     /// written before this field existed (backward-compatible default).
     #[serde(default)]
     pub layer_state_drift: LayerOutcome,
+    #[serde(default)]
+    pub council_review_binding: Option<String>,
+    #[serde(default)]
+    pub layer_council_review: LayerOutcome,
 }
 
 /// Error returned when any gate refuses the edit.
@@ -224,6 +234,8 @@ pub enum GateError {
     Worktree(String),
     #[error("Layer 5 (green-test): {0}")]
     GreenTest(String),
+    #[error("Council self-edit review: {0}")]
+    CouncilReview(String),
     #[error("apply cooldown: {0}")]
     Cooldown(String),
     /// HEAD or staged index moved between worktree-test and live-apply.
@@ -274,12 +286,13 @@ pub(crate) async fn run_gate_stack(
     operator_acked: bool,
     wal: Option<&WalWriterHandle>,
     source_edit_pre_apply_plan: Option<&SourceEditPreApplyPlan>,
+    home: &Path,
 ) -> Result<SelfEditOutcome, GateError> {
     #[cfg(test)]
     let pre_final_drift_hook = None;
     #[cfg(not(test))]
     let pre_final_drift_hook = ();
-    run_gate_stack_with_live_apply(
+    run_gate_stack_with_context(
         diff_text,
         cfg,
         dry_run,
@@ -288,6 +301,8 @@ pub(crate) async fn run_gate_stack(
         source_edit_pre_apply_plan,
         pre_final_drift_hook,
         apply_to_live_tree,
+        home,
+        &council_review::NativeLeaf,
     )
     .await
 }
@@ -295,7 +310,8 @@ pub(crate) async fn run_gate_stack(
 /// Internal live-apply seam. Production uses [`apply_to_live_tree`]; tests use
 /// the callback to inspect the required authenticated permission ledger at the
 /// exact point immediately before the mutation starts.
-async fn run_gate_stack_with_live_apply<F>(
+#[allow(clippy::too_many_arguments)]
+async fn run_gate_stack_with_context<F>(
     diff_text: &str,
     cfg: &FreedomConfig,
     dry_run: bool,
@@ -304,6 +320,8 @@ async fn run_gate_stack_with_live_apply<F>(
     source_edit_pre_apply_plan: Option<&SourceEditPreApplyPlan>,
     _pre_final_drift_hook: PreFinalDriftHook,
     live_apply: F,
+    home: &Path,
+    review_leaf: &dyn council_review::ReviewLeaf,
 ) -> Result<SelfEditOutcome, GateError>
 where
     F: FnOnce(&Path, &str) -> anyhow::Result<()> + Send + 'static,
@@ -332,6 +350,8 @@ where
         dry_run,
         base_snapshot: None,
         layer_state_drift: LayerOutcome::Skipped,
+        council_review_binding: None,
+        layer_council_review: LayerOutcome::Skipped,
     };
 
     // Emit PROPOSED frame BEFORE any gate runs (audit trail of all attempts).
@@ -623,6 +643,49 @@ where
         refuse!(audit, GateError::GreenTest(reason));
     }
 
+    let review_required = council_review::required(
+        &self_edit_cfg.council_review, &real_paths, diff_line_count(diff_text)
+    ).map_err(GateError::CouncilReview)?;
+    let action_binding = self_source_live_apply_binding(&diff_hash, &real_paths, &base_snapshot);
+    // Bind source identity as well as paths/base. The fixed loaded config is the
+    // policy snapshot for this invocation; disk changes apply on the next call.
+    let reviewed_action_binding = crate::wal::events::effect_digest(
+        b"self-edit-council-source-v1",
+        &serde_json::to_vec(&(&action_binding, &roots.crate_dir))
+            .map_err(|e| GateError::CouncilReview(e.to_string()))?,
+    );
+    let mut reviewed = if review_required && !dry_run {
+        let writer = wal.ok_or_else(|| GateError::CouncilReview("review requires a WAL writer".into()))?;
+        let mut reviewed = match council_review::review(
+            cfg, home, diff_text, &reviewed_action_binding, writer, review_leaf
+        ).await {
+            Ok(reviewed) => reviewed,
+            Err(reason) => {
+                audit.layer_council_review = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::CouncilReview(reason));
+            }
+        };
+        if !reviewed.dissent().is_empty() {
+            let binding = reviewed.confirmation_binding().map_err(GateError::CouncilReview)?;
+            eprintln!("Council objects to this self-edit. Review binding: {binding}");
+            for summary in reviewed.dissent() { eprintln!("{summary}"); }
+            // Never inherit --yes. This separate Gate records a real TTY answer
+            // against the exact review; unavailable/EOF/denial refuses.
+            let action = Action::SelfSourceEdit { target_paths: real_paths.clone() };
+            if let Err(error) = Gate::for_policy(autonomy_policy.clone())
+                .with_confirm(ConfirmStrategy::Tty)
+                .check_with_audit_sink(&action, PermissionAuditSink::Writer(writer), true, Some(&binding))
+                .await {
+                audit.layer_council_review = LayerOutcome::Fail("fresh operator override refused".into());
+                refuse!(audit, map_required_permission_gate_error(error));
+            }
+            reviewed.acknowledge_override().map_err(GateError::CouncilReview)?;
+        }
+        Some(reviewed)
+    } else { None };
+    if dry_run && review_required {
+        eprintln!("self-edit preview: Council review required for live apply; no reviewer calls made");
+    }
     // ── All gates passed — apply to live tree (unless --dry-run) ─────────────
     if !dry_run {
         // A live apply REQUIRES a WAL writer — enforced HERE, inside the gate,
@@ -708,6 +771,16 @@ where
             }
         }
 
+        if let Some(reviewed) = reviewed.as_ref() {
+            reviewed.validate(&reviewed_action_binding, &self_edit_cfg.council_review)
+                .map_err(GateError::CouncilReview)?;
+            if let Err(reason) = reviewed.persist(wal.expect("live apply requires WAL")).await {
+                audit.layer_council_review = LayerOutcome::Fail(reason.clone());
+                refuse!(audit, GateError::CouncilReview(reason));
+            }
+            audit.layer_council_review = LayerOutcome::Pass;
+            audit.council_review_binding = Some(reviewed.binding().map_err(GateError::CouncilReview)?);
+        }
         // This is the one permission decision that authorises the live sink.
         // It intentionally follows every Git/proposal truth proof, so drift and
         // malformed-preflight refusals do not mint a TrustDecision. Required
@@ -719,6 +792,7 @@ where
             &real_paths,
             &diff_hash,
             &base_snapshot,
+            audit.council_review_binding.as_deref(),
         )
         .await;
         if let Err(error) = permission_result {
@@ -727,6 +801,25 @@ where
             return Err(error);
         }
 
+        // Required review/permission appends can await; repeat source truth
+        // after them as well, before consuming the process-local capability.
+        if reviewed.is_some() {
+            let roots_for_check = roots.clone();
+            let base_for_check = base_snapshot.clone();
+            tokio::task::spawn_blocking(move || verify_base_snapshot(&roots_for_check.git_root, &base_for_check))
+                .await.map_err(|_| GateError::StateDrift("final reviewed source check failed".into()))?
+                .map_err(GateError::StateDrift)?;
+            if let Some(plan) = source_edit_pre_apply_plan {
+                if !plan.binds_source_root(&roots.crate_dir)
+                    || !plan.exact_base_images_still_match().await
+                        .map_err(|_| GateError::StateDrift("final reviewed preimage proof unavailable".into()))? {
+                    return Err(GateError::StateDrift("final reviewed preimages changed".into()));
+                }
+            }
+        }        if let Some(reviewed) = reviewed.take() {
+            reviewed.validate(&reviewed_action_binding, &self_edit_cfg.council_review)
+                .map_err(GateError::CouncilReview)?;
+        }
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply. Runs in
@@ -900,6 +993,7 @@ async fn authorize_live_self_source_apply(
     real_paths: &[String],
     diff_hash: &str,
     base: &BaseShaSnapshot,
+    review_binding: Option<&str>,
 ) -> Result<(), GateError> {
     let action = Action::SelfSourceEdit {
         target_paths: real_paths.to_vec(),
@@ -911,6 +1005,13 @@ async fn authorize_live_self_source_apply(
         gate
     };
     let binding = self_source_live_apply_binding(diff_hash, real_paths, base);
+    let binding = match review_binding {
+        Some(review) => crate::wal::events::effect_digest(
+            b"self-source-reviewed-permission-v1",
+            &serde_json::to_vec(&(&binding, review)).map_err(|e| GateError::CouncilReview(e.to_string()))?,
+        ),
+        None => binding,
+    };
     gate.check_with_audit_sink(
         &action,
         PermissionAuditSink::Writer(wal),
@@ -921,6 +1022,19 @@ async fn authorize_live_self_source_apply(
     .map_err(map_required_permission_gate_error)
 }
 
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn run_gate_stack_with_live_apply<F>(
+    diff_text: &str, cfg: &FreedomConfig, dry_run: bool, operator_acked: bool,
+    wal: Option<&WalWriterHandle>, plan: Option<&SourceEditPreApplyPlan>,
+    hook: PreFinalDriftHook, live_apply: F,
+) -> Result<SelfEditOutcome, GateError>
+where F: FnOnce(&Path, &str) -> anyhow::Result<()> + Send + 'static {
+    run_gate_stack_with_context(
+        diff_text, cfg, dry_run, operator_acked, wal, plan, hook, live_apply,
+        &FreedomConfig::default_neoth_home(), &council_review::NativeLeaf,
+    ).await
+}
 /// Canonical anti-loop sentinel (`~/.neoth/self_edit/last_apply`).
 fn self_edit_cooldown_path() -> PathBuf {
     FreedomConfig::default_neoth_home()
@@ -1978,7 +2092,7 @@ mod tests {
 
     // ── End-to-end acceptance (spec: dummy.rs comment addition passes) ──────
 
-    fn git_available() -> bool {
+    pub(super) fn git_available() -> bool {
         std::process::Command::new("git")
             .arg("--version")
             .output()
@@ -1986,7 +2100,7 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn init_fixture_repo(dir: &Path) {
+    pub(super) fn init_fixture_repo(dir: &Path) {
         let git = |args: &[&str]| {
             let ok = std::process::Command::new("git")
                 .arg("-C")
@@ -2157,7 +2271,7 @@ mod tests {
         std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
         let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
 
-        let error = run_gate_stack(diff, &cfg, false, false, Some(&writer), None)
+        let error = run_gate_stack(diff, &cfg, false, false, Some(&writer), None, &FreedomConfig::default_neoth_home())
             .await
             .expect_err("a live Confirm without --yes must stay early");
         assert!(matches!(error, GateError::Permission(_)), "got: {error:?}");
@@ -2266,12 +2380,12 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let preview = run_gate_stack(diff, &cfg, true, false, None, None)
+        let preview = run_gate_stack(diff, &cfg, true, false, None, None, &FreedomConfig::default_neoth_home())
             .await
             .expect("dry-run may explicitly skip Layer 5");
         assert!(preview.dry_run);
 
-        let err = run_gate_stack(diff, &cfg, false, true, None, None)
+        let err = run_gate_stack(diff, &cfg, false, true, None, None, &FreedomConfig::default_neoth_home())
             .await
             .expect_err("live apply must not bypass Layer 5");
         assert!(
@@ -2312,7 +2426,7 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let err = run_gate_stack(diff, &cfg, false, true, None, None)
+        let err = run_gate_stack(diff, &cfg, false, true, None, None, &FreedomConfig::default_neoth_home())
             .await
             .expect_err("live apply without a WAL writer must be refused");
         assert!(
@@ -2358,7 +2472,7 @@ mod tests {
         std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
         let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
 
-        let err = run_gate_stack(diff, &cfg, false, true, Some(&writer), None)
+        let err = run_gate_stack(diff, &cfg, false, true, Some(&writer), None, &FreedomConfig::default_neoth_home())
             .await
             .expect_err("rename into src/wal/ must be refused by the git-truth guard");
         // Refused at the allowlist layer on git's REAL path set.

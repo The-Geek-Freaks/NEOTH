@@ -410,8 +410,41 @@ pub struct SelfEditConfig {
     /// Default 300 (5 minutes).
     #[serde(default = "default_self_edit_apply_cooldown")]
     pub apply_cooldown_secs: u64,
+    /// Optional risk-based Council review. Existing installations remain disabled.
+    pub council_review: SelfEditCouncilConfig,
 }
 
+/// Operator-configured review envelope; no additional authority is granted.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SelfEditCouncilConfig {
+    pub enabled: bool,
+    /// Component prefixes relative to the crate root; no globs or dot components.
+    pub risky_paths: Vec<String>,
+    /// Review edits at or above this size, or touching any risky path.
+    pub changed_line_threshold: usize,
+    pub timeout_secs: u64,
+    pub receipt_ttl_secs: u64,
+    pub max_total_tokens: u32,
+    /// Integer micro-USD, shared across all three roles and provider attempts.
+    pub max_cost_microusd: u32,
+    pub max_output_tokens: u32,
+}
+
+impl Default for SelfEditCouncilConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            risky_paths: vec!["src/coding".into()],
+            changed_line_threshold: 50,
+            timeout_secs: 120,
+            receipt_ttl_secs: 300,
+            max_total_tokens: 60_000,
+            max_cost_microusd: 200_000,
+            max_output_tokens: 2_048,
+        }
+    }
+}
 fn default_self_edit_enabled() -> bool {
     true
 }
@@ -429,6 +462,7 @@ impl Default for SelfEditConfig {
             max_lines_changed: default_self_edit_max_lines(),
             require_green_tests: default_self_edit_require_green(),
             apply_cooldown_secs: default_self_edit_apply_cooldown(),
+            council_review: SelfEditCouncilConfig::default(),
         }
     }
 }

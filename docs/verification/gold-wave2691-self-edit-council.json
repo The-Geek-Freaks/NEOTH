@@ -1,0 +1,65 @@
+{
+  "schema": "neoth.wave2691.self-edit-council.v1",
+  "producerBase": "056bcde7ea225290299153af37d784a4876660b9",
+  "roadmap": [
+    "ADOPT31-C5"
+  ],
+  "change": [
+    "Risk-based configured SelfSourceEdit review after existing five gates, under existing source exclusion.",
+    "Three strict validated QaVerdict roles; no debate quorum, tools, recursion or memory.",
+    "Shared existing provider authorizer, operation token/cost budget, three-call budget and daily cap; explicit bound successful completion required.",
+    "Fresh canonical TTY permission required for dissent; original --yes cannot override.",
+    "Immutable review and separate confirmation digest persisted as metadata-only EXTENDED0x3F resolution, FIFO sync_data before apply.",
+    "HEAD/index and available proposal preimages checked again after review and required writes."
+  ],
+  "tests": [
+    "coding::self_source_gate::council_review::tests::risk_policy_uses_component_boundaries_and_rejects_invalid_configuration",
+    "coding::self_source_gate::council_review::tests::three_strict_role_verdicts_bind_action_policy_and_separate_override",
+    "coding::self_source_gate::council_review::tests::malformed_missing_and_timed_out_reviews_never_mint_a_capability",
+    "coding::self_source_gate::council_review::tests::required_review_receipt_refuses_a_closed_writer",
+    "coding::self_source_gate::council_review::tests::central_self_edit_review_reaches_real_effect_only_after_all_gates_and_receipt"
+  ],
+  "newPortableCases": 5,
+  "totalPortableCases": 3322,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/self_edit.rs",
+      "sha256": "52AB9DA024C4D0320222E1CBE165AA105DF6477F78D59C4A380ED739444B9127"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_council.rs",
+      "sha256": "F66B89BF4A436A3E6259768F0BA65C96C3BAC45CB7552ED31D2DCA78278AD201"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_gate.rs",
+      "sha256": "710CAD222694D769707DACEA7BE0245FFCDC6D3964D73CCF60AA67D5ED170553"
+    },
+    {
+      "path": "SRC/neothd/src/config/ops.rs",
+      "sha256": "A541543D691278AA45FC8F755FDFDF00677D6C1EBF7FF4D02529E67FCBB0CB5C"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "sha256": "031561435DC7917DBE9350C03BBCB7673D3E44D1F15A79A07828D1E650698FB4"
+    }
+  ],
+  "validation": {
+    "static": "Root text/diff review plus GPT-6.1 Terra high prompt-only architecture and Rust/control-flow review. Canonical permission Gate returns Result<(), GateError>; no denial-as-success.",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Feature disabled until explicitly configured; no operator config activated.",
+    "Immutable invocation config snapshot: on-disk edits take effect on next invocation, not immediate revocation.",
+    "Positive interactive override and native paid-provider execution not proven by injected transport fixtures.",
+    "General PatchApplyToRepo remains a separate integration; no raw roadmap row closed.",
+    "Shared provider infrastructure remains an existing trusted dependency, not a complete transitive self-modification proof."
+  ],
+  "rawRoadmapRowsClosed": 0
+}
