@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.wave2682.ollama-terminal-contract.v1",
+  "producerBase": "2ce10bf3f730b3addcbee4d041c79a767f831137",
+  "batch": "B03",
+  "roadmap": [
+    "ADOPT-20261012-A08"
+  ],
+  "finding": [
+    "Ollama /api/chat response decoding ignored message.tool_calls and could project a discarded native tool call as text success.",
+    "Valid NDJSON EOF without any done=true frame synthesized a successful terminal; non-streaming done=false was also accepted. Final-frame content was discarded."
+  ],
+  "change": [
+    "Retain response tool_calls and use the established shared native-tool guard before text/terminal/usage projection in complete and both NDJSON frame paths. Null and empty arrays remain compatible; no tool arguments or response text enter fixed errors.",
+    "Require actual completion confirmation: done=true for complete, or a real done frame for streaming. Empty/blank/truncated-valid streams fail after preserving real prior text.",
+    "Emit any final-frame content as an ordinary text chunk before one empty terminal carrying the provider reason and usage; preserve newline-less final-frame support."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/providers/ollama_api.rs",
+      "sha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB"
+    }
+  ],
+  "newCases": [
+    "providers::ollama_api::tests::native_tool_fields_are_rejected_before_text_or_terminal_projection",
+    "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success",
+    "providers::ollama_api::tests::native_tool_ndjson_line_and_tail_preserve_only_prior_text",
+    "providers::ollama_api::tests::ndjson_eof_without_done_never_synthesizes_success",
+    "providers::ollama_api::tests::final_done_frame_preserves_its_text_usage_and_reason_with_or_without_newline"
+  ],
+  "requiredPortableNativeTests": 3301,
+  "references": [
+    "https://docs.ollama.com/api/chat",
+    "https://docs.ollama.com/capabilities/tool-calling"
+  ],
+  "review": "GPT-6.1 Terra high prompt-only Rust review of supplied production flow and five regression scenarios: no definite finding. Root text/diff inspection; actual compile/test pending.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "No local model, Ollama server, compiler, formatter or tests ran.",
+    "This adapter still does not execute native tools. Other provider/tool transport and cancellation contracts remain separately scoped.",
+    "Whole A08 and current-producer native/release acceptance remain open."
+  ]
+}
