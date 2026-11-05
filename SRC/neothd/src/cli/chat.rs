@@ -6553,7 +6553,7 @@ pub(super) async fn dispatch_provider(
     let checkpoint_session_id = provider_audit_context
         .session_id
         .as_ref()
-        .filter(|id| crate::profile::communication::session::validate_control_id(id).is_ok())
+        .filter(|id| reusable_local_checkpoint_session_id(id))
         .cloned();
     let thinking_budget = match requested_thinking_budget {
         Some(budget) if provider.request_controls().supports_thinking_budget() => Some(budget),
@@ -16221,6 +16221,26 @@ struct ResumeHydration {
     scoped_mcp_servers: Vec<String>,
 }
 
+// The admitted identity also reaches file-backed hindsight consumers. Do not
+// reuse arbitrary profile-map keys as local session filenames.
+fn reusable_local_checkpoint_session_id(id: &str) -> bool {
+    if crate::profile::communication::session::validate_control_id(id).is_err()
+        || id.len() > 250
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return false;
+    }
+    let lower = id.to_ascii_lowercase();
+    let reserved = matches!(lower.as_str(), "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].into_iter().any(|prefix| {
+            lower
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| matches!(suffix.as_bytes(), [b'1'..=b'9']))
+        });
+    !reserved
+}
 /// Hydrate a prior `MODE_CHECKPOINT` from views.db by hash prefix. Alongside
 /// the visible context this returns the exact MCP IDs that the caller must
 /// enforce against the current registry before any provider/tool dispatch.
@@ -16248,8 +16268,9 @@ fn hydrate_resume_context(
                 "checkpoint local session identity has an invalid producer scope".to_string(),
             );
         }
-        crate::profile::communication::session::validate_control_id(&cp.session_id)
-            .map_err(|_| "checkpoint local session identity is invalid".to_string())?;
+        if !reusable_local_checkpoint_session_id(&cp.session_id) {
+            return Err("checkpoint local session identity is invalid".to_string());
+        }
         Some(cp.session_id.clone())
     } else {
         None
@@ -26757,6 +26778,19 @@ template = "[REDACTED]"
             "",
             " spaced",
             "incognito-private",
+            "../escape",
+            "a/b",
+            r"a\b",
+            "C:escape",
+            ".",
+            "..",
+            "NUL",
+            "cOn",
+            "PRN",
+            "aux",
+            "COM1",
+            "lpt9",
+            &"x".repeat(251),
             "line\nbreak",
             &"x".repeat(257),
         ] {
@@ -26765,6 +26799,16 @@ template = "[REDACTED]"
                 hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None),
                 Err(reason) if reason == "checkpoint local session identity is invalid"
             ));
+        }
+        for id in [
+            "chat-1700000000-0123456789abcdef",
+            "COM10",
+            "nul-session",
+            &"x".repeat(250),
+        ] {
+            let cp = store_resume_identity_checkpoint(dir.path(), id, "chat:session-start", true);
+            let hydration = hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None).unwrap();
+            assert_eq!(hydration.admitted_session_id.as_deref(), Some(id));
         }
         let cp = store_resume_identity_checkpoint(
             dir.path(),

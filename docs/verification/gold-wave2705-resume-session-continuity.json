@@ -16,7 +16,7 @@
   "sources": [
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "EFF65A8576B8395DBC6C97ECA3DF81CB54F0895F3B2B610864C7AB0BEDE0C167"
+      "sha256": "4534381BEBCA74C8BE31A4026D047630B903297255C7AD0495ADFF6AEBFD4994"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -65,5 +65,12 @@
     "exactPrePostImages": 2,
     "localFormatterExecuted": false,
     "proof": "work/gold-20260906/wave2705-hosted-format/FORMAT_IMPORT.json"
+  },
+  "identityConsumerFollowup": {
+    "finding": "Profile-map session keys alone are insufficient for file-backed hindsight lookup.",
+    "guard": "Shared capture/resume guard accepts canonical non-private ASCII alphanumeric/hyphen/underscore ids up to250 bytes and rejects Windows reserved device basenames case-insensitively.",
+    "regression": "Existing invalid-identity case additionally covers separators, traversal, drive/ADS syntax, reserved names and250/251 length boundary.",
+    "scope": "Only explicit checkpoint identity reuse; no change to general profile keys or legacy context-only behavior.",
+    "review": "GPT-6.1 Terra high prompt-only review identified Windows basename/length boundaries; runtime validation pending."
   }
 }

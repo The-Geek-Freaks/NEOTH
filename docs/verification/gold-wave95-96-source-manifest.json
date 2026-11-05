@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T20:28:03.6101170Z",
-  "validationStatus": "Council11, Cost135 and Workspace Clippy accepted on fd5c0b37; checkpoint selection and session continuity pending cross-platform CI",
+  "capturedUtc": "2026-11-05T20:32:02.9237402Z",
+  "validationStatus": "Council11/Cost135/Workspace Clippy accepted on fd5c0b37; resume session and identity-boundary regressions pending hosted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4968,8 +4968,8 @@
     },
     {
       "path": "docs/verification/gold-wave2705-resume-session-continuity.json",
-      "bytes": 3384,
-      "sha256": "762CBA0E2068425C93BF574617F313EB88FEA0CAE6B292CE3D111EEFE5A643F6"
+      "bytes": 4126,
+      "sha256": "AAF4E4088C2C2430E67683249FCA805DD6560D73DC634EE240F4666914587C77"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6233,8 +6233,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2816308,
-      "sha256": "B777F19F2DDFD76155B4CC9B4ED4052B796DD2BCA9259039E9268D05B5577F12"
+      "bytes": 2816920,
+      "sha256": "52687A9F8056D4C4034219C2EC46D8905827C7C0497C96AFBB9C664AB4816CAE"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7203,8 +7203,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1263117,
-      "sha256": "EFF65A8576B8395DBC6C97ECA3DF81CB54F0895F3B2B610864C7AB0BEDE0C167"
+      "bytes": 1264586,
+      "sha256": "4534381BEBCA74C8BE31A4026D047630B903297255C7AD0495ADFF6AEBFD4994"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
