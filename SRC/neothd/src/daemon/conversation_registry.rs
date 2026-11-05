@@ -102,12 +102,13 @@ pub(crate) trait RetainedConversationOwner: Send + Sync {
 
 struct RegistryState {
     availability: ConversationAvailability,
+    active_subscription: Option<ConversationSubscriptionId>,
     owner: Option<Arc<dyn RetainedConversationOwner>>,
     subscriptions: HashMap<ConversationSubscriptionId, SubscriptionBinding>,
     preflight_replies: HashMap<ConversationRequestId, ConversationProgressResponse>,
     preflight_inputs: HashMap<ConversationRequestId, (String, ConversationSurface)>,
     start_replies: HashMap<ConversationSubscriptionId, ConversationProgressResponse>,
-    // A subscription enters this FIFO only after a real terminal projection.
+    // A subscription enters this FIFO only after a terminal or stopped projection.
     // It is the sole eviction source: active or not-yet-settled idempotency
     // records are never discarded to make room for another admission.
     settled: VecDeque<ConversationSubscriptionId>,
@@ -160,6 +161,7 @@ impl ConversationRegistry {
             relay: Mutex::new(None),
             state: Arc::new(Mutex::new(RegistryState {
                 availability,
+                active_subscription: None,
                 owner,
                 subscriptions: HashMap::new(),
                 preflight_replies: HashMap::new(),
@@ -277,8 +279,7 @@ impl ConversationRegistry {
         };
         state.next_sequence = state.next_sequence.saturating_add(1);
         let sequence = state.next_sequence;
-        Self::apply_availability(&mut state, &event);
-        Self::mark_settled(&mut state, &subscription_id, &event);
+        Self::apply_projection(&mut state, &subscription_id, &event);
         let frame = ConversationStreamFrame {
             schema_version: CONVERSATION_V1_SCHEMA_VERSION,
             expected_boot_id: boot_id.into(),
@@ -317,8 +318,7 @@ impl ConversationRegistry {
                         retryable: false,
                     },
                 };
-                Self::apply_availability(&mut state, &terminal);
-                Self::mark_settled(&mut state, &subscription_id, &terminal);
+                Self::apply_projection(&mut state, &subscription_id, &terminal);
                 let frame = ConversationStreamFrame {
                     schema_version: CONVERSATION_V1_SCHEMA_VERSION,
                     expected_boot_id: boot_id.into(),
@@ -334,6 +334,7 @@ impl ConversationRegistry {
                 frames.push(frame);
             }
             state.availability.busy = false;
+            state.active_subscription = None;
             (frames, state.owner.take())
         };
         for frame in frames {
@@ -376,12 +377,30 @@ impl ConversationRegistry {
         }
     }
 
-    fn mark_settled(
+    fn apply_projection(
         state: &mut RegistryState,
         subscription_id: &ConversationSubscriptionId,
         event: &ConversationEvent,
     ) {
-        if matches!(event, ConversationEvent::Terminal { .. })
+        let settled = matches!(
+            event,
+            ConversationEvent::Terminal { .. }
+                | ConversationEvent::State {
+                    state: ConversationState::Stopped
+                }
+        );
+        // Retained old frames remain replayable, but cannot update the shared
+        // microphone status or release a replacement conversation's slot.
+        if state.active_subscription.as_ref() == Some(subscription_id) {
+            Self::apply_availability(state, event);
+            if settled {
+                state.active_subscription = None;
+            }
+            // The retained admission owns capacity, not an availability payload.
+            state.availability.busy = state.active_subscription.is_some();
+        }
+        if settled
+            && state.subscriptions.contains_key(subscription_id)
             && !state
                 .settled
                 .iter()
@@ -391,7 +410,7 @@ impl ConversationRegistry {
         }
     }
 
-    /// Releases only records with an observed terminal projection.  The state
+    /// Releases only records with an observed terminal or stopped projection. The state
     /// mutation deliberately precedes gate removal: a concurrent duplicate may
     /// still hold its old gate, but can never observe a partially retained
     /// idempotency record.
@@ -500,11 +519,22 @@ impl ConversationRegistry {
         surface: ConversationSurface,
         request_id: ConversationRequestId,
         event: ConversationEvent,
-    ) -> ConversationProgressResponse {
+    ) -> ConversationResult<ConversationProgressResponse> {
         let mut state = self.state.lock().await;
+        // Global teardown can complete while owner preflight is awaiting.
+        // The owner is never replaced in this registry; a removed owner makes
+        // the late admission permanently invalid.
+        if state.owner.is_none() {
+            return Err(ConversationError::new(
+                ConversationErrorCode::Unavailable,
+                false,
+                "conversation_owner_closed_before_admission",
+            ));
+        }
         state.next_sequence = state.next_sequence.saturating_add(1);
         let sequence = state.next_sequence;
         let id = ConversationSubscriptionId(format!("{}:{}", request_id.0.simple(), sequence));
+        let canonical = (session_id.clone(), surface);
         state.subscriptions.insert(
             id.clone(),
             SubscriptionBinding {
@@ -514,6 +544,8 @@ impl ConversationRegistry {
                 generation: sequence,
             },
         );
+        state.active_subscription = Some(id.clone());
+        Self::apply_projection(&mut state, &id, &event);
         let frame = ConversationStreamFrame {
             schema_version: CONVERSATION_V1_SCHEMA_VERSION,
             expected_boot_id: self.boot_id.clone(),
@@ -526,9 +558,11 @@ impl ConversationRegistry {
         while state.frames.len() > CONVERSATION_REPLAY_MAX_FRAMES {
             state.frames.pop_front();
         }
-        Self::mark_settled(&mut state, &id, &event);
+        let response = self.response(request_id, Some(id), sequence, sequence, event);
+        state.preflight_inputs.insert(request_id, canonical);
+        state.preflight_replies.insert(request_id, response.clone());
         let _ = self.projections.send(frame);
-        self.response(request_id, Some(id), sequence, sequence, event)
+        Ok(response)
     }
     async fn binding(
         &self,
@@ -585,8 +619,7 @@ impl ConversationRegistry {
         let mut state = self.state.lock().await;
         state.next_sequence = state.next_sequence.saturating_add(1);
         let sequence = state.next_sequence;
-        Self::apply_availability(&mut state, &event);
-        Self::mark_settled(&mut state, &subscription_id, &event);
+        Self::apply_projection(&mut state, &subscription_id, &event);
         let frame = ConversationStreamFrame {
             schema_version: CONVERSATION_V1_SCHEMA_VERSION,
             expected_boot_id: self.boot_id.clone(),
@@ -699,22 +732,13 @@ impl ConversationRuntime for ConversationRegistry {
             }
         }
         let event = self.owner().await?.preflight(request.clone()).await?;
-        let response = self
-            .publish_new(
-                request.session_id,
-                request.origin_surface,
-                request.request_id,
-                event,
-            )
-            .await;
-        let mut state = self.state.lock().await;
-        state.availability.busy = true;
-        Self::apply_availability(&mut state, &response.event);
-        state.preflight_inputs.insert(request.request_id, canonical);
-        state
-            .preflight_replies
-            .insert(request.request_id, response.clone());
-        Ok(response)
+        self.publish_new(
+            request.session_id,
+            request.origin_surface,
+            request.request_id,
+            event,
+        )
+        .await
     }
     async fn decide_microphone(
         &self,
@@ -957,6 +981,7 @@ impl ConversationRuntime for ConversationRegistry {
         let owner = {
             let mut state = self.state.lock().await;
             state.availability.busy = false;
+            state.active_subscription = None;
             state.owner.take()
         };
         let owner_result = match owner {
@@ -1005,6 +1030,7 @@ mod tests {
         preflights: AtomicUsize,
         starts: AtomicUsize,
         fail_start_once: AtomicBool,
+        terminal_preflight: AtomicBool,
         block_first_preflight: bool,
         entered: Notify,
         release: Notify,
@@ -1015,6 +1041,7 @@ mod tests {
                 preflights: AtomicUsize::new(0),
                 starts: AtomicUsize::new(0),
                 fail_start_once: AtomicBool::new(false),
+                terminal_preflight: AtomicBool::new(false),
                 block_first_preflight: block_preflight,
                 entered: Notify::new(),
                 release: Notify::new(),
@@ -1036,6 +1063,14 @@ mod tests {
             self.entered.notify_waiters();
             if self.block_first_preflight && self.preflights.load(Ordering::SeqCst) == 1 {
                 self.release.notified().await;
+            }
+            if self.terminal_preflight.load(Ordering::SeqCst) {
+                return Ok(ConversationEvent::Terminal {
+                    terminal: ConversationTerminal {
+                        code: ConversationErrorCode::MicrophoneDenied,
+                        retryable: false,
+                    },
+                });
             }
             Ok(ready())
         }
@@ -1374,6 +1409,233 @@ mod tests {
             owner.preflights.load(Ordering::SeqCst),
             CONVERSATION_REPLAY_MAX_FRAMES + 1
         );
+    }
+
+    #[tokio::test]
+    async fn stopped_relay_releases_capacity_and_retires_records_once() {
+        let owner = Arc::new(FakeOwner::new(false));
+        let registry = ConversationRegistry::new(
+            "boot".into(),
+            owner.clone(),
+            ConversationTaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+        for _ in 0..=CONVERSATION_REPLAY_MAX_FRAMES {
+            let request_id = ConversationRequestId(uuid::Uuid::new_v4());
+            let request = preflight(request_id, "session");
+            let admission = registry.preflight(request.clone()).await.unwrap();
+            let subscription_id = admission.subscription_id.as_ref().unwrap();
+            for _ in 0..2 {
+                ConversationRegistry::relay_event(
+                    &registry.state,
+                    &registry.projections,
+                    "boot",
+                    request_id,
+                    ConversationEvent::State {
+                        state: ConversationState::Stopped,
+                    },
+                )
+                .await;
+            }
+            assert_eq!(registry.preflight(request).await.unwrap(), admission);
+            let state = registry.state.lock().await;
+            assert!(!state.availability.busy);
+            assert!(state.active_subscription.is_none());
+            assert_eq!(
+                state.settled.iter().filter(|id| *id == subscription_id).count(),
+                1
+            );
+            assert!(state.subscriptions.len() <= CONVERSATION_REPLAY_MAX_FRAMES);
+        }
+        assert_eq!(
+            owner.preflights.load(Ordering::SeqCst),
+            CONVERSATION_REPLAY_MAX_FRAMES + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn settled_subscription_cannot_mutate_replacement_availability() {
+        let owner = Arc::new(FakeOwner::new(false));
+        let registry = ConversationRegistry::new(
+            "boot".into(),
+            owner,
+            ConversationTaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+        let old_id = ConversationRequestId(uuid::Uuid::new_v4());
+        let old = registry.preflight(preflight(old_id, "session")).await.unwrap();
+        let old_subscription = old.subscription_id.clone().unwrap();
+        ConversationRegistry::relay_event(
+            &registry.state,
+            &registry.projections,
+            "boot",
+            old_id,
+            ConversationEvent::State {
+                state: ConversationState::Stopped,
+            },
+        )
+        .await;
+        let next = registry
+            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .await
+            .unwrap();
+        let (expected, old_binding) = {
+            let state = registry.state.lock().await;
+            (
+                state.availability.clone(),
+                state.subscriptions.get(&old_subscription).unwrap().clone(),
+            )
+        };
+        assert!(expected.busy);
+        for event in [
+            ConversationEvent::Terminal {
+                terminal: ConversationTerminal {
+                    code: ConversationErrorCode::MicrophoneRevoked,
+                    retryable: false,
+                },
+            },
+            ConversationEvent::State {
+                state: ConversationState::Stopped,
+            },
+            ConversationEvent::State {
+                state: ConversationState::Listening,
+            },
+            ConversationEvent::Availability {
+                availability: ConversationAvailability {
+                    feature: ConversationFeature::LiveAudioDisabled,
+                    microphone: MicrophonePermissionState::Revoked,
+                    busy: false,
+                    last_device_open: Some(MicOpenOutcome::Failed),
+                },
+            },
+        ] {
+            ConversationRegistry::relay_event(
+                &registry.state,
+                &registry.projections,
+                "boot",
+                old_id,
+                event.clone(),
+            )
+            .await;
+            {
+                let state = registry.state.lock().await;
+                assert_eq!(state.availability, expected);
+                assert_eq!(state.active_subscription, next.subscription_id);
+            }
+            let reply = registry
+                .publish_existing(old_subscription.clone(), old_binding.clone(), event.clone())
+                .await;
+            assert_eq!(reply.request_id, old_id);
+            assert_eq!(reply.generation, old.generation);
+            assert_eq!(reply.event, event);
+            let state = registry.state.lock().await;
+            assert_eq!(state.availability, expected);
+            assert_eq!(state.active_subscription, next.subscription_id);
+            let frame = state.frames.back().unwrap();
+            assert_eq!(frame.subscription_id, old_subscription);
+            assert_eq!(frame.generation, old.generation);
+        }
+    }
+
+    #[tokio::test]
+    async fn availability_payload_cannot_release_an_admitted_slot() {
+        let owner = Arc::new(FakeOwner::new(false));
+        let registry = ConversationRegistry::new(
+            "boot".into(),
+            owner.clone(),
+            ConversationTaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+        let request_id = ConversationRequestId(uuid::Uuid::new_v4());
+        let admission = registry.preflight(preflight(request_id, "session")).await.unwrap();
+        let mut reported = registry.state.lock().await.availability.clone();
+        reported.busy = false;
+        reported.microphone = MicrophonePermissionState::Granted;
+        ConversationRegistry::relay_event(
+            &registry.state,
+            &registry.projections,
+            "boot",
+            request_id,
+            ConversationEvent::Availability { availability: reported },
+        )
+        .await;
+        let denied = registry
+            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, ConversationErrorCode::Busy);
+        assert_eq!(owner.preflights.load(Ordering::SeqCst), 1);
+        let state = registry.state.lock().await;
+        assert!(state.availability.busy);
+        assert_eq!(state.active_subscription, admission.subscription_id);
+        assert_eq!(state.availability.microphone, MicrophonePermissionState::Granted);
+    }
+
+    #[tokio::test]
+    async fn terminal_preflight_is_cached_without_reserving_capacity() {
+        let owner = Arc::new(FakeOwner::new(false));
+        owner.terminal_preflight.store(true, Ordering::SeqCst);
+        let registry = ConversationRegistry::new(
+            "boot".into(),
+            owner.clone(),
+            ConversationTaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+        let request = preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session");
+        let reply = registry.preflight(request.clone()).await.unwrap();
+        assert_eq!(registry.preflight(request).await.unwrap(), reply);
+        {
+            let state = registry.state.lock().await;
+            assert!(!state.availability.busy);
+            assert!(state.active_subscription.is_none());
+            assert_eq!(state.settled.front(), reply.subscription_id.as_ref());
+        }
+        owner.terminal_preflight.store(false, Ordering::SeqCst);
+        registry
+            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .await
+            .unwrap();
+        assert_eq!(owner.preflights.load(Ordering::SeqCst), 2);
+        assert!(registry.state.lock().await.availability.busy);
+    }
+
+    #[tokio::test]
+    async fn preflight_finishing_after_global_close_cannot_reopen_the_registry() {
+        let owner = Arc::new(FakeOwner::new(true));
+        let registry = Arc::new(
+            ConversationRegistry::new(
+                "boot".into(),
+                owner.clone(),
+                ConversationTaskRegistry::default(),
+            )
+            .await
+            .unwrap(),
+        );
+        let entered = owner.entered.notified();
+        let pending = {
+            let registry = registry.clone();
+            tokio::spawn(async move {
+                registry
+                    .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+                    .await
+            })
+        };
+        entered.await;
+        registry.close_and_drain().await.unwrap();
+        owner.release.notify_one();
+        let error = pending.await.unwrap().unwrap_err();
+        assert_eq!(error.code, ConversationErrorCode::Unavailable);
+        let state = registry.state.lock().await;
+        assert!(!state.availability.busy);
+        assert!(state.active_subscription.is_none());
+        assert!(state.subscriptions.is_empty());
+        assert!(state.preflight_inputs.is_empty());
+        assert!(state.preflight_replies.is_empty());
+        assert!(state.frames.is_empty());
     }
 
     #[tokio::test]

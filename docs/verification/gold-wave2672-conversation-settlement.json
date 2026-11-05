@@ -1,0 +1,37 @@
+{
+  "schema": "neoth.wave2672.conversation-settlement.v1",
+  "producerBase": "7a56a37a64fad34118b6101633061b36489bb0a9",
+  "roadmap": [
+    "JARVIS-ADOPT-03",
+    "JARVIS-ADOPT-02",
+    "ADOPT31-A2"
+  ],
+  "batch": "B04",
+  "finding": "Normal stopped projections never released registry capacity or retired replay records. Delayed old events could also mutate a replacement conversation availability.",
+  "change": "Bind shared availability to the active subscription. Terminal and stopped settle once; retained old frames keep original request/subscription/generation without changing the replacement. Admission, capacity and replay caches publish atomically.",
+  "shutdown": "Reject a delayed preflight publication after global owner removal under the same state lock. Registry owner is never replaced; global lag and close remove it permanently.",
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2"
+    }
+  ],
+  "newCases": [
+    "daemon::conversation_registry::tests::stopped_relay_releases_capacity_and_retires_records_once",
+    "daemon::conversation_registry::tests::settled_subscription_cannot_mutate_replacement_availability",
+    "daemon::conversation_registry::tests::availability_payload_cannot_release_an_admitted_slot",
+    "daemon::conversation_registry::tests::terminal_preflight_is_cached_without_reserving_capacity",
+    "daemon::conversation_registry::tests::preflight_finishing_after_global_close_cannot_reopen_the_registry"
+  ],
+  "requiredPortableNativeTests": 3258,
+  "review": "GPT-6.1 Terra high prompt-only review identified close versus preflight publication race. Atomic owner-presence gate and deterministic regression added; follow-up confirmed ordering. No local execution.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "Synthetic registry tests do not qualify actual microphone/speaker devices or client end-to-end flows.",
+    "Current full run41993234910 uses earlier producer28163cc8. Fresh current-producer execution is required.",
+    "No roadmap checkbox is closed by this static slice."
+  ]
+}
