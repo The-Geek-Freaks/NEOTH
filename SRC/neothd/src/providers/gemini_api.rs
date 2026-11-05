@@ -250,7 +250,12 @@ fn completion_from_response(
     // accompanying prose or filter metadata as a completed tool outcome.
     let native_tool_part = candidate
         .and_then(|value| value.content.as_ref())
-        .is_some_and(|content| content.parts.iter().any(GeminiResponsePart::has_native_tool));
+        .is_some_and(|content| {
+            content
+                .parts
+                .iter()
+                .any(GeminiResponsePart::has_native_tool)
+        });
     if native_tool_part
         || matches!(
             finish_reason.as_deref(),
@@ -656,8 +661,8 @@ mod tests {
                     "promptFeedback": {"blockReason": "SAFETY"}
                 }))
                 .unwrap();
-                let error = completion_from_response(parsed, "fixture".into(), Duration::ZERO)
-                    .unwrap_err();
+                let error =
+                    completion_from_response(parsed, "fixture".into(), Duration::ZERO).unwrap_err();
                 assert_eq!(
                     error.to_string(),
                     "gemini_api returned an unsupported native tool call",
@@ -692,8 +697,8 @@ mod tests {
                     "promptFeedback": {"blockReason": "SAFETY"}
                 }))
                 .unwrap();
-                let error = completion_from_response(parsed, "fixture".into(), Duration::ZERO)
-                    .unwrap_err();
+                let error =
+                    completion_from_response(parsed, "fixture".into(), Duration::ZERO).unwrap_err();
                 assert_eq!(
                     error.to_string(),
                     "gemini_api returned an unsupported native tool call"
@@ -724,7 +729,10 @@ mod tests {
             let completion =
                 completion_from_response(parsed, "fixture".into(), Duration::ZERO).unwrap();
             assert_eq!(completion.text, "ordinary text");
-            assert_eq!(completion.termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(
+                completion.termination.finish_reason.as_deref(),
+                Some(reason)
+            );
             assert_eq!(completion.termination.is_refusal(), reason == "SAFETY");
             assert_eq!(completion.input_tokens, Some(5));
             assert_eq!(completion.output_tokens, Some(3));

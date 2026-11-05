@@ -14,7 +14,7 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
-      "sha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38"
+      "sha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D"
     }
   ],
   "newCases": [
@@ -36,5 +36,22 @@
     "No live Gemini calls, native tool execution or native SSE.",
     "Other candidates and unrelated future protocol features retain existing semantics.",
     "Whole A08 transport/cancellation parity and current-producer native/release acceptance remain open."
-  ]
+  ],
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42016582272,
+    "artifact": 13409736775,
+    "producer": "8913b852e574f211e9a1bdd7b03f019efbc7ff88",
+    "zipSha256": "E8CB56649EA11292D06712932F2FDE82414B8BA740ADBCDEC9AA96DC5E992D94",
+    "exactImages": [
+      {
+        "pre": "d875dd1da5d64d6627ff5437c9f3c5f1fd48e91d",
+        "post": "38e23f7cbbac10bb32870e84bde999a3b1b632b0",
+        "path": "SRC/neothd/src/providers/gemini_api.rs"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
+  }
 }

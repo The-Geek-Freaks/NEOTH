@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T11:08:16.7314320Z",
-  "validationStatus": "GEMINI_NATIVE_TOOL_REJECTION_SOURCE_PREPARED_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T11:10:59.8626088Z",
+  "validationStatus": "GEMINI_NATIVE_TOOL_HOSTED_FORMAT_APPLIED_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4873,8 +4873,8 @@
     },
     {
       "path": "docs/verification/gold-wave2678-gemini-native-tools.json",
-      "bytes": 2394,
-      "sha256": "53E4A7B6EB62DCC1772DCCB837E013112C85871283D95D3D03F3C4235D9751A0"
+      "bytes": 2981,
+      "sha256": "A83E84EDD8EC470D00702EAEB6AABF50008CCC2F20B71F832FC69DBC2F04B302"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -9503,8 +9503,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
-      "bytes": 39833,
-      "sha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38"
+      "bytes": 39952,
+      "sha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D"
     },
     {
       "path": "SRC/neothd/src/providers/known_endpoints.rs",

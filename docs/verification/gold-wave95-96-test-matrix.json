@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "GEMINI_NATIVE_TOOL_REJECTION_SOURCE_PREPARED_HOSTED_PENDING",
+  "status": "GEMINI_NATIVE_TOOL_HOSTED_FORMAT_APPLIED_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 468601,
-    "sha256": "C5B118000FF3997670F74B1FE366E89DF62B71F2612B13A9D03CB283146FD879"
+    "bytes": 468597,
+    "sha256": "7B23BEB3FF04AE4827082650DD65AD5BAEFF0083F929849CE36B7E8F9EFC56F4"
   },
   "sourceInputs": 2557,
   "requiredNativeTests": [
@@ -19729,19 +19729,19 @@
     {
       "test": "providers::gemini_api::tests::native_tool_parts_and_error_markers_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/gemini_api.rs",
-      "sourceSha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38",
+      "sourceSha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::gemini_api::tests::null_tool_fields_preserve_text_usage_refusal_and_request_wire",
       "sourcePath": "SRC/neothd/src/providers/gemini_api.rs",
-      "sourceSha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38",
+      "sourceSha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::gemini_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/gemini_api.rs",
-      "sourceSha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38",
+      "sourceSha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D",
       "junitClass": "neoth"
     }
   ],
@@ -93121,6 +93121,26 @@
       }
     ],
     "note": "Three new portable Gemini regressions; six explicit native-tool fields and three error markers rejected before projection. Request bytes unchanged. Independent prompt review;3286 portable cases await hosted execution. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2678HostedFormat": {
+    "base": "8913b852e574f211e9a1bdd7b03f019efbc7ff88",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2678-gemini-native-tools.json",
+        "bytes": 2981,
+        "sha256": "A83E84EDD8EC470D00702EAEB6AABF50008CCC2F20B71F832FC69DBC2F04B302",
+        "blob": "c7c5f458da1c01f44d59132b3d540b4a7c22a63c"
+      },
+      {
+        "path": "SRC/neothd/src/providers/gemini_api.rs",
+        "bytes": 39952,
+        "sha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D",
+        "blob": "38e23f7cbbac10bb32870e84bde999a3b1b632b0"
+      }
+    ],
+    "note": "Original artifact13409736775 fromrun42016582272 boundto8913b852; API/ZIP/member and exact source Git pre/postimage verified. No local formatter.3286 portable required cases pending native execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
