@@ -202,42 +202,42 @@
     {
       "test": "paperless::email_note::tests::email_note_retry_preserves_exact_bytes_across_attempt_timestamps",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_edited_partial_and_input_drift_are_conflicts",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_legacy_path_is_neither_adopted_nor_duplicated",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_invalid_identity_or_subdir_has_no_outside_effect",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_conflict_does_not_erase_or_block_an_independent_unit",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "paperless::email_note::tests::email_note_nonregular_target_is_not_replaced",
       "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sourceSha256": "387A46E464BB84E376891545F79EAE8D00D0F867BF16E42CC61BA9B6928E5D3D",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -527,6 +527,55 @@
       "sourceSha256": "979D076B55C22F9411E2405F648585E56FD40512A672B310DC16DBA9FA031F98",
       "newCase": true,
       "requiresImapFeature": true
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_create_race_requires_exact_existing_bytes",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_post_commit_failure_preserves_a_verifiable_retry",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_bound_unicode_directories_preserve_exact_retry",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_replaced_root_or_ancestor_never_receives_a_note",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_leaf_replacement_after_read_is_not_completion",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_detached_publication_stays_incomplete_and_preserved",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
+    },
+    {
+      "test": "paperless::email_note::tests::email_note_parent_sync_failure_cannot_acknowledge_publication",
+      "sourcePath": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sourceSha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F",
+      "newCase": true,
+      "requiresImapFeature": false
     }
   ],
   "sourcePaths": [
@@ -547,6 +596,7 @@
     "SRC/neothd/src/paperless/quarantine.rs",
     "SRC/neothd/src/paperless/quarantine/email.rs",
     "SRC/neothd/src/paperless/quarantine/email/tests.rs",
+    "SRC/neothd/src/skills/store.rs",
     "SRC/neothd/src/util/atomic_write.rs",
     "SRC/neothd/src/wal/events.rs",
     "SRC/neothd/src/wal/mod.rs",

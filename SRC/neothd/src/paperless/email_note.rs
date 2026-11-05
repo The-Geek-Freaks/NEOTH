@@ -4,14 +4,16 @@
 //! edited files conflict; legacy names are not adopted or silently duplicated.
 //! This does not migrate the shared legacy email seen-state ledger.
 
-use std::fs::{self, File, OpenOptions};
+use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
+use cap_std::fs::Dir;
 use sha2::{Digest, Sha256};
 
 use crate::security::paperless_ingest::PaperlessOcrPayload;
-use crate::util::atomic_write::{sync_parent_directory_required, write_private_create_new_durable};
+use crate::skills::store::{self, BoundDirectory, BoundDirectoryChild, PrivateChildCommit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmailNoteOutcome {
@@ -28,22 +30,72 @@ fn invalid_path() -> io::Error {
     )
 }
 
-fn is_link(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
+fn store_error(error: anyhow::Error) -> io::Error {
+    let kind = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<io::Error>().map(io::Error::kind))
+        .unwrap_or(io::ErrorKind::Other);
+    io::Error::new(kind, error)
+}
+
+struct NoteChildDirectory {
+    dir: Dir,
+    binding: BoundDirectoryChild,
+    name: OsString,
+    path: PathBuf,
+}
+
+struct NoteDirectory {
+    anchor: BoundDirectory,
+    children: Vec<NoteChildDirectory>,
+}
+
+impl NoteDirectory {
+    fn current(&self) -> (&Dir, &Path) {
+        self.children.last().map_or(
+            (&self.anchor.dir, self.anchor.display_path.as_path()),
+            |child| (&child.dir, child.path.as_path()),
+        )
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
+
+    fn revalidate(&self) -> io::Result<()> {
+        let mut parent = &self.anchor.dir;
+        for child in &self.children {
+            if !child
+                .binding
+                .matches_directory_child(parent, &child.name, &child.path)
+                .map_err(store_error)?
+            {
+                return Err(io::Error::other("email note directory identity changed"));
+            }
+            parent = &child.dir;
+        }
+        Ok(())
     }
-    #[cfg(not(windows))]
-    {
-        false
+
+    fn descend(&mut self, name: &OsStr, create: bool) -> io::Result<()> {
+        self.revalidate()?;
+        let (parent, parent_path) = self.current();
+        let path = parent_path.join(name);
+        let (dir, binding) = if create {
+            let child = store::open_or_create_private_child_dir(parent, name, &path)
+                .map_err(store_error)?;
+            store::bind_retained_real_child_dir(parent, name, &path, child)
+        } else {
+            store::open_bound_real_child_dir(parent, name, &path)
+        }
+        .map_err(store_error)?;
+        self.children.push(NoteChildDirectory {
+            dir,
+            binding,
+            name: name.to_os_string(),
+            path,
+        });
+        self.revalidate()
     }
 }
 
-fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<PathBuf> {
+fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<NoteDirectory> {
     let relative = Path::new(subdir);
     if relative
         .components()
@@ -51,27 +103,25 @@ fn note_directory(vault_root: &Path, subdir: &str) -> io::Result<PathBuf> {
     {
         return Err(invalid_path());
     }
-    // Resolve the configured root once; descendants must be ordinary directories.
-    let mut directory = fs::canonicalize(vault_root)?;
-    if !directory.is_dir() {
-        return Err(invalid_path());
+    // The configured root is resolved once. Its parent is the trusted anchor;
+    // the root and every descendant retain direct-child identity fences.
+    let root = fs::canonicalize(vault_root)?;
+    let anchor_path = root.parent().unwrap_or(&root);
+    let anchor = store::open_absolute_bound_directory(anchor_path, false, "email vault parent")
+        .map_err(store_error)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "email vault parent is absent"))?;
+    let mut directory = NoteDirectory {
+        anchor,
+        children: Vec::new(),
+    };
+    if let Some(name) = root.file_name() {
+        directory.descend(name, false)?;
     }
     for part in relative
         .components()
         .chain(Path::new("Paperless").components())
     {
-        directory.push(part.as_os_str());
-        match fs::create_dir(&directory) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-        let metadata = fs::symlink_metadata(&directory)?;
-        if !metadata.is_dir() || is_link(&metadata) {
-            return Err(invalid_path());
-        }
-        // Also finish a directory commit interrupted during an earlier attempt.
-        sync_parent_directory_required(&directory)?;
+        directory.descend(part.as_os_str(), true)?;
     }
     Ok(directory)
 }
@@ -107,34 +157,30 @@ fn render_email_note(payload: &PaperlessOcrPayload, input_text: &str) -> String 
 /// None means absent; matching bytes must also be synced before completion.
 /// Comparison is bounded by the expected rendition, including a trailing-byte
 /// check. Local concurrent edits can invalidate the note after this observation.
-fn observe_existing(path: &Path, expected: &[u8]) -> io::Result<Option<EmailNoteOutcome>> {
-    let metadata = match fs::symlink_metadata(path) {
+fn observe_existing(
+    directory: &NoteDirectory,
+    name: &OsStr,
+    expected: &[u8],
+    observe: &mut impl FnMut(NoteObservation),
+) -> io::Result<Option<EmailNoteOutcome>> {
+    directory.revalidate()?;
+    let (parent, parent_path) = directory.current();
+    let path = parent_path.join(name);
+    let metadata = match parent.symlink_metadata(name) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    if !metadata.is_file() || is_link(&metadata) || metadata.len() != expected.len() as u64 {
+    if !metadata.is_file()
+        || store::cap_metadata_is_link_like(&metadata)
+        || metadata.len() != expected.len() as u64
+    {
         return Ok(Some(EmailNoteOutcome::Conflict));
     }
     // Write permission is needed for a durable sync on Windows; no bytes are
     // written and no truncate/create flag is set.
-    let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
-    }
-    let mut file: File = options.open(path)?;
-    let opened = file.metadata()?;
-    if !opened.is_file() || is_link(&opened) {
-        return Ok(Some(EmailNoteOutcome::Conflict));
-    }
+    let (mut file, binding) =
+        store::open_bound_regular_file_readwrite(parent, name, &path).map_err(store_error)?;
     let mut observed = Vec::with_capacity(expected.len());
     Read::by_ref(&mut file)
         .take(expected.len() as u64 + 1)
@@ -142,9 +188,27 @@ fn observe_existing(path: &Path, expected: &[u8]) -> io::Result<Option<EmailNote
     if observed != expected {
         return Ok(Some(EmailNoteOutcome::Conflict));
     }
+    observe(NoteObservation::ExistingRead);
     file.sync_all()?;
-    sync_parent_directory_required(path)?;
+    // Match the existing platform contract: POSIX requires directory fsync;
+    // Windows creation uses the existing private write-through publication.
+    store::sync_parent_directory(parent, parent_path).map_err(store_error)?;
+    if !binding
+        .matches_regular_file_child_readonly(parent, name, &path)
+        .map_err(store_error)?
+    {
+        return Err(io::Error::other("email note file identity changed"));
+    }
+    directory.revalidate()?;
     Ok(Some(EmailNoteOutcome::AlreadyPresent))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoteObservation {
+    DirectoryBound,
+    BeforeCreate,
+    Created,
+    ExistingRead,
 }
 
 pub(crate) fn sync_email_to_obsidian(
@@ -153,6 +217,17 @@ pub(crate) fn sync_email_to_obsidian(
     legacy_doc_id: &str,
     vault_root: &Path,
     subdir: &str,
+) -> io::Result<EmailNoteOutcome> {
+    sync_email_to_obsidian_observed(payload, input_text, legacy_doc_id, vault_root, subdir, |_| {})
+}
+
+fn sync_email_to_obsidian_observed(
+    payload: &PaperlessOcrPayload,
+    input_text: &str,
+    legacy_doc_id: &str,
+    vault_root: &Path,
+    subdir: &str,
+    mut observe: impl FnMut(NoteObservation),
 ) -> io::Result<EmailNoteOutcome> {
     let valid_unit = payload
         .document_id
@@ -167,25 +242,52 @@ pub(crate) fn sync_email_to_obsidian(
         return Err(invalid_path());
     }
     let directory = note_directory(vault_root, subdir)?;
-    let target = directory.join(format!("{}.md", payload.document_id));
+    observe(NoteObservation::DirectoryBound);
+    directory.revalidate()?;
+    let (parent, parent_path) = directory.current();
+    let name = OsString::from(format!("{}.md", payload.document_id));
+    let target = parent_path.join(&name);
     let rendition = render_email_note(payload, input_text);
-    if let Some(outcome) = observe_existing(&target, rendition.as_bytes())? {
+    if let Some(outcome) =
+        observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
+    {
         return Ok(outcome);
     }
     // The old lossy name cannot prove which account or unit owns its bytes.
     // Existence, even of a broken link or directory, prevents a second note.
-    let legacy = directory.join(format!("{legacy_doc_id}.md"));
-    match fs::symlink_metadata(&legacy) {
+    let legacy = OsString::from(format!("{legacy_doc_id}.md"));
+    match parent.symlink_metadata(&legacy) {
         Ok(_) => return Ok(EmailNoteOutcome::LegacyAmbiguous),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    match write_private_create_new_durable(&target, rendition.as_bytes()) {
-        Ok(()) => Ok(EmailNoteOutcome::Created),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            observe_existing(&target, rendition.as_bytes())?.ok_or(error)
+    observe(NoteObservation::BeforeCreate);
+    directory.revalidate()?;
+    match store::atomic_write_private_child_create_new_reported(
+        parent,
+        &name,
+        &target,
+        rendition.as_bytes(),
+    ) {
+        Ok(PrivateChildCommit::PublishedAndSynced) => {
+            observe(NoteObservation::Created);
+            match observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)? {
+                Some(EmailNoteOutcome::AlreadyPresent) => Ok(EmailNoteOutcome::Created),
+                Some(outcome) => Ok(outcome),
+                None => Err(io::Error::other("published email note is absent")),
+            }
         }
-        Err(error) => Err(error),
+        Ok(PrivateChildCommit::PublishedDurabilityUnknown(reason)) => Err(io::Error::other(reason)),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists) =>
+        {
+            observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
+                .ok_or_else(|| io::Error::other(error))
+        }
+        Err(error) => Err(io::Error::other(error)),
     }
 }
 

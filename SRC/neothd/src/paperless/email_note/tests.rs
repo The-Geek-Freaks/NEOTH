@@ -160,3 +160,227 @@ fn email_note_nonregular_target_is_not_replaced() {
     );
     assert!(target.is_dir());
 }
+
+#[test]
+fn email_note_create_race_requires_exact_existing_bytes() {
+    for exact in [true, false] {
+        let vault = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(vault.path()).unwrap();
+        let item = payload("Concurrent invoice", 'a');
+        let target = path(&root, &item);
+        let existing = if exact {
+            render_email_note(&item, "Concurrent invoice")
+        } else {
+            "operator content".to_owned()
+        };
+        let result = sync_email_to_obsidian_observed(
+            &item,
+            "Concurrent invoice",
+            "legacy",
+            &root,
+            "mail",
+            |stage| {
+                if stage == NoteObservation::BeforeCreate {
+                    fs::write(&target, &existing).unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            if exact {
+                EmailNoteOutcome::AlreadyPresent
+            } else {
+                EmailNoteOutcome::Conflict
+            }
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), existing);
+        assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn email_note_post_commit_failure_preserves_a_verifiable_retry() {
+    let vault = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(vault.path()).unwrap();
+    let item = payload("Committed invoice", 'b');
+    let target = path(&root, &item);
+    let result = sync_email_to_obsidian_observed(
+        &item,
+        "Committed invoice",
+        "legacy",
+        &root,
+        "mail",
+        |stage| {
+            if stage == NoteObservation::BeforeCreate {
+                store::fail_private_child_post_commit_validation_for_test(&target);
+            }
+        },
+    );
+    assert!(result.is_err());
+    let bytes = fs::read(&target).unwrap();
+    assert_eq!(bytes, render_email_note(&item, "Committed invoice").as_bytes());
+    assert_eq!(
+        sync_email_to_obsidian(&item, "Committed invoice", "legacy", &root, "mail").unwrap(),
+        EmailNoteOutcome::AlreadyPresent
+    );
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn email_note_bound_unicode_directories_preserve_exact_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("Notizen ü");
+    fs::create_dir(&vault).unwrap();
+    let item = payload("Unicode invoice", 'c');
+    let subdir = "Eingang/Rechnungen ä";
+    assert_eq!(
+        sync_email_to_obsidian(&item, "Unicode invoice", "legacy", &vault, subdir).unwrap(),
+        EmailNoteOutcome::Created
+    );
+    assert_eq!(
+        sync_email_to_obsidian(&item, "Unicode invoice", "legacy", &vault, subdir).unwrap(),
+        EmailNoteOutcome::AlreadyPresent
+    );
+    let target = vault
+        .join(subdir)
+        .join("Paperless")
+        .join(format!("{}.md", item.document_id));
+    assert_eq!(
+        fs::read_to_string(target).unwrap(),
+        render_email_note(&item, "Unicode invoice")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn email_note_replaced_root_or_ancestor_never_receives_a_note() {
+    for depth in 0..3 {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap().join("vault");
+        fs::create_dir(&root).unwrap();
+        let item = payload("Bound invoice", 'd');
+        let replaced = match depth {
+            0 => root.clone(),
+            1 => root.join("mail"),
+            _ => root.join("mail/Paperless"),
+        };
+        let retained = replaced.with_file_name("retained-original");
+        let result = sync_email_to_obsidian_observed(
+            &item,
+            "Bound invoice",
+            "legacy",
+            &root,
+            "mail",
+            |stage| {
+                if stage == NoteObservation::BeforeCreate {
+                    fs::rename(&replaced, &retained).unwrap();
+                    fs::create_dir(&replaced).unwrap();
+                }
+            },
+        );
+        assert!(result.is_err(), "depth={depth}");
+        assert_eq!(fs::read_dir(&replaced).unwrap().count(), 0);
+        let original_directory = match depth {
+            0 => retained.join("mail/Paperless"),
+            1 => retained.join("Paperless"),
+            _ => retained,
+        };
+        assert_eq!(fs::read_dir(original_directory).unwrap().count(), 0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn email_note_leaf_replacement_after_read_is_not_completion() {
+    let vault = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(vault.path()).unwrap();
+    let item = payload("Read invoice", 'e');
+    sync_email_to_obsidian(&item, "Read invoice", "legacy", &root, "mail").unwrap();
+    let target = path(&root, &item);
+    let retained = target.with_file_name("retained-original.md");
+    let expected = fs::read(&target).unwrap();
+    let result = sync_email_to_obsidian_observed(
+        &item,
+        "Read invoice",
+        "legacy",
+        &root,
+        "mail",
+        |stage| {
+            if stage == NoteObservation::ExistingRead {
+                fs::rename(&target, &retained).unwrap();
+                fs::write(&target, &expected).unwrap();
+            }
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(fs::read(&target).unwrap(), expected);
+    assert_eq!(fs::read(&retained).unwrap(), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn email_note_detached_publication_stays_incomplete_and_preserved() {
+    let vault = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(vault.path()).unwrap();
+    let item = payload("Published invoice", 'f');
+    let directory = root.join("mail/Paperless");
+    let retained = root.join("mail/retained-original");
+    let result = sync_email_to_obsidian_observed(
+        &item,
+        "Published invoice",
+        "legacy",
+        &root,
+        "mail",
+        |stage| {
+            if stage == NoteObservation::Created {
+                fs::rename(&directory, &retained).unwrap();
+                fs::create_dir(&directory).unwrap();
+            }
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_to_string(retained.join(format!("{}.md", item.document_id))).unwrap(),
+        render_email_note(&item, "Published invoice")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn email_note_parent_sync_failure_cannot_acknowledge_publication() {
+    struct ResetSyncFailure;
+    impl Drop for ResetSyncFailure {
+        fn drop(&mut self) {
+            store::force_parent_sync_failure_for_test(false);
+        }
+    }
+    let vault = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(vault.path()).unwrap();
+    let item = payload("Unsynced invoice", 'a');
+    let reset = ResetSyncFailure;
+    let result = sync_email_to_obsidian_observed(
+        &item,
+        "Unsynced invoice",
+        "legacy",
+        &root,
+        "mail",
+        |stage| {
+            if stage == NoteObservation::BeforeCreate {
+                store::force_parent_sync_failure_for_test(true);
+            }
+        },
+    );
+    drop(reset);
+    assert!(result.is_err());
+    let target = path(&root, &item);
+    let bytes = fs::read(&target).unwrap();
+    assert_eq!(bytes, render_email_note(&item, "Unsynced invoice").as_bytes());
+    assert_eq!(
+        sync_email_to_obsidian(&item, "Unsynced invoice", "legacy", &root, "mail").unwrap(),
+        EmailNoteOutcome::AlreadyPresent
+    );
+    assert_eq!(fs::read(target).unwrap(), bytes);
+}

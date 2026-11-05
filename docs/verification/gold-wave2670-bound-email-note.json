@@ -1,0 +1,75 @@
+{
+  "schema": "neoth.wave2670.bound-email-note.v1",
+  "producerBase": "15c845fbd770934aff431416d1e60f50ba45be1e",
+  "roadmap": [
+    "ADOPT-20261012-A04"
+  ],
+  "batch": "B02",
+  "finding": "Email note reads and creates used ambient descendant paths after one canonical-root resolution, leaving parent replacement windows during an attempt.",
+  "change": "Retain the configured root and descendant directory capabilities from one trusted canonical parent. Perform nofollow exact-byte observation and exclusive private publication relative to the retained parent; revalidate directory and leaf identities before completion.",
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/paperless/email_note.rs",
+      "sha256": "645AB096576EFB417EA90B4F707F92A34B76196F72ADF2AE6A8267316126CF8A"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+      "sha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F"
+    },
+    {
+      "path": "SRC/neothd/src/skills/store.rs",
+      "sha256": "408950D2A75D40356A65C0F89E73A6D9742BFBA9934EB2B4D6D923307FF762C0"
+    }
+  ],
+  "failureSemantics": [
+    "Exact concurrent create is observed again; differing content conflicts without overwrite.",
+    "Post-commit validation or directory-sync uncertainty returns an error and preserves published bytes for a verifiable retry.",
+    "Legacy entries remain ambiguous; no adoption, overwrite, or second note.",
+    "A detached published note remains in its original directory and does not produce completion in the replacement namespace."
+  ],
+  "portableCases": [
+    "paperless::email_note::tests::email_note_create_race_requires_exact_existing_bytes",
+    "paperless::email_note::tests::email_note_post_commit_failure_preserves_a_verifiable_retry",
+    "paperless::email_note::tests::email_note_bound_unicode_directories_preserve_exact_retry"
+  ],
+  "unixCases": [
+    "paperless::email_note::tests::email_note_replaced_root_or_ancestor_never_receives_a_note",
+    "paperless::email_note::tests::email_note_leaf_replacement_after_read_is_not_completion",
+    "paperless::email_note::tests::email_note_detached_publication_stays_incomplete_and_preserved",
+    "paperless::email_note::tests::email_note_parent_sync_failure_cannot_acknowledge_publication"
+  ],
+  "registration": {
+    "portable": 3253,
+    "linuxAdditional": 79,
+    "macosAdditional": 72,
+    "windowsAdditional": 41,
+    "focusedLinux": 82,
+    "focusedSourcePaths": 23
+  },
+  "review": "GPT-6.1 Terra high reviewed supplied flow and helper contracts prompt-only; no concrete remaining issue established. Root inspected source/helper declarations. No executed verification implied.",
+  "limits": [
+    "Retained canonical parent and its ancestors are the trusted anchor; validation detects replacement but is not atomic exclusion of rename.",
+    "No persisted cross-attempt directory identity, approved rendition revision, authenticated Paperless principal, or legacy effect reconciliation is added. Schema 55 and A04 remain open.",
+    "Existing-file Windows observation retains the prior sync contract: file sync is required but directory sync reports unsupported. New publication uses the existing reported private write-through primitive.",
+    "Concurrent in-place mutation after byte observation remains possible; no immutable snapshot claim."
+  ],
+  "priorLiveAudio": {
+    "run": "41993234910",
+    "producer": "28163cc8ab5fe4c986c9d866abe07387e2f1d50c",
+    "platforms": [
+      "linux",
+      "windows",
+      "macos"
+    ],
+    "exactCasesEach": 68,
+    "sourceBindings": 13,
+    "proof": "work/gold-20260906/wave2667-native-integration/ROOT_LIVE_AUDIO_ADMISSION.json",
+    "proofSha256": "0C139E32BC9AE4DB1234867A0280F5EAA255E1A0793FDCF363077BDA37170781",
+    "fullCiAccepted": false,
+    "deviceAccepted": false
+  },
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false
+}
