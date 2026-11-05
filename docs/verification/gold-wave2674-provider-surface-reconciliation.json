@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.wave2674.provider-surface-reconciliation.v1",
+  "producerBase": "9b5cb0ec6d801e3ecf1b8dd73bb10c63b539ef76",
+  "roadmap": [
+    "GOLD-R3-10",
+    "GOLD-LF-001-18"
+  ],
+  "batch": "B01",
+  "failedRun": "41993234910",
+  "producer": "28163cc8ab5fe4c986c9d866abe07387e2f1d50c",
+  "failedJob": "127130207433",
+  "observedLinuxSummary": {
+    "run": 19746,
+    "passed": 19745,
+    "failed": 1,
+    "skipped": 32
+  },
+  "failedCase": "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed",
+  "cause": "The reviewed raw-callsite fingerprints lagged the prior prompt-component and append-only tool-attribution integration in exactly two of47 source entries.",
+  "classification": "CLI canary forwards retain their inner providers; session naming remains CostAuthorizingProvider. The MCP concrete driver keeps the same guarded CostAuthorizingProvider inside prompt_continuation_scope and automated_usage_scope. The MCP trait default delegates to complete; compaction still uses that driver. The main loop now calls complete_with_tool_attribution.",
+  "reconciled": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "producerBlob": "ab0eb71da5b27d4c884f1cd7f9cf4da94b478e47",
+      "currentBlob": "ab0eb71da5b27d4c884f1cd7f9cf4da94b478e47",
+      "sha256": "603D4B6E60BFB2238F03AD7C3661DF1299DE4C95FFD208016D01D638EADCC86D",
+      "hosted": {
+        "count": 4,
+        "digest": "58a7af71b21b7aafee04466a89fde528b96aa40083fe13520d719472ecb224ff"
+      },
+      "previous": {
+        "count": 4,
+        "digest": "ab3cfd28bed16e2c8057fbe474277a9c4a59fe6f6af4c2b212fded747caa0015"
+      }
+    },
+    {
+      "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "producerBlob": "a97086637f75724246fa6d1356ad6308d2bf8f3b",
+      "currentBlob": "a97086637f75724246fa6d1356ad6308d2bf8f3b",
+      "sha256": "D5A2D0EAC7805B2BE6654F9AB9EFF3CA7DE33FC0EA50DA75BD01CD3DFF8CAD88",
+      "hosted": {
+        "count": 2,
+        "digest": "95a19f8699046ba1e7ba203a533cdaa895c588f681157ebbd622610d12a092c8"
+      },
+      "previous": {
+        "count": 3,
+        "digest": "90f67a49eb5e274c31979d86c6515a1031da050c4503fa8fd82e8052dbf3a368"
+      }
+    }
+  ],
+  "changedSource": {
+    "path": "SRC/neothd/src/providers/cost_authorization.rs",
+    "sha256": "DBE4ED40D1E28EC79A79E1BB3917132A793A36CD194D035DEA0A23A29E16C466"
+  },
+  "guardAlgorithmChanged": false,
+  "review": "Independent GPT-6.1 Terra high prompt-only review supports two-entry baseline correction after explicit central-authority path inspection.",
+  "localExecutableValidationRan": false,
+  "correctedGuardHostedAccepted": false,
+  "fullCiAccepted": false,
+  "goldAccepted": false
+}

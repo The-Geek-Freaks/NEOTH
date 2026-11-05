@@ -417,6 +417,9 @@ impl OpenAiAdapter {
             model,
             messages,
             stream,
+            // Make the native storage choice explicit without adding an
+            // unreviewed field to compatible services or Copilot.
+            store: (self.name == "openai_api").then_some(false),
             max_completion_tokens,
             max_tokens,
             temperature: req.temperature,
@@ -1105,6 +1108,8 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2121,6 +2126,58 @@ mod tests {
                 .unwrap();
         assert_eq!(compat["max_tokens"], 88);
         assert!(compat.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn native_storage_opt_out_is_explicit_without_changing_compatible_contracts() {
+        let native = OpenAiAdapter::new_openai(
+            "https://api.openai.com/v1".into(),
+            SecretString::from("test-key"),
+            "test-model".into(),
+        )
+        .unwrap();
+        let custom = OpenAiAdapter::new_openai(
+            "https://custom.example.invalid/v1".into(),
+            SecretString::from("test-key"),
+            "test-model".into(),
+        )
+        .unwrap();
+        let compatible = OpenAiAdapter::new_compat(
+            "http://localhost:1234/v1".into(),
+            SecretString::from("test-key"),
+            "test-model".into(),
+        )
+        .unwrap();
+        let copilot = OpenAiAdapter::new_copilot(
+            "https://api.githubcopilot.com".into(),
+            SecretString::from("test-key"),
+            "test-model".into(),
+        )
+        .unwrap();
+        for (adapter, native_storage) in [
+            (native, true),
+            (custom, false),
+            (compatible, false),
+            (copilot, false),
+        ] {
+            for stream in [false, true] {
+                let body = serde_json::to_value(adapter.chat_request(
+                    "test-model".into(),
+                    vec![ChatMessage {
+                        role: "user",
+                        content: "ping".into(),
+                    }],
+                    stream,
+                    &Request::default(),
+                ))
+                .unwrap();
+                if native_storage {
+                    assert_eq!(body.get("store"), Some(&serde_json::Value::Bool(false)));
+                } else {
+                    assert!(body.get("store").is_none());
+                }
+            }
+        }
     }
 
     #[test]
@@ -3518,7 +3575,7 @@ mod tests {
         // The 200-success test already verifies the bearer header
         // matches via `wiremock::matchers::header`. This test
         // additionally asserts the JSON body shape (developer + user
-        // messages in `messages[]`, model from override, stream=false).
+        // messages, model override, stream=false and explicit store=false).
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -3530,6 +3587,7 @@ mod tests {
                 ],
                 "stream": false,
                 "max_completion_tokens": 4096,
+                "store": false,
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{
@@ -4366,8 +4424,8 @@ mod tests {
         assert!(!persisted.contains("Candidate blocked."));
     }
 
-    /// Proves that stream:true and the official developer instruction role are
-    /// sent on the same wire path.
+    /// Proves that stream:true, store:false and the official developer
+    /// instruction role are sent on the same wire path.
     #[tokio::test]
     async fn mock_official_sse_stream_uses_developer_role_and_stream_true() {
         use futures_util::StreamExt;
@@ -4385,6 +4443,7 @@ mod tests {
                 ],
                 "stream": true,
                 "max_completion_tokens": 4096,
+                "store": false,
             })))
             .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
             .mount(&mock)
@@ -4398,8 +4457,11 @@ mod tests {
         };
 
         let mut stream = adapter.stream(req).await.expect("stream must start");
-        // Drain — we only care that the mock matched (body_json assertion verifies stream:true).
-        while stream.next().await.is_some() {}
+        let mut completed = false;
+        while let Some(chunk) = stream.next().await {
+            completed |= chunk.expect("matched native stream must remain successful").done;
+        }
+        assert!(completed, "native storage contract needs a completed stream");
     }
 
     #[tokio::test]
@@ -4428,6 +4490,10 @@ mod tests {
             })
             .await
             .expect("compat stream body must use max_tokens");
-        while stream.next().await.is_some() {}
+        let mut completed = false;
+        while let Some(chunk) = stream.next().await {
+            completed |= chunk.expect("compatible stream must remain successful").done;
+        }
+        assert!(completed, "compatible contract needs a completed stream");
     }
 }

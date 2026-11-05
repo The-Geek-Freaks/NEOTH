@@ -10574,8 +10574,9 @@ mod tests {
                 // `.complete`/`.stream` inventory. Canary forwards complete
                 // and pinned completion to the same authorized inner handle;
                 // session-naming and MCP-driver sites retain their reviewed
-                // canonical boundaries.
-                "ab3cfd28bed16e2c8057fbe474277a9c4a59fe6f6af4c2b212fded747caa0015",
+                // canonical boundaries. The MCP call now retains prompt
+                // attribution around that same authorized provider future.
+                "58a7af71b21b7aafee04466a89fde528b96aa40083fe13520d719472ecb224ff",
             ),
             (
                 "cli/clarify_chat.rs",
@@ -10707,8 +10708,12 @@ mod tests {
             ),
             (
                 "mcp/dispatch_loop.rs",
-                3,
-                "90f67a49eb5e274c31979d86c6515a1031da050c4503fa8fd82e8052dbf3a368",
+                2,
+                // The main loop uses complete_with_tool_attribution. Its
+                // default delegates to complete; the CLI override keeps the
+                // existing cost-authorized provider. Compaction still calls
+                // the same driver directly, without tool-result attribution.
+                "95a19f8699046ba1e7ba203a533cdaa895c588f681157ebbd622610d12a092c8",
             ),
             (
                 "mcp/goal_judge.rs",

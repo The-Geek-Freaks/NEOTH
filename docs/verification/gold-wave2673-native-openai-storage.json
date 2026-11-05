@@ -1,0 +1,36 @@
+{
+  "schema": "neoth.wave2673.native-openai-storage.v1",
+  "producerBase": "9b5cb0ec6d801e3ecf1b8dd73bb10c63b539ef76",
+  "roadmap": [
+    "ADOPT-20261012-A08",
+    "GOLD-R4-14"
+  ],
+  "batch": "B03",
+  "change": "Native OpenAI chat requests explicitly serialize store:false for both synchronous and streaming calls through the existing authorized request builder. Custom endpoints, compatible profiles and Copilot omit the unreviewed field.",
+  "source": {
+    "path": "SRC/neothd/src/providers/openai_api.rs",
+    "sha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78"
+  },
+  "reference": {
+    "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+    "fetchedUtc": "2026-11-05T10:08:30.2880657Z",
+    "contract": "store is an optional boolean controlling chat-completion output storage for distillation or evals; native requests explicitly choose false."
+  },
+  "requiredCases": [
+    "providers::openai_api::tests::native_storage_opt_out_is_explicit_without_changing_compatible_contracts",
+    "providers::openai_api::tests::mock_request_carries_correct_bearer_and_payload",
+    "providers::openai_api::tests::mock_official_sse_stream_uses_developer_role_and_stream_true",
+    "providers::openai_api::tests::mock_compat_complete_uses_only_legacy_max_tokens",
+    "providers::openai_api::tests::mock_compat_stream_uses_only_legacy_max_tokens"
+  ],
+  "coverage": "One new four-profile serialization regression in both stream modes; existing exact native and compatible HTTP fixtures retained/extended and added to mandatory catalog. Both SSE fixtures require successful chunks and a done terminal.",
+  "requiredPortableNativeTests": 3263,
+  "review": "GPT-6.1 Terra high prompt-only review found no concrete flaw in supplied implementation and fixture changes.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "This explicit API field does not assert Zero Data Retention, no prompt caching, or live-service acceptance.",
+    "The broader A08 provider, hosted-tool, cancellation and tool-transport requirements remain open."
+  ]
+}
