@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2711 hosted formatting imported; mixed HTTP restart and102-case execution pending",
+  "status": "W2712 static prepared; hosted terminal regressions pending; local BSOD hold active",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477156,
-    "sha256": "8D05845970E798E81EC7D9B74FC25259BD5DA332A9276B946564F19AD83E0419"
+    "bytes": 477355,
+    "sha256": "EB48964D3C0C043854676861F7B9CB21F168B0F70BEC499872F715E6DC6F99AB"
   },
-  "sourceInputs": 2603,
+  "sourceInputs": 2604,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -6042,7 +6042,7 @@
     {
       "test": "providers::anthropic_api::tests::mock_401_auth_fail_names_status_and_provider",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
       "junitClass": "neoth"
     },
     {
@@ -19627,19 +19627,19 @@
     {
       "test": "providers::anthropic_api::tests::native_tool_blocks_and_paused_turns_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::ordinary_text_thinking_and_refusal_remain_tool_free",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
       "junitClass": "neoth"
     },
     {
@@ -20120,6 +20120,18 @@
       "test": "daemon::email_ingest_cron::tests::cron_mixed_http_outcomes_preserve_completed_units_and_reconcile_after_restart",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "sourceSha256": "3C014D0F994117EBE4AA354F6ADD797E500E3B2E9073C6A4870FDE6EF640BE53",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::anthropic_api::tests::unconfirmed_terminals_and_empty_text_fail_without_exposing_response_fields",
+      "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::anthropic_api::tests::supported_terminals_preserve_text_usage_and_native_refusal",
+      "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
       "junitClass": "neoth"
     }
   ],
@@ -96074,6 +96086,38 @@
       }
     ],
     "note": "API/ZIP/member and raw source pre/post images verified; no local runtime",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2712AnthropicTerminal": {
+    "base": "3eee55a729657b01a5ccf1d59adbf6dd6c03a9c5",
+    "sources": [
+      {
+        "path": "docs/providers.md",
+        "bytes": 23359,
+        "sha256": "D1E19FEFC82804166640814B47216E1535424829385E785532F34A128FEB3E33",
+        "blob": "8e68de2795725be4189e459b03e4922bef45346e"
+      },
+      {
+        "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
+        "bytes": 2179,
+        "sha256": "1309E88AEA79AFE6F65ED7D6E381D8C3DB1BD41D39E748E2346F4256F8D715CF",
+        "blob": "d95a536ec60e876462a12e17ad295fd0742833fc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2825438,
+        "sha256": "A1C35D1FD301E68CF2CC55C115FE21905A11CACA9A8242FBE5C504FA3F43002D",
+        "blob": "0ca59e922addc5048bc233d98ab453a71e59a00b"
+      },
+      {
+        "path": "SRC/neothd/src/providers/anthropic_api.rs",
+        "bytes": 53202,
+        "sha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+        "blob": "46c688552fe26453d286af2f050c7e1201fdde37"
+      }
+    ],
+    "note": "Two new exact production HTTP adapter tests; current full CI is predecessor-only and remains active.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

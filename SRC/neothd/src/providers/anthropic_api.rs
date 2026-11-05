@@ -304,6 +304,21 @@ impl Provider for AnthropicAdapter {
             .await?;
 
             reject_unsupported_native_tools(&parsed)?;
+            // This buffered Messages response must carry a supported terminal
+            // signal before text or usage can become a completed response.
+            anyhow::ensure!(
+                matches!(
+                    parsed.stop_reason.as_deref(),
+                    Some(
+                        "end_turn"
+                            | "max_tokens"
+                            | "stop_sequence"
+                            | "refusal"
+                            | "model_context_window_exceeded"
+                    )
+                ),
+                "anthropic_api response lacks a supported terminal stop reason"
+            );
 
             // Concatenate text only after ruling out an unsupported native
             // tool exchange, even when the same response includes prose.
@@ -321,10 +336,7 @@ impl Provider for AnthropicAdapter {
             let refused = parsed.stop_reason.as_deref() == Some("refusal");
             if text.is_empty() && !refused {
                 anyhow::bail!(
-                    "anthropic_api returned 200 OK but no text content block (stop_reason \
-                     {:?}) and no native refusal — likely a non-text reply. Inspect the raw body via \
-                     NEOTH_LOG=debug.",
-                    parsed.stop_reason
+                    "anthropic_api returned 200 OK but no text content block and no native refusal"
                 );
             }
             let mut termination = if refused {
@@ -850,6 +862,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unconfirmed_terminals_and_empty_text_fail_without_exposing_response_fields() {
+        for (reason, empty_text) in [
+            (None, false),
+            (Some(serde_json::Value::Null), false),
+            (Some(serde_json::json!("")), false),
+            (Some(serde_json::json!("private-stop-marker")), false),
+            (Some(serde_json::json!("future_terminal")), false),
+            (Some(serde_json::json!("end_turn")), true),
+        ] {
+            let mock = MockServer::start().await;
+            let mut body = serde_json::json!({
+                "content": if empty_text { serde_json::json!([]) } else {
+                    serde_json::json!([{"type":"text","text":"private-prose-marker"}])
+                },
+                "usage": {"input_tokens":9,"output_tokens":4}
+            });
+            if let Some(reason) = reason {
+                body["stop_reason"] = reason;
+            }
+            Mock::given(method("POST"))
+                .and(path("/messages"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .mount(&mock)
+                .await;
+            let expected = if empty_text {
+                "anthropic_api returned 200 OK but no text content block and no native refusal"
+            } else {
+                "anthropic_api response lacks a supported terminal stop reason"
+            };
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(format!("{error:#}"), expected);
+            let error = match build_adapter_against(&mock.uri())
+                .stream(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(_) => panic!("unconfirmed completion must not produce a stream"),
+                Err(error) => error,
+            };
+            assert_eq!(format!("{error:#}"), expected);
+            assert!(!format!("{error:#}").contains("private-"));
+            assert_eq!(mock.received_requests().await.unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn supported_terminals_preserve_text_usage_and_native_refusal() {
+        for reason in [
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "refusal",
+            "model_context_window_exceeded",
+        ] {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/messages"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "content":[{"type":"text","text":"observed provider text"}],
+                    "stop_reason":reason,"usage":{"input_tokens":9,"output_tokens":4}
+                })))
+                .mount(&mock)
+                .await;
+            let completion = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(completion.text, "observed provider text");
+            assert_eq!(completion.input_tokens, Some(9));
+            assert_eq!(completion.output_tokens, Some(4));
+            assert_eq!(completion.termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(completion.termination.is_refusal(), reason == "refusal");
+            assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn mock_200_refusal_retains_stop_reason_details_and_text() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1045,7 +1145,7 @@ mod tests {
     #[tokio::test]
     async fn mock_200_with_no_text_block_errors_not_empty() {
         // CDX-07 silent-fail guard: a 200 whose content has no text block
-        // must error (showing stop_reason), never Ok(text="").
+        // must error without reflecting response fields, never Ok(text="").
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/messages"))

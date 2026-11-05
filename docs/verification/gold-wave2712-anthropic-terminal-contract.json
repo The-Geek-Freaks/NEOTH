@@ -1,0 +1,46 @@
+{
+  "schema": "neoth.wave2712.anthropic-terminal-contract.v1",
+  "producerBase": "3eee55a729657b01a5ccf1d59adbf6dd6c03a9c5",
+  "batch": "B03",
+  "roadmap": [
+    "ADOPT-20261012-A08",
+    "GOLD-R4-14"
+  ],
+  "finding": "Buffered Anthropic completion accepted nonempty prose without a confirmed terminal reason; empty-text errors reflected the raw stop_reason.",
+  "changes": [
+    "Require one of five supported terminal reasons after the existing native-tool rejection and before projecting text or usage.",
+    "Preserve exact reasons, token counts and native refusal; truncation reasons remain distinguishable from end_turn.",
+    "Reject missing/null/empty/unknown reasons and empty non-refusal text with fixed diagnostics."
+  ],
+  "sources": [
+    {
+      "path": "docs/providers.md",
+      "sha256": "D1E19FEFC82804166640814B47216E1535424829385E785532F34A128FEB3E33"
+    },
+    {
+      "path": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B"
+    }
+  ],
+  "tests": [
+    "providers::anthropic_api::tests::unconfirmed_terminals_and_empty_text_fail_without_exposing_response_fields",
+    "providers::anthropic_api::tests::supported_terminals_preserve_text_usage_and_native_refusal"
+  ],
+  "newPortableCases": 2,
+  "totalPortableCases": 3351,
+  "reference": "https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons",
+  "validation": {
+    "static": "Root source/diff inspection and GPT-6.1 Terra high prompt-only review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "No native tool or pause-turn execution and no new streaming transport.",
+    "Five supported reasons are retained, including max_tokens and model_context_window_exceeded; this is not a claim of semantic task completion.",
+    "Tests use the production HTTP adapter against Wiremock, including the buffered default stream; hosted execution is pending.",
+    "Unknown future reasons fail closed until explicitly supported; no new provider retry or effect-replay policy."
+  ],
+  "rawRoadmapRowsClosed": 0
+}

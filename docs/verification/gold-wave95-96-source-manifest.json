@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T21:25:06.0382384Z",
-  "validationStatus": "W2711 hosted formatting imported; mixed HTTP restart and102-case execution pending",
+  "capturedUtc": "2026-11-05T21:48:14.5334005Z",
+  "validationStatus": "W2712 static prepared; hosted terminal regressions pending; local BSOD hold active",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1913,8 +1913,8 @@
     },
     {
       "path": "docs/providers.md",
-      "bytes": 22840,
-      "sha256": "FC8D5290867A053B55E1D696119E6556899206A01CF2E9DEC76CEF5B6783B7E2"
+      "bytes": 23359,
+      "sha256": "D1E19FEFC82804166640814B47216E1535424829385E785532F34A128FEB3E33"
     },
     {
       "path": "docs/reflection-yearly.md",
@@ -4992,6 +4992,11 @@
       "sha256": "76A4B402BED890DA8B1A12ABCBAF58452E318D5916964CD22357B083CBA04AD4"
     },
     {
+      "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
+      "bytes": 2179,
+      "sha256": "1309E88AEA79AFE6F65ED7D6E381D8C3DB1BD41D39E748E2346F4256F8D715CF"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6253,8 +6258,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2823765,
-      "sha256": "659B3429821800D1755B8B9C020373E4D40713B167F2A4925246BA21F40A4D99"
+      "bytes": 2825438,
+      "sha256": "A1C35D1FD301E68CF2CC55C115FE21905A11CACA9A8242FBE5C504FA3F43002D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9648,8 +9653,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 48967,
-      "sha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F"
+      "bytes": 53202,
+      "sha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",

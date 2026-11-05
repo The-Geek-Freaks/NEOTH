@@ -287,6 +287,14 @@ refusal, a Bedrock `__type` — it classifies under the cap and still reports
 only the classification and the digest. The Copilot token exchange is bounded
 at 64 KiB; Copilot chat runs through the OpenAI-compatible transport.
 
+The buffered Anthropic Messages adapter requires a supported terminal
+stop reason before returning text: `end_turn`, `stop_sequence`, `max_tokens`,
+`model_context_window_exceeded`, or `refusal`. The exact reason is retained;
+token or context limits remain distinguishable from a naturally ended turn.
+Missing, null, empty, and unknown reasons fail with a fixed diagnostic that
+does not reflect response fields. Native tool exchanges and paused turns
+remain unsupported. An empty non-refusal text response still fails.
+
 Retained quota evidence (`Retry-After` bookkeeping) is now a digest for every
 one of those adapters. That replaces the previous substring scrub of the API
 key, which only removed the key in the exact encoding the endpoint happened to
