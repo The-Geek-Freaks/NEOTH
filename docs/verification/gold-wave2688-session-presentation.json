@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2688.session-presentation.v1",
+  "producerBase": "5003a482e54e0441ddcb339c3f534ce1f87d2cf2",
+  "batch": "B08",
+  "roadmap": [
+    "ADOPT-20261012-A07",
+    "GOLD-R4-11"
+  ],
+  "change": [
+    "Explicit operator-only Session scope in existing communication profile owner; exact prepared-turn identity selects a fixed presentation layer ahead of global/channel fallback.",
+    "Local session show/set/reset commands share policy, typed dimensions and existing WAL authority; hashed target and dimension in content-poor control receipts.",
+    "Active explicit pins retained per scope and dimension; full-cap new scope rejects atomically; reset removes all superseded exact-scope pins.",
+    "Opaque event identities deduplicated before locked logical timestamp ordering; overflow rejects before state persistence.",
+    "Incognito and disabled adaptation bypass profile I/O; generic estimates/exports cannot incorporate session pins."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/profile/communication.rs",
+      "sha256": "D753C87E0A1FE7C5356FECF4CF2EEB2D09B07B6CCA5E5B2BBE228EFAE46326B7"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_session.rs",
+      "sha256": "0B91E02FBF9295C2393ADA2AC93B03571A32A96FC41FD7DB1BDD9B9EF00C9160"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_session_tests.rs",
+      "sha256": "C251F39C690287D86003F54600EF1659721A0724BDA854FAB42EFA3AF7981BB2"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile.rs",
+      "sha256": "50445CF391CC5178B46D4E20BF645A2B07EE3DB4A45EA49C97BA893E501B1DE3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_session.rs",
+      "sha256": "20162916BEB0454F46830EB60B75FB2CC98C997C0D05D0D28E4642F9E9A6F31B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
+      "sha256": "7AA1E93BC92607AE6AD92280975B342C7BAA4400DCF184FB00972E398CED16AA"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "7AE9932F0A223EA00724203EF0E82EC08E980BE997F2C43A88F3E6ECB2C677CD"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "D6E88B867E0588E5FD52FAD5F564F99B174E72641867462ABD47902FCA8A09E5"
+    }
+  ],
+  "tests": [
+    "profile::communication::session::tests::session_pin_survives_reload_overrides_global_and_reset_restores_fallback",
+    "profile::communication::session::tests::session_pin_coexists_with_channel_scope_without_entering_generic_exports",
+    "profile::communication::session::tests::session_pin_capacity_rejects_new_scope_atomically_and_keeps_existing_pins",
+    "profile::communication::session::tests::session_pin_order_survives_clock_rollback_deduplication_and_overflow",
+    "profile::communication::session::tests::session_scope_rejects_untrusted_or_mismatched_evidence_and_cached_projection",
+    "profile::communication::session::tests::session_controls_and_prompt_bypass_profile_io_when_private_or_disabled",
+    "cli::profile::communication_session::tests::session_cli_parses_show_set_and_scoped_reset",
+    "cli::profile::communication_session::tests::session_cli_persists_exact_scope_and_redacted_control_receipt",
+    "cli::profile::communication_session::tests::session_cli_rejects_private_ids_before_io_and_reports_postcommit_audit_failure",
+    "cli::chat::tests::session_presentation_uses_prepared_identity_in_primary_and_agent_prompts"
+  ],
+  "newPortableCases": 10,
+  "totalPortableCases": 3317,
+  "validation": {
+    "static": "Root text/diff review, GPT-6.1 Terra high prompt-only architecture and Rust review; borrowed selection key replaced by direct comparator",
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false,
+    "localExecutableValidationRan": false
+  },
+  "limits": [
+    "Ten new regression cases are registered, not executed locally. Hosted compilation/runtime admission pending.",
+    "State and control audit remain separate commits; required audit failure reports already-committed state. No cross-file atomicity claim.",
+    "No device override or native GUI control added. No arbitrary checkpoint-resume/new-session or reconnect/compaction acceptance.",
+    "Existing all-surface controls and whole A07/GOLD-R4-11 completion remain open; raw roadmap unchanged.",
+    "Generated CLI reference refresh remains pending current-producer hosted artifact."
+  ],
+  "rawRoadmapRowsClosed": 0
+}

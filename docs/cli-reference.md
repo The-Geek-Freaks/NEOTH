@@ -127,6 +127,7 @@ neoth memory erase-communication-profile --confirm
 | `profile redact <field>` | Add a durable `never_recreate` redaction for one field. |
 | `profile redactions` / `unredact --id <id>` | Inspect or revoke redaction records. |
 | `profile communication status/show/why` | Inspect the default-on typed local communication profile without exposing raw messages. |
+| `profile communication session <SESSION_ID> show/set/reset` | Inspect, pin, or clear presentation overrides for exactly one retained chat session; see [profile controls](profile.md#session-presentation-overrides). |
 | `profile communication set/reset` | Pin one presentation preference, remove one dimension, or remove the complete communication subject. |
 | `profile communication context ...` | Manage explicit-only neuro-context and its separate prompt-use opt-in. |
 | `export --list-subjects` | Strictly inventory exact pseudonymous communication-profile subject handles; no bundle is written. |

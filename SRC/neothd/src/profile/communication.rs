@@ -16,6 +16,9 @@ use sha2::{Digest, Sha256};
 
 use crate::config::{CommunicationProfileConfig, CommunicationPromptExport};
 
+#[path = "communication_session.rs"]
+pub(crate) mod session;
+
 pub const STATE_RELATIVE_PATH: &str = "profile/communication.json";
 /// The one explicitly supported operator-global profile subject. All other
 /// identities remain scope-local even when they have a stable channel UUID.
@@ -206,11 +209,12 @@ pub enum CommunicationScope {
     Global,
     Channel(String),
     Task(String),
+    Session(String),
 }
 
 impl CommunicationScope {
     fn applies_to(&self, target: Option<&Self>) -> bool {
-        matches!(self, Self::Global) || target == Some(self)
+        !matches!(self, Self::Session(_)) && (matches!(self, Self::Global) || target == Some(self))
     }
 
     fn audit_code(&self) -> &'static str {
@@ -218,6 +222,7 @@ impl CommunicationScope {
             Self::Global => "global",
             Self::Channel(_) => "channel",
             Self::Task(_) => "task",
+            Self::Session(_) => "session",
         }
     }
 }
@@ -797,6 +802,7 @@ fn validate_session_id(session_id: &str) -> Result<()> {
 
 fn validate_scope(scope: &CommunicationScope) -> Result<()> {
     match scope {
+        CommunicationScope::Session(id) => session::validate_id(id),
         CommunicationScope::Channel(id) | CommunicationScope::Task(id)
             if id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control) =>
         {
@@ -890,6 +896,13 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 }
                 validate_session_id(&item.session_id)?;
                 validate_scope(&item.scope)?;
+                session::validate_evidence(
+                    subject_id,
+                    item.authenticated_origin,
+                    item.source,
+                    &item.scope,
+                    &item.session_id,
+                )?;
                 validate_reason_code(&item.reason_code)?;
             }
         }
@@ -907,6 +920,10 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 bail!("communication estimate metadata is invalid");
             }
             validate_scope(&estimate.scope_provenance)?;
+            anyhow::ensure!(
+                !matches!(&estimate.scope_provenance, CommunicationScope::Session(_)),
+                "session pins cannot become global cached estimates"
+            );
             if estimate.durable_by_full_auto
                 && (subject_id != COMMUNICATION_OPERATOR_SUBJECT
                     || !is_full_auto_eligible(estimate.selected)
@@ -1247,11 +1264,20 @@ fn recompute_subject(
     }
 }
 
-fn prune_evidence(items: &mut Vec<EvidenceRef>, max: usize) {
+fn prune_evidence(items: &mut Vec<EvidenceRef>, max: usize) -> Result<()> {
     while items.len() > max {
         let remove_index = items
             .iter()
             .enumerate()
+            .filter(|(_, item)| {
+                item.source != EvidenceSource::ExplicitSetting
+                    || items.iter().any(|newer| {
+                        newer.source == EvidenceSource::ExplicitSetting
+                            && newer.scope == item.scope
+                            && (newer.observed_at_unix, newer.event_hash.as_str())
+                                > (item.observed_at_unix, item.event_hash.as_str())
+                    })
+            })
             .min_by_key(|(_, item)| {
                 (
                     item.source.retention_priority(),
@@ -1260,9 +1286,10 @@ fn prune_evidence(items: &mut Vec<EvidenceRef>, max: usize) {
                 )
             })
             .map(|(index, _)| index)
-            .unwrap_or(0);
+            .context("communication evidence capacity cannot discard an active explicit preference")?;
         items.remove(remove_index);
     }
+    Ok(())
 }
 
 fn validate_evidence_input(input: &EvidenceInput) -> Result<()> {
@@ -1276,6 +1303,13 @@ fn validate_evidence_input(input: &EvidenceInput) -> Result<()> {
     }
     validate_reason_code(input.reason_code)?;
     validate_scope_for_subject(&input.scope, &input.subject)?;
+    session::validate_evidence(
+        input.subject_id(),
+        Some(input.subject.origin()),
+        input.source,
+        &input.scope,
+        &input.session_id,
+    )?;
     Ok(())
 }
 
@@ -1336,20 +1370,34 @@ pub(crate) fn record_evidence_batch(
                 outcome.rate_limited += 1;
                 continue;
             }
+            // Session pins are local explicit controls. Their timestamp is a
+            // logical order under the state lock, so clock rollback or same-
+            // second writers cannot resurrect an earlier choice. event_hash is
+            // the stable caller action identity, not a digest of these fields.
+            let observed_at_unix = if matches!(&input.scope, CommunicationScope::Session(_)) {
+                match evidence.iter().filter(|item| item.scope == input.scope)
+                    .map(|item| item.observed_at_unix).max() {
+                    Some(previous) => input.observed_at_unix.max(previous.checked_add(1)
+                        .context("session preference logical order exhausted")?),
+                    None => input.observed_at_unix,
+                }
+            } else {
+                input.observed_at_unix
+            };
             evidence.push(EvidenceRef {
                 event_hash,
                 subject_id: input.subject_id().to_owned(),
                 session_id: input.session_id.clone(),
                 source: input.source,
                 value: input.value,
-                observed_at_unix: input.observed_at_unix,
+                observed_at_unix,
                 scope: input.scope.clone(),
                 legacy_authenticated_subject: LegacyAuthenticationAssertion::default(),
                 authenticated_origin: Some(input.subject.origin()),
                 reason_code: input.reason_code.to_owned(),
             });
-            prune_evidence(evidence, policy.max_evidence_per_dimension);
-            newest_observation = newest_observation.max(input.observed_at_unix);
+            prune_evidence(evidence, policy.max_evidence_per_dimension)?;
+            newest_observation = newest_observation.max(observed_at_unix);
             outcome.recorded += 1;
         }
 
@@ -2293,10 +2341,40 @@ fn compile_prompt_at(
     incognito: bool,
     now_unix: i64,
 ) -> Result<Option<CompiledCommunicationPrompt>> {
+    compile_prompt_context_at(home, subject_id, policy, target_scope, None, incognito, now_unix)
+}
+
+/// The session is supplied by the prepared chat turn, never inferred from text.
+pub(crate) fn compile_prompt_for_session(
+    home: &Path,
+    subject_id: &str,
+    policy: &CommunicationProfileConfig,
+    target_scope: Option<&CommunicationScope>,
+    session_id: &str,
+    incognito: bool,
+) -> Result<Option<CompiledCommunicationPrompt>> {
+    compile_prompt_context_at(
+        home, subject_id, policy, target_scope, Some(session_id), incognito,
+        crate::time::now_unix_secs() as i64,
+    )
+}
+
+fn compile_prompt_context_at(
+    home: &Path,
+    subject_id: &str,
+    policy: &CommunicationProfileConfig,
+    target_scope: Option<&CommunicationScope>,
+    session_id: Option<&str>,
+    incognito: bool,
+    now_unix: i64,
+) -> Result<Option<CompiledCommunicationPrompt>> {
     if !policy.enabled || incognito || policy.prompt_export == CommunicationPromptExport::None {
         return Ok(None);
     }
     validate_subject_id(subject_id)?;
+    if let Some(session_id) = session_id {
+        session::validate_id(session_id)?;
+    }
     let state = load_state(home)?;
     let Some(subject) = state.subjects.get(subject_id) else {
         return Ok(None);
@@ -2304,6 +2382,10 @@ fn compile_prompt_at(
 
     let mut instructions = Vec::new();
     for dimension in CommunicationDimension::ALL {
+        if let Some(value) = session_id.and_then(|id| session::selected(subject, id, dimension)) {
+            instructions.push(instruction_for(value));
+            continue;
+        }
         let Some(evidence) = subject.evidence.get(&dimension) else {
             continue;
         };

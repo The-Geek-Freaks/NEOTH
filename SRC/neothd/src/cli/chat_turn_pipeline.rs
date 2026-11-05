@@ -893,6 +893,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         home,
         PromptBuildContext {
             args: &args,
+            session_id: current_session_id.as_str(),
             prompt_bundle_hash: &intent_bundle_hash,
             writer: &writer,
             current_path: &prompt_current_path,

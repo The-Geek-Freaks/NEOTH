@@ -23,6 +23,9 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
 
+#[path = "profile_communication_session.rs"]
+mod communication_session;
+
 /// Opaque capability minted only by the local profile-control CLI boundary.
 pub(crate) struct LocalProfileCommunicationOperator(());
 
@@ -406,6 +409,13 @@ pub enum PersonaSub {
 /// Operator-facing controls for the deterministic communication profile.
 #[derive(Subcommand, Debug, Clone)]
 pub enum CommunicationSub {
+    /// Inspect or override presentation for one existing conversation identity.
+    Session {
+        /// Exact session id shown by the conversation receipt; never an Incognito id.
+        session_id: String,
+        #[command(subcommand)]
+        sub: CommunicationSessionSub,
+    },
     /// Show policy, state availability and an active-dimension summary.
     Status,
     /// Show every typed estimate for the local operator profile.
@@ -440,6 +450,23 @@ pub enum CommunicationSub {
     Context {
         #[command(subcommand)]
         sub: CommunicationContextSub,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CommunicationSessionSub {
+    /// Show only this session's explicit overrides.
+    Show,
+    /// Pin a presentation value for this session, without replacing the global pin.
+    Set {
+        #[arg(value_enum)]
+        dimension: CommunicationDimensionArg,
+        value: String,
+    },
+    /// Clear this session's dimension and reveal the underlying preference.
+    Reset {
+        #[arg(value_enum)]
+        dimension: CommunicationDimensionArg,
     },
 }
 
@@ -553,6 +580,8 @@ pub(crate) enum CommunicationControlAction {
     SetPromptExport = 6,
     DeclareContext = 7,
     ClearContext = 8,
+    SetSessionPreference = 9,
+    ResetSessionPreference = 10,
 }
 
 #[derive(Debug, Clone)]
@@ -626,6 +655,13 @@ pub(crate) async fn append_communication_control_audit_at(
         state.revision,
         crate::time::now_unix_i64(),
     )?;
+    append_communication_control_payload_at(home, payload).await
+}
+
+async fn append_communication_control_payload_at(
+    home: &std::path::Path,
+    payload: Vec<u8>,
+) -> Result<()> {
     let subtype = crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8;
     let pidfile = home.join("neothd.pid");
     let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
@@ -915,6 +951,7 @@ fn communication_scope_name(
         crate::profile::communication::CommunicationScope::Global => "global",
         crate::profile::communication::CommunicationScope::Channel(_) => "channel",
         crate::profile::communication::CommunicationScope::Task(_) => "task",
+        crate::profile::communication::CommunicationScope::Session(_) => "session",
     }
 }
 
@@ -1544,6 +1581,9 @@ async fn run_communication_sub_at(
     output: &OutputFormat,
 ) -> Result<()> {
     match sub {
+        CommunicationSub::Session { session_id, sub } => {
+            communication_session::run(home, &session_id, sub, output).await
+        }
         CommunicationSub::Status => run_communication_status_at(home, output),
         CommunicationSub::Show => run_communication_show_at(home, output),
         CommunicationSub::Why { dimension } => {

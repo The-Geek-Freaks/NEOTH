@@ -59,6 +59,45 @@ the complete local operator communication subject, including any explicitly
 declared context. Privacy/reset actions remain available while automatic
 adaptation is disabled.
 
+### Session presentation overrides
+
+The local operator can pin the same typed dimensions to one retained chat
+session without replacing the global preference:
+
+```bash
+neoth profile communication session <SESSION_ID> show
+neoth profile communication session <SESSION_ID> set processing-load compact
+neoth profile communication session <SESSION_ID> reset processing-load
+```
+
+Use the exact existing conversation session ID. Session pins take precedence
+only when the prepared chat turn carries that ID. Other sessions and generic
+channel prompts keep their existing preferences. The primary chat prompt and
+its delegated prompt rebuild retain the selected presentation layer. This does
+not add a device override, native GUI controls, or a guarantee that a checkpoint
+resume creating a new session ID keeps the old session preference.
+
+`show` lists explicit overrides only. Session reset removes all earlier pins
+for that dimension in that session, revealing the underlying preference. Global
+reset and forget retain their existing broader deletion scope. Session controls
+require adaptation to be enabled; global privacy/reset controls also work while
+it is disabled. Incognito turns bypass all profile access, and IDs beginning
+with `incognito-` are rejected by the local session-control command.
+
+Pins remain in the existing private `profile/communication.json` owner. Each
+dimension's evidence cap protects its latest explicit pin per scope; adding a
+new scope at a full pin cap fails without evicting an existing preference.
+Session pin timestamps provide ordering under the state lock and can advance
+beyond wall-clock time when settings arrive in the same second. Repeated event
+identities are deduplicated before this ordering step.
+
+Control receipts identify the session by a domain-separated hash and the typed
+dimension; they contain neither its raw ID nor the preference value. State and
+the control WAL are separate commits: an audit failure explicitly reports that
+the state was committed. Inspect the session before retrying. Session IDs and
+values are excluded from generic redacted profile exports; providers receive
+only the selected fixed presentation instructions.
+
 ### Prompt disclosure
 
 ```bash

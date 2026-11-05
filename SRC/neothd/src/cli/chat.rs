@@ -2658,6 +2658,8 @@ fn build_agent_system_from_layers(
 /// builder boundary explicit without changing ownership of chat inputs.
 pub(super) struct PromptBuildContext<'a> {
     pub(super) args: &'a ChatArgs,
+    /// Actual prepared-turn identity, retained by admitted conversation owners.
+    pub(super) session_id: &'a str,
     pub(super) prompt_bundle_hash: &'a str,
     pub(super) writer: &'a crate::wal::writer::WalWriterHandle,
     pub(super) current_path: &'a std::path::Path,
@@ -2788,6 +2790,7 @@ pub(super) async fn build_prompt_bundle(
 ) -> Result<(PromptBundle, FreedomConfig, String, std::path::PathBuf)> {
     let PromptBuildContext {
         args,
+        session_id,
         prompt_bundle_hash,
         writer,
         current_path,
@@ -3517,11 +3520,12 @@ pub(super) async fn build_prompt_bundle(
     // the accommodations allowed by `profile.communication.prompt_export`.
     // Corrupt configured state is fail-loud, matching moral-core handling: a
     // requested profile cannot disappear silently before provider dispatch.
-    let communication_profile = crate::profile::communication::compile_prompt(
+    let communication_profile = crate::profile::communication::compile_prompt_for_session(
         &home,
         "operator",
         &config.profile.communication,
         None,
+        session_id,
         args.incognito,
     )
     .context("compile communication profile for chat turn")?;
@@ -26301,6 +26305,7 @@ template = "[REDACTED]"
             "private_auth_marker".to_string(),
             home,
             PromptBuildContext {
+                session_id: "prompt-build-fixture",
                 args: &args,
                 prompt_bundle_hash: &prompt_hash,
                 writer: &writer,
@@ -26392,6 +26397,7 @@ template = "[REDACTED]"
                 "private_auth_marker".to_string(),
                 home,
                 PromptBuildContext {
+                    session_id: "prompt-build-fixture",
                     args: &args,
                     prompt_bundle_hash: &prompt_hash,
                     writer: &route_writer,
@@ -26431,6 +26437,62 @@ template = "[REDACTED]"
         let payload = &receipts[0];
         assert_eq!(payload["surface"], "cli");
         assert_eq!(payload["reason"], "stale_snapshot");
+    }
+
+    #[tokio::test]
+    async fn session_presentation_uses_prepared_identity_in_primary_and_agent_prompts() {
+        use crate::profile::communication::{self, PreferenceValue, ProcessingLoadPreference};
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let policy = crate::config::CommunicationProfileConfig::default();
+        communication::set_explicit_preference(&home, &policy, "operator", "global-control",
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep), [1; 32], 20, false).unwrap();
+        communication::session::set(&home, &policy, "operator", "retained-session",
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact), [2; 32], 10, false).unwrap();
+        for (index, (session_id, incognito, enabled)) in [
+            ("retained-session", false, true), ("different-session", false, true),
+            ("incognito-private", true, true), ("retained-session", false, false),
+        ].into_iter().enumerate() {
+            let args = ChatArgs { message: Some("hello".into()), incognito, ..test_chat_args_default() };
+            let mut config = FreedomConfig::default();
+            config.profile.communication.enabled = enabled;
+            let (writer, joined) = wal_spawn(home.join(format!("session-prompt-{index}.wal"))).unwrap();
+            let result = build_prompt_bundle(config, "hello".into(), home.clone(),
+                PromptBuildContext {
+                    args: &args, session_id, prompt_bundle_hash: &"0".repeat(64), writer: &writer,
+                    current_path: dir.path(), attachment_contexts: None, output: &mut CliChatOutput,
+                    stream_control_token: None, session_recall: None,
+                },
+                PromptBuildOptions { slash_skill_name: None, persona_override_from_tweaks: None,
+                    retained_skill_admission: None, replay_skill_registry: None },
+            ).await;
+            drop(writer);
+            joined.await.unwrap();
+            let bundle = result.unwrap().0;
+            let primary = bundle.combined_system.as_deref().unwrap_or_default();
+            let compact = "Keep the response compact while preserving required actions and caveats.";
+            let deep = "Provide a complete, deep answer and close the request end to end.";
+            if incognito || !enabled {
+                assert!(!primary.contains("<communication_preferences"));
+                assert!(bundle.agent_raw_layers.communication_profile.is_none());
+                continue;
+            }
+            let expected = if session_id == "retained-session" { compact } else { deep };
+            let excluded = if session_id == "retained-session" { deep } else { compact };
+            assert!(primary.contains(expected));
+            assert!(!primary.contains(excluded));
+            assert!(!primary.contains(session_id));
+            let dispatch = crate::sub_agents::Dispatch {
+                agent_name: "presentation-test".into(), system: "agent-local policy".into(), model: None,
+                allowed_tools: Vec::new(), disallowed_tools: Vec::new(), prompt: "question".into(),
+                omit_flags: crate::sub_agents::AgentOmitFlags::default(),
+            };
+            let (agent, _, _) = build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
+            let agent = agent.unwrap();
+            assert!(agent.contains(expected));
+            assert!(!agent.contains(excluded));
+        }
     }
 
     #[tokio::test]
@@ -26474,6 +26536,7 @@ template = "[REDACTED]"
             "current private request".to_string(),
             home.clone(),
             PromptBuildContext {
+                session_id: "prompt-build-fixture",
                 args: &args,
                 prompt_bundle_hash: &"0".repeat(64),
                 writer: &writer,
@@ -27114,6 +27177,7 @@ template = "[REDACTED]"
             "adversarial memory marker".to_owned(),
             home,
             PromptBuildContext {
+                session_id: "prompt-build-fixture",
                 args: &args,
                 prompt_bundle_hash: &"0".repeat(64),
                 writer: &writer,
