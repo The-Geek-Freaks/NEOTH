@@ -52,6 +52,106 @@ fn qualifies_barge_in(already_qualified: bool, voiced_samples: usize, threshold:
     !already_qualified && voiced_samples >= threshold
 }
 
+/// Listening silence belongs to the retained capture session, independently of
+/// response generations and the optional post-playback follow-up window.
+struct SilenceWindow {
+    session: GenerationToken,
+    deadline: Option<std::time::Instant>,
+    last_observation: std::time::Instant,
+    resumed_response: Option<GenerationToken>,
+    expired: bool,
+}
+
+impl SilenceWindow {
+    const DURATION: Duration = Duration::from_millis(7000);
+
+    fn new(scope: &CancelScope, now: std::time::Instant) -> Result<Self, &'static str> {
+        Ok(Self {
+            session: scope.snapshot().map_err(|_| "capture_scope_exhausted")?,
+            deadline: Some(now.checked_add(Self::DURATION).ok_or("silence_deadline_overflow")?),
+            last_observation: now,
+            resumed_response: None,
+            expired: false,
+        })
+    }
+
+    fn deadline(&self, scope: &CancelScope) -> Option<std::time::Instant> {
+        if self.expired || scope.is_stale(&self.session) {
+            None
+        } else {
+            self.deadline
+        }
+    }
+
+    fn listen(&mut self, scope: &CancelScope, now: std::time::Instant) -> Result<(), &'static str> {
+        if self.expired || scope.is_stale(&self.session) || now < self.last_observation {
+            return Ok(());
+        }
+        self.deadline = Some(now.checked_add(Self::DURATION).ok_or("silence_deadline_overflow")?);
+        self.last_observation = now;
+        Ok(())
+    }
+
+    fn observe_speech(
+        &mut self,
+        scope: &CancelScope,
+        admitted_at: std::time::Instant,
+        voiced_samples: usize,
+        threshold: usize,
+    ) -> Result<(), &'static str> {
+        let Some(deadline) = self.deadline(scope) else {
+            return Ok(());
+        };
+        if voiced_samples < threshold || admitted_at > deadline {
+            return Ok(());
+        }
+        self.listen(scope, admitted_at)
+    }
+
+    fn pause_for_response(&mut self) {
+        self.deadline = None;
+    }
+
+    fn resume_completed_response(
+        &mut self,
+        capture: &CancelScope,
+        responses: &CancelScope,
+        completed: Option<&GenerationToken>,
+        audio_idle: bool,
+        now: std::time::Instant,
+    ) -> Result<(), &'static str> {
+        let Some(generation) = completed.filter(|token| !responses.is_stale(token)) else {
+            return Ok(());
+        };
+        if audio_idle
+            && !self.resumed_response.as_ref().is_some_and(|prior| prior.same_generation(generation))
+        {
+            self.listen(capture, now)?;
+            self.resumed_response = Some(generation.clone());
+        }
+        Ok(())
+    }
+
+    fn expire(&mut self, scope: &CancelScope, now: std::time::Instant) -> bool {
+        if !self.deadline(scope).is_some_and(|deadline| now >= deadline) {
+            return false;
+        }
+        self.expired = true;
+        self.deadline = None;
+        true
+    }
+}
+
+fn earliest_capture_deadline(
+    silence: Option<std::time::Instant>,
+    follow_up: Option<std::time::Instant>,
+) -> Option<std::time::Instant> {
+    match (silence, follow_up) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// A bounded projection of current response facts, owned by the A2 loop.
 /// Neither a partial playback nor an incomplete/failed text turn arms it.
 #[cfg(any(test, feature = "live-audio"))]
@@ -174,8 +274,8 @@ struct AdmittedCapture {
 }
 
 enum A2CaptureInput {
-    Event(LiveCaptureEvent),
-    FollowUpExpired,
+    Event(AdmittedCapture),
+    DeadlineReached,
 }
 
 fn capture_precedes_expiry(admitted: &AdmittedCapture, deadline: std::time::Instant) -> bool {
@@ -198,10 +298,10 @@ fn capture_at_expiry(
             break;
         };
         if capture_precedes_expiry(&admitted, deadline) {
-            return A2CaptureInput::Event(admitted.event);
+            return A2CaptureInput::Event(admitted);
         }
     }
-    A2CaptureInput::FollowUpExpired
+    A2CaptureInput::DeadlineReached
 }
 
 async fn next_a2_capture(
@@ -212,7 +312,7 @@ async fn next_a2_capture(
         return capture_rx
             .recv()
             .await
-            .map(|admitted| A2CaptureInput::Event(admitted.event));
+            .map(A2CaptureInput::Event);
     };
     let admitted = tokio::select! {
         biased;
@@ -222,7 +322,7 @@ async fn next_a2_capture(
         }
     };
     if capture_precedes_expiry(&admitted, limit) {
-        Some(A2CaptureInput::Event(admitted.event))
+        Some(A2CaptureInput::Event(admitted))
     } else {
         Some(capture_at_expiry(capture_rx, limit))
     }
@@ -239,12 +339,22 @@ async fn publish_follow_up_stop(
     settled: Result<(), &'static str>,
     capture_terminal: Option<CaptureTerminal>,
 ) -> Result<(), &'static str> {
+    publish_automatic_stop(event_tx, settled, capture_terminal, false).await
+}
+
+async fn publish_automatic_stop(
+    event_tx: &tokio::sync::mpsc::Sender<ConversationEvent>,
+    settled: Result<(), &'static str>,
+    capture_terminal: Option<CaptureTerminal>,
+    silence_expired: bool,
+) -> Result<(), &'static str> {
     let settled = settled.and(match capture_terminal {
         Some(CaptureTerminal::Failed) => Err("capture_terminal_error"),
         _ => Ok(()),
     });
     let event = match (settled, capture_terminal) {
         (Ok(()), Some(CaptureTerminal::Cancelled)) => ConversationEvent::Cancelled,
+        (Ok(()), _) if silence_expired => ConversationEvent::SilenceTimeout,
         (Ok(()), _) => ConversationEvent::FollowUpExpired,
         (Err(reason), _) => ConversationEvent::Failed(reason),
     };
@@ -265,6 +375,26 @@ fn preflight_for_transcript(
     input.request_id = GuiChatRequestId::new();
     input.message = transcript;
     input
+}
+
+fn accept_current_transcript(
+    scope: &CancelScope,
+    generation: &GenerationToken,
+    turn_id: u64,
+    transcript: Result<String, &'static str>,
+    event_tx: &tokio::sync::mpsc::Sender<ConversationEvent>,
+) -> Result<Option<String>, &'static str> {
+    if scope.is_stale(generation) {
+        return Ok(None);
+    }
+    let text = transcript?;
+    if text.trim().is_empty() {
+        return Err("configured_stt_empty_transcript");
+    }
+    event_tx
+        .try_send(ConversationEvent::TranscriptAccepted { turn_id })
+        .map_err(|_| "a2_event_queue_closed")?;
+    Ok(Some(text))
 }
 
 #[derive(Clone)]
@@ -299,6 +429,9 @@ pub(crate) enum ConversationEvent {
     Cancelled,
     /// Published only after normal A2 cleanup and release of its audio permit.
     FollowUpExpired,
+    /// The current capture session reached its qualified-speech silence limit.
+    /// Like follow-up expiry, this fact is published only after full cleanup.
+    SilenceTimeout,
     Failed(&'static str),
 }
 
@@ -655,6 +788,7 @@ pub(crate) enum A2MailboxEvent {
     },
     SttComplete {
         generation: GenerationToken,
+        turn_id: u64,
         transcript: Result<String, &'static str>,
     },
     TtsComplete {
@@ -734,6 +868,7 @@ pub(crate) async fn run_a2_session(
         .media
         .conversation_follow_up_duration()
         .map_err(|_| "invalid_conversation_follow_up_configuration")?;
+    let mut silence = SilenceWindow::new(&capture_scope, std::time::Instant::now())?;
     let (capture_tx, mut capture_rx) = tokio::sync::mpsc::channel(32);
     // Terminal facts bypass PCM backpressure and are read only after relay join.
     let (capture_terminal_tx, mut capture_terminal_rx) = tokio::sync::oneshot::channel();
@@ -822,13 +957,17 @@ pub(crate) async fn run_a2_session(
     let mut speech_has_qualified = false;
     let mut follow_up = FollowUpWindow::new(follow_up_duration);
     let mut follow_up_expired = false;
+    let mut silence_expired = false;
     let loop_result: Result<(), &'static str> = async {
     event_tx.try_send(ConversationEvent::Listening).map_err(|_| "a2_event_queue_closed")?;
     loop {
         if follow_up.reconcile(&response_scope, pending_audio.is_empty() && audio_owner.is_none(), std::time::Instant::now())? {
             event_tx.try_send(ConversationEvent::Listening).map_err(|_| "a2_event_queue_closed")?;
         }
-        let follow_up_deadline = follow_up.deadline(&response_scope);
+        // VisibleSettled follows the ordered final text/flush facts. The
+        // serial audio slot stays occupied through TTS and actual playback.
+        silence.resume_completed_response(&capture_scope, &response_scope, follow_up.completed.as_ref(), pending_audio.is_empty() && audio_owner.is_none(), std::time::Instant::now())?;
+        let capture_deadline = earliest_capture_deadline(silence.deadline(&capture_scope), follow_up.deadline(&response_scope));
         tokio::select! {
             biased;
             control = control_rx.recv() => match control {
@@ -861,6 +1000,7 @@ pub(crate) async fn run_a2_session(
                         }
                         AuthorizedTextTurnStart::ConfirmationRequired(_) => return Err("provider_confirmation_reissued"),
                         AuthorizedTextTurnStart::Denied => {
+                            silence.listen(&capture_scope, std::time::Instant::now())?;
                             event_tx.try_send(ConversationEvent::Listening).map_err(|_| "a2_event_queue_closed")?;
                         }
                     }
@@ -869,14 +1009,19 @@ pub(crate) async fn run_a2_session(
             _ = event_tx.closed() => break,
             // Drain already admitted frames at a timer tie. A late frame or
             // an empty queue ends the window; fresh noise cannot extend it.
-            Some(capture_input) = next_a2_capture(&mut capture_rx, follow_up_deadline) => match capture_input {
-                A2CaptureInput::FollowUpExpired => {
+            Some(capture_input) = next_a2_capture(&mut capture_rx, capture_deadline) => match capture_input {
+                A2CaptureInput::DeadlineReached => {
+                    // Silence wins an exact tie; both causes use one cleanup.
+                    if silence.deadline(&capture_scope).is_some_and(|deadline| Some(deadline) == capture_deadline) && silence.expire(&capture_scope, std::time::Instant::now()) {
+                        silence_expired = true;
+                        break;
+                    }
                     if pending_audio.is_empty() && audio_owner.is_none() && follow_up.expire(&response_scope, std::time::Instant::now()) {
                         follow_up_expired = true;
                         break;
                     }
                 }
-                A2CaptureInput::Event(event) => match event {
+                A2CaptureInput::Event(AdmittedCapture { admitted_at, event }) => match event {
                 LiveCaptureEvent::Frame(frame) => {
                     let utterances = dependencies.assembler.push_frame(&frame).map_err(|_| "silero_utterance_assembly_failed")?;
                     for utterance in utterances {
@@ -889,6 +1034,7 @@ pub(crate) async fn run_a2_session(
                             speech_has_qualified = false;
                         }
                         LiveUtteranceEvent::SpeechProgress { voiced_samples } => {
+                            silence.observe_speech(&capture_scope, admitted_at, voiced_samples, barge_in_voiced_samples)?;
                             if qualifies_barge_in(speech_has_qualified, voiced_samples, barge_in_voiced_samples) {
                                 speech_has_qualified = true;
                                 let _ = response_scope.invalidate();
@@ -898,12 +1044,16 @@ pub(crate) async fn run_a2_session(
                                 }
                                 pending_confirmation = None;
                                 pending_audio.clear();
+                                // Only the actual qualified barge-in transition
+                                // may leave a processing pause before completion.
+                                silence.listen(&capture_scope, admitted_at)?;
                             }
                         }
                         LiveUtteranceEvent::UtteranceReady { pcm, voiced_samples, .. } => {
                             turns.add_speech(Duration::from_millis((voiced_samples as u64).saturating_mul(1000) / 16_000));
                             turns.soft_end();
                             if let TurnDisposition::Commit { turn_id } = turns.ready(dependencies.min_fragment_ms) {
+                                silence.pause_for_response();
                                 if !speech_has_qualified { let _ = response_scope.invalidate(); }
                                 pending_audio.clear();
                                 let generation = response_scope.snapshot().map_err(|_| "response_generation_exhausted")?;
@@ -912,10 +1062,9 @@ pub(crate) async fn run_a2_session(
                                 registry.spawn_stage(async move {
                                     let result = transcribe_live_utterance_with_audio_permit(&pcm, 16_000, &media, &updater, &home, Some(&wal), &permit).await.map_err(|_| "configured_stt_failed");
                                     if stage_scope.is_stale(&generation) { return Ok(()); }
-                                    tx.send(A2MailboxEvent::SttComplete { generation, transcript: result }).await.map_err(|_| "a2_stage_queue_closed")
+                                    tx.send(A2MailboxEvent::SttComplete { generation, turn_id, transcript: result }).await.map_err(|_| "a2_stage_queue_closed")
                                 }).await?;
                                 outstanding_stages = outstanding_stages.saturating_add(1);
-                                event_tx.try_send(ConversationEvent::TranscriptAccepted { turn_id }).map_err(|_| "a2_event_queue_closed")?;
                             }
                         }
                     }
@@ -926,9 +1075,8 @@ pub(crate) async fn run_a2_session(
                 },
             },
             Some(stage) = stage_rx.recv() => match stage {
-                A2MailboxEvent::SttComplete { generation, transcript } => {
-                    if response_scope.is_stale(&generation) { continue; }
-                    let text = transcript?;
+                A2MailboxEvent::SttComplete { generation, turn_id, transcript } => {
+                    let Some(text) = accept_current_transcript(&response_scope, &generation, turn_id, transcript, &event_tx)? else { continue; };
                     if !may_start_authorized_turn(&awaiting_turn_settlement) {
                         if pending_transcript.replace((generation, text)).is_some() {
                             return Err("multiple_transcripts_waiting_for_turn_settlement");
@@ -948,6 +1096,7 @@ pub(crate) async fn run_a2_session(
                             outstanding_stages = outstanding_stages.saturating_add(1);
                         }
                         AuthorizedTextTurnStart::Denied => {
+                            silence.listen(&capture_scope, std::time::Instant::now())?;
                             event_tx.try_send(ConversationEvent::Listening).map_err(|_| "a2_event_queue_closed")?;
                         }
                     }
@@ -1068,6 +1217,7 @@ pub(crate) async fn run_a2_session(
                                         outstanding_stages = outstanding_stages.saturating_add(1);
                                     }
                                     AuthorizedTextTurnStart::Denied => {
+                                        silence.listen(&capture_scope, std::time::Instant::now())?;
                                         event_tx.try_send(ConversationEvent::Listening).map_err(|_| "a2_event_queue_closed")?;
                                     }
                                 }
@@ -1128,7 +1278,9 @@ pub(crate) async fn run_a2_session(
     // All stage-held permit clones were joined above. Release this final
     // session dependency before projecting a successful automatic stop.
     drop(dependencies.permit);
-    if follow_up_expired || settled.is_err() {
+    if silence_expired {
+        publish_automatic_stop(&event_tx, settled, capture_terminal_rx.try_recv().ok(), true).await
+    } else if follow_up_expired || settled.is_err() {
         publish_follow_up_stop(&event_tx, settled, capture_terminal_rx.try_recv().ok()).await
     } else {
         settled
@@ -1329,6 +1481,153 @@ async fn spawn_playback_stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn silence_deadline_requires_seven_seconds_and_expires_once() {
+        let scope = CancelScope::new();
+        let now = std::time::Instant::now();
+        let mut silence = SilenceWindow::new(&scope, now).unwrap();
+        assert_eq!(silence.deadline(&scope), Some(now + Duration::from_millis(7000)));
+        assert!(!silence.expire(&scope, now + Duration::from_millis(6999)));
+        assert!(silence.expire(&scope, now + Duration::from_millis(7000)));
+        assert!(!silence.expire(&scope, now + Duration::from_secs(60)));
+        silence.listen(&scope, now + Duration::from_secs(61)).unwrap();
+        assert_eq!(silence.deadline(&scope), None);
+    }
+
+    #[test]
+    fn silence_qualified_progress_resets_only_on_time_monotonic_frames() {
+        let scope = CancelScope::new();
+        let now = std::time::Instant::now();
+        let mut silence = SilenceWindow::new(&scope, now).unwrap();
+        let speech = now + Duration::from_millis(6900);
+        silence.observe_speech(&scope, speech, 1599, 1600).unwrap();
+        assert_eq!(silence.deadline(&scope), Some(now + Duration::from_secs(7)));
+        silence.observe_speech(&scope, speech, 1600, 1600).unwrap();
+        let extended = speech + Duration::from_secs(7);
+        assert_eq!(silence.deadline(&scope), Some(extended));
+        silence.observe_speech(&scope, now, 2000, 1600).unwrap();
+        silence.observe_speech(&scope, extended + Duration::from_nanos(1), 3000, 1600).unwrap();
+        assert_eq!(silence.deadline(&scope), Some(extended));
+        silence.observe_speech(&scope, extended, 3500, 1600).unwrap();
+        assert_eq!(silence.deadline(&scope), Some(extended + Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn silence_scope_and_response_generations_are_independent() {
+        let capture = CancelScope::new();
+        let responses = CancelScope::new();
+        let replacement = CancelScope::new();
+        let now = std::time::Instant::now();
+        let mut silence = SilenceWindow::new(&capture, now).unwrap();
+        responses.invalidate().unwrap();
+        assert!(silence.deadline(&capture).is_some());
+        silence.observe_speech(&replacement, now + Duration::from_secs(6), 2000, 1600).unwrap();
+        assert!(!silence.expire(&replacement, now + Duration::from_secs(8)));
+        assert_eq!(silence.deadline(&capture), Some(now + Duration::from_secs(7)));
+        capture.invalidate().unwrap();
+        assert!(!silence.expire(&capture, now + Duration::from_secs(8)));
+        let mut current = SilenceWindow::new(&replacement, now + Duration::from_secs(8)).unwrap();
+        assert!(!current.expire(&replacement, now + Duration::from_secs(14)));
+        assert!(current.expire(&replacement, now + Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn silence_waits_for_complete_response_and_idle_playback_before_rearming() {
+        let capture = CancelScope::new();
+        let responses = CancelScope::new();
+        let generation = responses.snapshot().unwrap();
+        let now = std::time::Instant::now();
+        let mut silence = SilenceWindow::new(&capture, now).unwrap();
+        silence.pause_for_response();
+        let later = now + Duration::from_secs(90);
+        silence.resume_completed_response(&capture, &responses, None, true, later).unwrap();
+        silence.observe_speech(&capture, later, 2000, 1600).unwrap();
+        assert!(!silence.expire(&capture, later));
+        // A settled response may still have queued or actively playing audio.
+        silence.resume_completed_response(&capture, &responses, Some(&generation), false, later).unwrap();
+        assert_eq!(silence.deadline(&capture), None);
+        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later).unwrap();
+        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later + Duration::from_secs(6)).unwrap();
+        assert_eq!(silence.deadline(&capture), Some(later + Duration::from_secs(7)));
+        // Qualified barge-in also leaves the processing pause and keeps the
+        // capture identity while invalidating only the previous response.
+        silence.pause_for_response();
+        responses.invalidate().unwrap();
+        let barge_in = later + Duration::from_secs(5);
+        silence.observe_speech(&capture, barge_in, 2000, 1600).unwrap();
+        assert_eq!(silence.deadline(&capture), None);
+        silence.listen(&capture, barge_in).unwrap();
+        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later + Duration::from_secs(6)).unwrap();
+        assert_eq!(silence.deadline(&capture), Some(barge_in + Duration::from_secs(7)));
+    }
+
+    #[tokio::test]
+    async fn silence_capture_tie_preserves_admission_time_and_rejects_late_noise() {
+        let capture = CancelScope::new();
+        let due = std::time::Instant::now();
+        let mut silence = SilenceWindow::new(&capture, due - Duration::from_secs(7)).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        tx.try_send(admitted_frame(due)).unwrap();
+        let Some(A2CaptureInput::Event(admitted)) = next_a2_capture(&mut rx, silence.deadline(&capture)).await else {
+            panic!("admitted speech at deadline must be examined");
+        };
+        assert_eq!(admitted.admitted_at, due);
+        silence.observe_speech(&capture, admitted.admitted_at, 2000, 1600).unwrap();
+        assert!(!silence.expire(&capture, due));
+        tx.try_send(admitted_frame(due + Duration::from_nanos(1))).unwrap();
+        assert!(matches!(next_a2_capture(&mut rx, Some(due)).await, Some(A2CaptureInput::DeadlineReached)));
+        assert_eq!(silence.deadline(&capture), Some(due + Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn silence_and_follow_up_share_the_earliest_capture_deadline() {
+        let now = std::time::Instant::now();
+        let silence = now + Duration::from_secs(7);
+        let earlier = now + Duration::from_secs(3);
+        let later = now + Duration::from_secs(30);
+        assert_eq!(earliest_capture_deadline(Some(silence), Some(earlier)), Some(earlier));
+        assert_eq!(earliest_capture_deadline(Some(silence), Some(later)), Some(silence));
+        assert_eq!(earliest_capture_deadline(Some(silence), Some(silence)), Some(silence));
+        assert_eq!(earliest_capture_deadline(None, Some(later)), Some(later));
+        assert_eq!(earliest_capture_deadline(Some(silence), None), Some(silence));
+    }
+
+    #[tokio::test]
+    async fn silence_stop_projection_waits_and_preserves_cleanup_failure() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        tx.send(ConversationEvent::Listening).await.unwrap();
+        let stopped = publish_automatic_stop(&tx, Ok(()), None, true);
+        tokio::pin!(stopped);
+        tokio::select! {
+            biased;
+            _ = &mut stopped => panic!("timeout must wait for terminal queue capacity"),
+            _ = std::future::ready(()) => {}
+        }
+        assert!(matches!(rx.recv().await, Some(ConversationEvent::Listening)));
+        assert_eq!(stopped.await, Ok(()));
+        assert!(matches!(rx.recv().await, Some(ConversationEvent::SilenceTimeout)));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(publish_automatic_stop(&tx, Err("cleanup_failed"), None, true).await, Err("cleanup_failed"));
+        assert!(matches!(rx.recv().await, Some(ConversationEvent::Failed("cleanup_failed"))));
+        assert_eq!(publish_automatic_stop(&tx, Ok(()), Some(CaptureTerminal::Failed), true).await, Err("capture_terminal_error"));
+        assert!(matches!(rx.recv().await, Some(ConversationEvent::Failed("capture_terminal_error"))));
+    }
+
+    #[test]
+    fn transcript_acceptance_requires_current_nonempty_success() {
+        let scope = CancelScope::new();
+        let generation = scope.snapshot().unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        assert_eq!(accept_current_transcript(&scope, &generation, 4, Err("stt_failed"), &tx), Err("stt_failed"));
+        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok(" \n\t".into()), &tx), Err("configured_stt_empty_transcript"));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok("actual words".into()), &tx), Ok(Some("actual words".into())));
+        assert!(matches!(rx.try_recv(), Ok(ConversationEvent::TranscriptAccepted { turn_id: 4 })));
+        scope.invalidate().unwrap();
+        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok("late words".into()), &tx), Ok(None));
+        assert!(rx.try_recv().is_err());
+    }
     #[tokio::test]
     async fn follow_up_stop_projection_preserves_cleanup_and_delivery_failures() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(2);
@@ -1404,13 +1703,13 @@ mod tests {
         for _ in 0..32 {
             assert!(matches!(
                 next_a2_capture(&mut rx, Some(deadline)).await,
-                Some(A2CaptureInput::Event(LiveCaptureEvent::Frame(_)))
+                Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
             ));
         }
         // No producer fact remains: timer expires without a wall-clock sleep.
         assert!(matches!(
             next_a2_capture(&mut rx, Some(deadline)).await,
-            Some(A2CaptureInput::FollowUpExpired)
+            Some(A2CaptureInput::DeadlineReached)
         ));
     }
 
@@ -1424,7 +1723,7 @@ mod tests {
         }
         assert!(matches!(
             next_a2_capture(&mut rx, Some(deadline)).await,
-            Some(A2CaptureInput::FollowUpExpired)
+            Some(A2CaptureInput::DeadlineReached)
         ));
         assert_eq!(rx.len(), 0);
     }
@@ -1440,13 +1739,13 @@ mod tests {
         .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, Some(deadline)).await,
-            Some(A2CaptureInput::Event(LiveCaptureEvent::Cancelled))
+            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Cancelled, .. }))
         ));
         tx.try_send(admitted_frame(deadline + Duration::from_secs(1)))
             .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, None).await,
-            Some(A2CaptureInput::Event(LiveCaptureEvent::Frame(_)))
+            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
         ));
         drop(tx);
         assert!(next_a2_capture(&mut rx, None).await.is_none());
@@ -1471,7 +1770,7 @@ mod tests {
             })
             .unwrap();
             match next_a2_capture(&mut rx, Some(deadline)).await {
-                Some(A2CaptureInput::Event(actual)) => assert_eq!(actual, terminal),
+                Some(A2CaptureInput::Event(actual)) => assert_eq!(actual.event, terminal),
                 _ => panic!("queued capture terminal must survive expired noise"),
             }
         }
@@ -1493,7 +1792,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, None).await,
-            Some(A2CaptureInput::Event(LiveCaptureEvent::Frame(_)))
+            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
         ));
         drop(rx);
         assert!(
@@ -1561,7 +1860,7 @@ mod tests {
         });
         assert!(matches!(
             next_a2_capture(&mut capture_rx, Some(std::time::Instant::now())).await,
-            Some(A2CaptureInput::FollowUpExpired)
+            Some(A2CaptureInput::DeadlineReached)
         ));
         assert!(matches!(
             terminal_rx.try_recv(),

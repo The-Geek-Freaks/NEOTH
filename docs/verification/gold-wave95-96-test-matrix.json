@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_BOUND_EMAIL_NOTE_NATIVE_PENDING",
+  "status": "STATIC_REVIEWED_SESSION_SILENCE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 467035,
-    "sha256": "C9737A667FCFA295C57EF7EC12B4F3E58A1621B542259A1163766504FFB96AEA"
+    "bytes": 467214,
+    "sha256": "13800A9D0833126B5128578A3FC980B7142763F4E41E3B895BD3791DE0DCA495"
   },
-  "sourceInputs": 2549,
+  "sourceInputs": 2550,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -92511,6 +92511,44 @@
       }
     ],
     "note": "Verified original hosted rustfmt receipt, two exact pre/postimages; only layout imported. 82 focused cases and native runtime still pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2671SessionSilence": {
+    "base": "82506e52ea8460672bb239c3f8fce7d9f505deff",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 21499,
+        "sha256": "3073C81E59222BA8B6FF23D14E00DFE88C918439A01ECA77BFFC93783929BA26",
+        "blob": "54af13f08cebc0bda55edf9592f441f11b751273"
+      },
+      {
+        "path": "docs/verification/gold-wave2671-session-silence.json",
+        "bytes": 3722,
+        "sha256": "0BD56E316004E87C5835600750B5F5A44A7D271115D4F508968F61E7621EA66B",
+        "blob": "3cb8e43c929f5920f7ecb3008e75508ba9bbe8fa"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2775211,
+        "sha256": "89148B17264625E277BD4FC80391273AE05188B3B5E9EFFFC7F8746042F6A1D2",
+        "blob": "55fb205a45ecde78eee71eb840882cff1c1ccaa7"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+        "bytes": 58125,
+        "sha256": "3B8C1EFDDF3E8CA6AD4574A585E85C328F8E40282EFFDE05EFF20E98108A0C5F",
+        "blob": "4068e11a4d9f67023d5cc7d2166a689007a86160"
+      },
+      {
+        "path": "SRC/neothd/src/media/conversation_loop.rs",
+        "bytes": 94660,
+        "sha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485",
+        "blob": "e84a102197a4d8295239c792878870a6dde043fe"
+      }
+    ],
+    "note": "Existing A2 owner: session-bound seven-second listening, explicit response pause/barge-in resume, accepted STT only; 76 live-audio cases, runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

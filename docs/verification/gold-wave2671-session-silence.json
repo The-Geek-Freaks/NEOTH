@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.wave2671.session-silence.v1",
+  "producerBase": "82506e52ea8460672bb239c3f8fce7d9f505deff",
+  "roadmap": [
+    "JARVIS-ADOPT-03",
+    "JARVIS-ADOPT-02",
+    "ADOPT31-A2"
+  ],
+  "batch": "B04",
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/media/conversation_loop.rs",
+      "sha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sha256": "3B8C1EFDDF3E8CA6AD4574A585E85C328F8E40282EFFDE05EFF20E98108A0C5F"
+    }
+  ],
+  "policy": "Arm the existing retained A2 capture session when it starts listening. Expire at 7000ms unless an in-time qualified speech frame extends that listening interval. Pause through committed STT/provider/TTS/playback; resume on actual qualified barge-in, provider denial, or current completed response with an idle audio lane.",
+  "clock": "Monotonic relay admission Instant and retained capture-scope generation; preserve timestamp through the existing bounded capture queue. No reset from raw speech start, noise, UI/control traffic, or stage progress. Response cancellation generation is independent.",
+  "ordering": "Consume bounded already-admitted frames at or before the earliest active deadline. Optional post-playback follow-up stays independent; silence wins only an exact deadline tie. Completed response follows ordered terminal text flush; audio slot stays occupied through TTS and playback.",
+  "completion": "Exactly one internal SilenceTimeout fact after existing cancellation, retained worker/supervisor joins, cleanup and permit release. Cleanup/capture failure overrides timeout success. Existing original-request projection maps to stopped state.",
+  "transcript": "Move TranscriptAccepted from PCM handoff to successful nonempty current-generation STT completion; preserve turn ID and text. Error, whitespace-only and stale results publish no acceptance.",
+  "newCases": [
+    "media::conversation_loop::tests::silence_deadline_requires_seven_seconds_and_expires_once",
+    "media::conversation_loop::tests::silence_qualified_progress_resets_only_on_time_monotonic_frames",
+    "media::conversation_loop::tests::silence_scope_and_response_generations_are_independent",
+    "media::conversation_loop::tests::silence_waits_for_complete_response_and_idle_playback_before_rearming",
+    "media::conversation_loop::tests::silence_capture_tie_preserves_admission_time_and_rejects_late_noise",
+    "media::conversation_loop::tests::silence_and_follow_up_share_the_earliest_capture_deadline",
+    "media::conversation_loop::tests::silence_stop_projection_waits_and_preserves_cleanup_failure",
+    "media::conversation_loop::tests::transcript_acceptance_requires_current_nonempty_success"
+  ],
+  "requiredLiveAudioCases": 76,
+  "existingLiveAudioCasesPreserved": 68,
+  "portableNativeCases": 3253,
+  "review": "GPT-6.1 Terra high prompt-only review identified implicit unpause on progress; fixed by requiring an explicit qualified barge-in transition. Follow-up found no further concrete issue. Root inspected ordered terminal/audio-slot and original-request projection paths.",
+  "limits": [
+    "Backend listening policy and internal timeout fact only; the existing client wire projection is stopped, not a new reason field.",
+    "Tests are authored and source-registered, not run locally. Prior 68-case evidence belongs to producer28163cc8 and does not accept these changed sources.",
+    "No physical microphone/speaker, GUI/mobile workflow, all JARVIS adoption rows, native full CI, Security or Gold acceptance is claimed."
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false
+}
