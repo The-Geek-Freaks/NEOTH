@@ -982,9 +982,7 @@ impl EmailVaultOnce {
 impl Drop for EmailVaultOnce {
     fn drop(&mut self) {
         if let Some(reply) = self.reply.take() {
-            let _ = reply.send(Err(
-                crate::wal::email_vault_receipts::Error::Indeterminate,
-            ));
+            let _ = reply.send(Err(crate::wal::email_vault_receipts::Error::Indeterminate));
         }
     }
 }
@@ -2194,10 +2192,8 @@ impl WalWriterHandle {
         &self,
         home: &Path,
         expected: crate::wal::email_vault_receipts::Descriptor,
-    ) -> Result<
-        crate::wal::email_vault_receipts::Outcome,
-        crate::wal::email_vault_receipts::Error,
-    > {
+    ) -> Result<crate::wal::email_vault_receipts::Outcome, crate::wal::email_vault_receipts::Error>
+    {
         let writer = self.clone();
         let home = home.to_path_buf();
         match tokio::task::spawn_blocking(move || {
@@ -2206,9 +2202,7 @@ impl WalWriterHandle {
         .await
         {
             Ok(outcome) => outcome,
-            Err(_) => {
-                Err(crate::wal::email_vault_receipts::Error::Indeterminate)
-            }
+            Err(_) => Err(crate::wal::email_vault_receipts::Error::Indeterminate),
         }
     }
 
@@ -2823,17 +2817,13 @@ impl WalWriterHandle {
         &self,
         home: &Path,
         expected: crate::wal::email_vault_receipts::Descriptor,
-    ) -> Result<
-        crate::wal::email_vault_receipts::Outcome,
-        crate::wal::email_vault_receipts::Error,
-    > {
+    ) -> Result<crate::wal::email_vault_receipts::Outcome, crate::wal::email_vault_receipts::Error>
+    {
         use crate::wal::email_vault_receipts::Error;
         if !self.authentication_markers_enabled {
             return Err(Error::Indeterminate);
         }
-        let payload = expected
-            .payload()
-            .map_err(|_| Error::Indeterminate)?;
+        let payload = expected.payload().map_err(|_| Error::Indeterminate)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(Error::Indeterminate);
         }
@@ -2966,7 +2956,7 @@ impl WalWriterHandle {
                 trust_decision_once: None,
                 companion_mutation_receipt_once: None,
                 paperless_post_intent_once: None,
-            email_vault_once: None,
+                email_vault_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
@@ -6597,9 +6587,7 @@ async fn run_writer(
         // Share the existing email claim authority; there is still one writer.
         let mut email_vault_authority = None;
         if let Some(once) = email_vault_once.take() {
-            use crate::wal::email_vault_receipts::{
-                Error, Lookup,
-            };
+            use crate::wal::email_vault_receipts::{Error, Lookup};
             let expected_payload = match once.expected.payload() {
                 Ok(payload) => payload,
                 Err(_) => {
@@ -6670,9 +6658,9 @@ async fn run_writer(
                     continue;
                 }
                 Ok(Ok(Lookup::Existing(observed))) => {
-                    once.finish(Ok(
-                        crate::wal::email_vault_receipts::Outcome::Existing(observed),
-                    ));
+                    once.finish(Ok(crate::wal::email_vault_receipts::Outcome::Existing(
+                        observed,
+                    )));
                     drop(authority);
                     continue;
                 }
@@ -6876,9 +6864,7 @@ async fn run_writer(
                 }
                 drop(paperless_post_intent_authority);
                 if let Some(once) = req.email_vault_once.take() {
-                    once.finish(Ok(
-                        crate::wal::email_vault_receipts::Outcome::Appended,
-                    ));
+                    once.finish(Ok(crate::wal::email_vault_receipts::Outcome::Appended));
                 }
                 drop(email_vault_authority);
                 if let Some(once) = req.transcript_mining_once.take() {
@@ -10148,7 +10134,7 @@ mod tests {
                 trust_decision_once: None,
                 companion_mutation_receipt_once: None,
                 paperless_post_intent_once: None,
-            email_vault_once: None,
+                email_vault_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,

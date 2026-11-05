@@ -49,16 +49,40 @@ fn vault_receipt_context_distinguishes_legacy_absent_replaced_and_exact_director
         let mail = email("1", Some("<vault@example.com>"));
         let unit = identity("alice", &mail, 1);
         let fingerprint = "a".repeat(64);
-        let previous = if legacy { target_context() } else { target_context().with_vault_directory(Some(&fingerprint)).unwrap() };
+        let previous = if legacy {
+            target_context()
+        } else {
+            target_context()
+                .with_vault_directory(Some(&fingerprint))
+                .unwrap()
+        };
         mark(&conn, &unit, Completion::Delivery(&previous), 100).unwrap();
-        let current = target_context().with_vault_directory(Some(&fingerprint)).unwrap();
-        assert_eq!(state(&conn, &unit, Purpose::Ingest, Some(&current)).unwrap(), if legacy { SeenState::ContextConflict } else { SeenState::Seen });
+        let current = target_context()
+            .with_vault_directory(Some(&fingerprint))
+            .unwrap();
+        assert_eq!(
+            state(&conn, &unit, Purpose::Ingest, Some(&current)).unwrap(),
+            if legacy {
+                SeenState::ContextConflict
+            } else {
+                SeenState::Seen
+            }
+        );
         for observed in [None, Some("b".repeat(64))] {
-            let changed = target_context().with_vault_directory(observed.as_deref()).unwrap();
-            assert_eq!(state(&conn, &unit, Purpose::Ingest, Some(&changed)).unwrap(), SeenState::ContextConflict);
+            let changed = target_context()
+                .with_vault_directory(observed.as_deref())
+                .unwrap();
+            assert_eq!(
+                state(&conn, &unit, Purpose::Ingest, Some(&changed)).unwrap(),
+                SeenState::ContextConflict
+            );
         }
     }
-    assert!(target_context().with_vault_directory(Some("invalid")).is_err());
+    assert!(
+        target_context()
+            .with_vault_directory(Some("invalid"))
+            .is_err()
+    );
 }
 
 #[test]

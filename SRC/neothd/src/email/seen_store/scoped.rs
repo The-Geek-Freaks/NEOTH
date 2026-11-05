@@ -105,14 +105,23 @@ impl DeliveryContext {
     #[cfg(any(test, feature = "imap_fetch"))]
     pub(crate) fn with_vault_directory(self, directory_sha256: Option<&str>) -> Result<Self> {
         if let Some(value) = directory_sha256 {
-            ensure!(value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()), "invalid vault directory fingerprint");
+            ensure!(
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+                "invalid vault directory fingerprint"
+            );
         }
         let encoded = serde_json::to_vec(&(
             "neoth.email-delivery-vault-receipt.v3",
             self.sha256,
             directory_sha256,
-        )).context("bind receipted vault delivery directory")?;
-        Ok(Self { sha256: format!("{:x}", Sha256::digest(&encoded)) })
+        ))
+        .context("bind receipted vault delivery directory")?;
+        Ok(Self {
+            sha256: format!("{:x}", Sha256::digest(&encoded)),
+        })
     }
 
     #[cfg(any(test, feature = "imap_fetch"))]

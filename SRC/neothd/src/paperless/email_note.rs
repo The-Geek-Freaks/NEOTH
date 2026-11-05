@@ -14,9 +14,9 @@ use cap_std::fs::Dir;
 use sha2::{Digest, Sha256};
 
 use crate::security::paperless_ingest::PaperlessOcrPayload;
-use crate::skills::store::{self, BoundDirectory, BoundDirectoryChild};
 #[cfg(test)]
 use crate::skills::store::PrivateChildCommit;
+use crate::skills::store::{self, BoundDirectory, BoundDirectoryChild};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmailNoteOutcome {
@@ -63,7 +63,11 @@ impl NoteDirectory {
             digest.update(value);
         };
         field(self.anchor.display_path.as_os_str().as_encoded_bytes());
-        field(store::directory_identity_token(&self.anchor.dir).map_err(store_error)?.as_bytes());
+        field(
+            store::directory_identity_token(&self.anchor.dir)
+                .map_err(store_error)?
+                .as_bytes(),
+        );
         for child in &self.children {
             field(child.name.as_encoded_bytes());
             field(child.binding.identity_token().as_bytes());
@@ -284,7 +288,8 @@ fn sync_email_to_obsidian_observed(
     let name = OsString::from(format!("{}.md", payload.document_id));
     let target = parent_path.join(&name);
     let rendition = render_email_note(payload, input_text);
-    if let Some(outcome) = observe_existing(&directory, &name, rendition.as_bytes(), None, &mut observe)?
+    if let Some(outcome) =
+        observe_existing(&directory, &name, rendition.as_bytes(), None, &mut observe)?
     {
         return Ok(outcome);
     }
@@ -347,9 +352,22 @@ pub(crate) async fn sync_email_to_obsidian_receipted(
     request: VaultNoteRequest<'_>,
 ) -> io::Result<(EmailNoteOutcome, String)> {
     use crate::wal::email_vault_receipts::{Descriptor, Outcome, Stage};
-    let VaultNoteRequest { payload, input_text, input_sha256, legacy_doc_id, vault_root, subdir } = request;
-    let unit = payload.document_id.strip_prefix("email-").ok_or_else(invalid_path)?;
-    if unit.len() != 64 || !unit.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    let VaultNoteRequest {
+        payload,
+        input_text,
+        input_sha256,
+        legacy_doc_id,
+        vault_root,
+        subdir,
+    } = request;
+    let unit = payload
+        .document_id
+        .strip_prefix("email-")
+        .ok_or_else(invalid_path)?;
+    if unit.len() != 64
+        || !unit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         || !super::is_safe_doc_id(legacy_doc_id)
     {
         return Err(invalid_path());
@@ -359,8 +377,16 @@ pub(crate) async fn sync_email_to_obsidian_receipted(
     let directory = note_directory(vault_root, subdir, true)?;
     let fingerprint = directory.fingerprint()?;
     let rendition = render_email_note(payload, input_text);
-    let intent = Descriptor::intent(unit, input_sha256, &hex::encode(Sha256::digest(rendition.as_bytes())), &fingerprint).map_err(store_error)?;
-    let receipt = writer.append_email_vault_receipt_once(home, intent.clone()).await
+    let intent = Descriptor::intent(
+        unit,
+        input_sha256,
+        &hex::encode(Sha256::digest(rendition.as_bytes())),
+        &fingerprint,
+    )
+    .map_err(store_error)?;
+    let receipt = writer
+        .append_email_vault_receipt_once(home, intent.clone())
+        .await
         .map_err(|_| io::Error::other("email vault claim remains pending"))?;
     let observed = match receipt {
         Outcome::Appended => intent.clone(),
@@ -380,23 +406,42 @@ pub(crate) async fn sync_email_to_obsidian_receipted(
             }
         }
         directory.revalidate()?;
-        let (mut file, binding) = store::create_private_regular_file_child_create_new(parent, &name, &target).map_err(store_error)?;
-        let bound = intent.bind_file(binding.identity_token()).map_err(store_error)?;
+        let (mut file, binding) =
+            store::create_private_regular_file_child_create_new(parent, &name, &target)
+                .map_err(store_error)?;
+        let bound = intent
+            .bind_file(binding.identity_token())
+            .map_err(store_error)?;
         // A lost acknowledgement never authorizes bytes. The writer owns the
         // request to its terminal result; an empty/partial file stays pending.
-        if !matches!(writer.append_email_vault_receipt_once(home, bound.clone()).await, Ok(Outcome::Appended)) {
+        if !matches!(
+            writer
+                .append_email_vault_receipt_once(home, bound.clone())
+                .await,
+            Ok(Outcome::Appended)
+        ) {
             return Err(io::Error::other("email vault file binding remains pending"));
         }
         directory.revalidate()?;
-        if !binding.matches_regular_file_child_readonly(parent, &name, &target).map_err(store_error)? {
-            return Err(io::Error::other("email vault file identity changed before write"));
+        if !binding
+            .matches_regular_file_child_readonly(parent, &name, &target)
+            .map_err(store_error)?
+        {
+            return Err(io::Error::other(
+                "email vault file identity changed before write",
+            ));
         }
         file.write_all(rendition.as_bytes())?;
         file.sync_all()?;
         store::sync_parent_directory(parent, parent_path).map_err(store_error)?;
         directory.revalidate()?;
-        if !binding.matches_regular_file_child_readonly(parent, &name, &target).map_err(store_error)? {
-            return Err(io::Error::other("email vault file identity changed after write"));
+        if !binding
+            .matches_regular_file_child_readonly(parent, &name, &target)
+            .map_err(store_error)?
+        {
+            return Err(io::Error::other(
+                "email vault file identity changed after write",
+            ));
         }
         created = true;
         bound
@@ -405,19 +450,41 @@ pub(crate) async fn sync_email_to_obsidian_receipted(
     };
     // A second caller can see all bytes before the creator syncs them. Always
     // perform the same file/parent durability checks even during reconciliation.
-    match observe_existing(&directory, &name, rendition.as_bytes(), bound.file_identity.as_deref(), &mut |_| {})? {
+    match observe_existing(
+        &directory,
+        &name,
+        rendition.as_bytes(),
+        bound.file_identity.as_deref(),
+        &mut |_| {},
+    )? {
         Some(EmailNoteOutcome::AlreadyPresent) => {}
         _ => return Ok((EmailNoteOutcome::Conflict, fingerprint)),
     }
     if bound.stage != Stage::Completed {
         let completed = bound.completed().map_err(store_error)?;
-        writer.append_email_vault_receipt_once(home, completed).await
+        writer
+            .append_email_vault_receipt_once(home, completed)
+            .await
             .map_err(|_| io::Error::other("email vault completion remains pending"))?;
     }
-    if observe_existing(&directory, &name, rendition.as_bytes(), bound.file_identity.as_deref(), &mut |_| {})? != Some(EmailNoteOutcome::AlreadyPresent) {
+    if observe_existing(
+        &directory,
+        &name,
+        rendition.as_bytes(),
+        bound.file_identity.as_deref(),
+        &mut |_| {},
+    )? != Some(EmailNoteOutcome::AlreadyPresent)
+    {
         return Ok((EmailNoteOutcome::Conflict, fingerprint));
     }
-    Ok((if created { EmailNoteOutcome::Created } else { EmailNoteOutcome::AlreadyPresent }, fingerprint))
+    Ok((
+        if created {
+            EmailNoteOutcome::Created
+        } else {
+            EmailNoteOutcome::AlreadyPresent
+        },
+        fingerprint,
+    ))
 }
 
 #[cfg(test)]

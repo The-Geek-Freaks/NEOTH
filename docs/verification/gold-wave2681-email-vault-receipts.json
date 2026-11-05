@@ -16,11 +16,11 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/wal/email_vault_receipts.rs",
-      "sha256": "D626E1782C2F8B9342C6E778331DB1B075FE75768B4B16AD5A64F6DCE842D5E8"
+      "sha256": "9461462494D9D61E744CCFFD45080F81AFBD6C457456A500FA61B2DF5B1322C7"
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "sha256": "F73F1DB80BAF732535FE88FB53D7AC8AB6853FB33B6DF76F59C5CC0189D2874A"
+      "sha256": "044879D59C54FB69C24426AA456439EFC93EF1522A1FFAABE49BE03CC0559D94"
     },
     {
       "path": "SRC/neothd/src/wal/events.rs",
@@ -28,27 +28,27 @@
     },
     {
       "path": "SRC/neothd/src/wal/mod.rs",
-      "sha256": "8B91A7E8346E6F5DCC0EC060B30BABA141DE794D98016F0616B5C57F36EEB74B"
+      "sha256": "42205D0A04F35147C69278FFE2095514CCA0CB18327B53B37B1034B9AB6E0927"
     },
     {
       "path": "SRC/neothd/src/paperless/email_note.rs",
-      "sha256": "29D7973895F7A4F2467F91711ED743E7D8541D93B5506B10594C5A6729F46AE7"
+      "sha256": "5346387A8EE6A5C8AFF3C004453CA418B3CE39D30668EC3D4C90F386B0806905"
     },
     {
       "path": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sha256": "0775C226833516B5A8D18CF02F1B47736C1CA048BBDE89365B46DF6F4B4BFC8A"
+      "sha256": "9A18626FDF29A5E2C19293943D200BA5BD6E8F57F153F63742CF9C6A66F28874"
     },
     {
       "path": "SRC/neothd/src/email/seen_store/scoped.rs",
-      "sha256": "2E31D5FB657504BE33F26C176DC4EB36186C7D59FD054D4049CC4A78C475C133"
+      "sha256": "71B17F40C1EBE153BD21FA5BB9396C675880C6DAEC01F1CC42B62CDEB6F29436"
     },
     {
       "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sha256": "8252F42A99EFD867D24847EBE3061010DA775BBD939C7554FBD59A2A7C4FC1B8"
+      "sha256": "F8E1FE3BDA17B8D9AD6369C82C8DBC1B8C9A5F59D683A51CE31922358D775573"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sha256": "B147F0D25761FDE3E0D8609C2EE712E17635D034D7F2C03707713F1561A518D5"
+      "sha256": "2D68464FB42762A5C2AC6F453AA01C8506C8AD845453C2A2323C5762BED7787F"
     }
   ],
   "newCases": [
@@ -78,5 +78,57 @@
   "existingIntegrationCasesUpdated": [
     "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
     "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding"
-  ]
+  ],
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42025411343,
+    "artifact": 13413806576,
+    "producer": "8f926bee8a4dd63fb3ec8ddbb9229855d6269d3b",
+    "zipSha256": "C1C8A510159AF653AE7133E558B4F7730E8B24706C45DE3C498666AD34A41B90",
+    "exactImages": [
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "pre": "6681955fce7d6f1a40b2e0a620f183836950c940",
+        "post": "7b6673273669c0e9b34b0d80ef38b654f0029deb"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+        "pre": "28463c8f9710087f72d1227266b016c9c4a8e9a5",
+        "post": "58b6c255da78476d81ae83154a2e9d3bc3512b1c"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+        "pre": "c2c387e454d88d10ceb02746e34b2bc3b1ab8b6a",
+        "post": "39c6d2d6b5dbc6344e5d37734f93e4d27ede53ea"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note.rs",
+        "pre": "61fde802210437483ec90fcdd8a27bf7a7f8cb07",
+        "post": "335e59688b8e05ca0e0ca6ed7c60aebd441e903f"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/email_note/tests.rs",
+        "pre": "20cce58c6f81a5602b9c1e2ed9cf1a0e0a812a16",
+        "post": "fde3007ecca35058092f25b15f388b1ccc716153"
+      },
+      {
+        "path": "SRC/neothd/src/wal/email_vault_receipts.rs",
+        "pre": "0055cae695b43a52cedb8ca338cb927c3045a08e",
+        "post": "da2cdc9dfe97f23f4ee67b92e14f168e0b70ae6e"
+      },
+      {
+        "path": "SRC/neothd/src/wal/mod.rs",
+        "pre": "20dc73b10df98d46e66fe26ab28149d024e36ace",
+        "post": "36b9fe84dfe39c38fa10b4a37a1182095dd5771d"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "pre": "125de7ba8f2c4bb68b902926cc3e0c7cacf846a4",
+        "post": "54a50b24de0f2479f6f4d03b30c6d9661713a1b1"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
+  }
 }
