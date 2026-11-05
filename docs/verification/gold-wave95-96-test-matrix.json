@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2682_OLLAMA_TERMINAL_CONTRACT_HOSTED_PENDING",
+  "status": "W2682_OLLAMA_FORMAT_BOUND_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 469347,
-    "sha256": "A9D6FE022D28E6A433F6489D97563853C5F4984D981109B8BC181C371DD8AD68"
+    "bytes": 469342,
+    "sha256": "1F2FEAB976FDA1762EFBA8D1F6C3B310DBFA19E768ED94244602D7D0E475B84A"
   },
   "sourceInputs": 2561,
   "requiredNativeTests": [
@@ -19807,31 +19807,31 @@
     {
       "test": "providers::ollama_api::tests::native_tool_fields_are_rejected_before_text_or_terminal_projection",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB",
+      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB",
+      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::native_tool_ndjson_line_and_tail_preserve_only_prior_text",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB",
+      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::ndjson_eof_without_done_never_synthesizes_success",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB",
+      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::final_done_frame_preserves_its_text_usage_and_reason_with_or_without_newline",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB",
+      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
       "junitClass": "neoth"
     }
   ],
@@ -93457,6 +93457,26 @@
       }
     ],
     "note": "Ollama unsupported native-tool rejection, explicit done requirement and final text retention;3301 portable cases. Static only; no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2682HostedFormat": {
+    "base": "c52fc00d41fa40156bd3cc50efa0e9a5d76868a1",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2682-ollama-terminal-contract.json",
+        "bytes": 3165,
+        "sha256": "4A8D3AF8DA2D87C160B6A711BE7D3AEE478EAA972494C4AF6577B5B24CA01D9A",
+        "blob": "a09c5e1fc5f4c72250344b5519ac0eb02784b1bd"
+      },
+      {
+        "path": "SRC/neothd/src/providers/ollama_api.rs",
+        "bytes": 64896,
+        "sha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+        "blob": "88a2857730df423d93a535d62ef5d6e164d5b593"
+      }
+    ],
+    "note": "Exact Preflight42028793502 original formatter archive/API/members/Git pre/postimages admitted;3301 portable cases. No local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

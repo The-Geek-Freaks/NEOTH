@@ -220,7 +220,10 @@ impl Provider for OllamaAdapter {
             .await?;
 
             reject_unsupported_native_tools(&parsed, provider_name)?;
-            anyhow::ensure!(parsed.done, "{provider_name} returned an unfinished non-streaming response");
+            anyhow::ensure!(
+                parsed.done,
+                "{provider_name} returned an unfinished non-streaming response"
+            );
             let termination = ProviderTermination::finished(parsed.done_reason.clone());
             let text = parsed.message.content;
             let usage_measurements = match (parsed.prompt_eval_count, parsed.eval_count) {
@@ -664,18 +667,30 @@ mod tests {
 
     #[test]
     fn native_tool_fields_are_rejected_before_text_or_terminal_projection() {
-        for tools in [serde_json::json!([{"function":{"name":"PRIVATE_TOOL","arguments":{"secret":"PRIVATE_ARGS"}}}]), serde_json::json!({}), serde_json::json!(false), serde_json::json!("PRIVATE_PAYLOAD")] {
+        for tools in [
+            serde_json::json!([{"function":{"name":"PRIVATE_TOOL","arguments":{"secret":"PRIVATE_ARGS"}}}]),
+            serde_json::json!({}),
+            serde_json::json!(false),
+            serde_json::json!("PRIVATE_PAYLOAD"),
+        ] {
             for done in [false, true] {
                 let frame = serde_json::to_vec(&serde_json::json!({"message":{"content":"PRIVATE_TEXT","tool_calls":tools},"done":done})).unwrap();
                 for name in ["local_ollama", "ollama_remote"] {
-                    let error = decode_ndjson_frame(&frame, name).err().expect("unsupported native call");
-                    assert_eq!(error.to_string(), format!("{name} returned an unsupported native tool call"));
+                    let error = decode_ndjson_frame(&frame, name)
+                        .err()
+                        .expect("unsupported native call");
+                    assert_eq!(
+                        error.to_string(),
+                        format!("{name} returned an unsupported native tool call")
+                    );
                 }
             }
         }
         for tools in [serde_json::Value::Null, serde_json::json!([])] {
             let frame = serde_json::to_vec(&serde_json::json!({"message":{"content":"text","tool_calls":tools},"done":true,"prompt_eval_count":3,"eval_count":2})).unwrap();
-            let parsed = decode_ndjson_frame(&frame, "local_ollama").unwrap().unwrap();
+            let parsed = decode_ndjson_frame(&frame, "local_ollama")
+                .unwrap()
+                .unwrap();
             assert_eq!(parsed.message.content, "text");
             assert_eq!(parsed.prompt_eval_count, Some(3));
             assert_eq!(parsed.eval_count, Some(2));
@@ -695,9 +710,24 @@ mod tests {
                 body["message"]["tool_calls"] = serde_json::json!([{"function":{"name":"PRIVATE_TOOL","arguments":{"secret":"PRIVATE_ARGS"}}}]);
                 body["done"] = serde_json::json!(true);
             }
-            Mock::given(method("POST")).and(path("/api/chat")).respond_with(ResponseTemplate::new(200).set_body_json(body)).mount(&mock).await;
-            let error = build_adapter_against(&mock.uri()).complete(Request::default()).await.err().expect("unfinished/tool response must fail");
-            assert_eq!(error.to_string(), if tools { "local_ollama returned an unsupported native tool call" } else { "local_ollama returned an unfinished non-streaming response" });
+            Mock::given(method("POST"))
+                .and(path("/api/chat"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .mount(&mock)
+                .await;
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request::default())
+                .await
+                .err()
+                .expect("unfinished/tool response must fail");
+            assert_eq!(
+                error.to_string(),
+                if tools {
+                    "local_ollama returned an unsupported native tool call"
+                } else {
+                    "local_ollama returned an unfinished non-streaming response"
+                }
+            );
             assert_eq!(mock.received_requests().await.unwrap().len(), 1);
         }
     }
@@ -706,16 +736,27 @@ mod tests {
     async fn native_tool_ndjson_line_and_tail_preserve_only_prior_text() {
         for newline in [false, true] {
             for done in [false, true] {
-                let prior = serde_json::json!({"message":{"content":"before"},"done":false}).to_string();
+                let prior =
+                    serde_json::json!({"message":{"content":"before"},"done":false}).to_string();
                 let native = serde_json::json!({"message":{"content":"PRIVATE_TEXT","tool_calls":[{"function":{"name":"PRIVATE_TOOL","arguments":{"secret":"PRIVATE_ARGS"}}}]},"done":done}).to_string();
-                let tail = if newline { "\n{\"message\":{\"content\":\"after\"},\"done\":true}\n" } else { "" };
+                let tail = if newline {
+                    "\n{\"message\":{\"content\":\"after\"},\"done\":true}\n"
+                } else {
+                    ""
+                };
                 let mock = MockServer::start().await;
                 mount_ndjson(&mock, format!("{prior}\n{native}{tail}")).await;
-                let stream = build_adapter_against(&mock.uri()).stream(Request::default()).await.unwrap();
+                let stream = build_adapter_against(&mock.uri())
+                    .stream(Request::default())
+                    .await
+                    .unwrap();
                 let (text, terminals, error) = drain(stream).await;
                 assert_eq!(text, "before");
                 assert_eq!(terminals, 0);
-                assert_eq!(error.as_deref(), Some("local_ollama returned an unsupported native tool call"));
+                assert_eq!(
+                    error.as_deref(),
+                    Some("local_ollama returned an unsupported native tool call")
+                );
                 assert_eq!(mock.received_requests().await.unwrap().len(), 1);
             }
         }
@@ -723,14 +764,32 @@ mod tests {
 
     #[tokio::test]
     async fn ndjson_eof_without_done_never_synthesizes_success() {
-        for body in ["", " \n", "{\"message\":{\"content\":\"partial\"},\"done\":false}", "{\"message\":{\"content\":\"partial\"},\"done\":false}\n"] {
+        for body in [
+            "",
+            " \n",
+            "{\"message\":{\"content\":\"partial\"},\"done\":false}",
+            "{\"message\":{\"content\":\"partial\"},\"done\":false}\n",
+        ] {
             let mock = MockServer::start().await;
             mount_ndjson(&mock, body).await;
-            let stream = build_adapter_against(&mock.uri()).stream(Request::default()).await.unwrap();
+            let stream = build_adapter_against(&mock.uri())
+                .stream(Request::default())
+                .await
+                .unwrap();
             let (text, terminals, error) = drain(stream).await;
-            assert_eq!(text, if body.contains("partial") { "partial" } else { "" });
+            assert_eq!(
+                text,
+                if body.contains("partial") {
+                    "partial"
+                } else {
+                    ""
+                }
+            );
             assert_eq!(terminals, 0);
-            assert_eq!(error.as_deref(), Some("local_ollama: NDJSON stream ended without a done frame"));
+            assert_eq!(
+                error.as_deref(),
+                Some("local_ollama: NDJSON stream ended without a done frame")
+            );
         }
     }
 
@@ -740,19 +799,29 @@ mod tests {
             let mock = MockServer::start().await;
             let body = serde_json::json!({"message":{"content":"final text","tool_calls":[]},"done":true,"done_reason":"length","prompt_eval_count":7,"eval_count":4}).to_string();
             mount_ndjson(&mock, format!("{body}{newline}")).await;
-            let mut stream = build_adapter_against(&mock.uri()).stream(Request::default()).await.unwrap();
+            let mut stream = build_adapter_against(&mock.uri())
+                .stream(Request::default())
+                .await
+                .unwrap();
             let mut text = String::new();
             let mut terminals = Vec::new();
             while let Some(item) = stream.next().await {
                 let chunk = item.unwrap();
-                if chunk.done { terminals.push(chunk); } else { text.push_str(&chunk.delta); }
+                if chunk.done {
+                    terminals.push(chunk);
+                } else {
+                    text.push_str(&chunk.delta);
+                }
             }
             assert_eq!(text, "final text");
             assert_eq!(terminals.len(), 1);
             assert!(terminals[0].delta.is_empty());
             assert_eq!(terminals[0].input_tokens, Some(7));
             assert_eq!(terminals[0].output_tokens, Some(4));
-            assert_eq!(terminals[0].termination.finish_reason.as_deref(), Some("length"));
+            assert_eq!(
+                terminals[0].termination.finish_reason.as_deref(),
+                Some("length")
+            );
         }
     }
 

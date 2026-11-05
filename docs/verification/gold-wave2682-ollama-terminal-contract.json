@@ -17,7 +17,7 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
-      "sha256": "6E6CC69C66DA0BBD9739C04E4AC28C20BEF9832BE31D826BB8D712B650F0B4CB"
+      "sha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768"
     }
   ],
   "newCases": [
@@ -40,5 +40,22 @@
     "No local model, Ollama server, compiler, formatter or tests ran.",
     "This adapter still does not execute native tools. Other provider/tool transport and cancellation contracts remain separately scoped.",
     "Whole A08 and current-producer native/release acceptance remain open."
-  ]
+  ],
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42028793502,
+    "artifact": 13414289808,
+    "producer": "c52fc00d41fa40156bd3cc50efa0e9a5d76868a1",
+    "zipSha256": "B2D5D21871CB53CD4318B54A319683993DDDEA27342D069E59F96B982146AF85",
+    "exactImages": [
+      {
+        "path": "SRC/neothd/src/providers/ollama_api.rs",
+        "pre": "8f447e095f6f9fc7493ba459c19d39d9c0660ccb",
+        "post": "88a2857730df423d93a535d62ef5d6e164d5b593"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
+  }
 }
