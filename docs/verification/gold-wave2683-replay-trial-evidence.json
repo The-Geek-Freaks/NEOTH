@@ -16,7 +16,7 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sha256": "B5E32E2D6977CCF138E2521229F4F251B4720D718D3DC8D6D59CB955029CB96F"
+      "sha256": "8FFCBCDD47FD5786D7447300DF8E5B267EBA76A95F72A4E230BBF3C452C88E86"
     }
   ],
   "newCases": [
@@ -35,5 +35,22 @@
     "Consent/provider construction precedes the contract; setup effects are not proven by this sidecar. Build source can remain unknown and existing release gates reject unknown source.",
     "File synchronization and hashes do not provide tamper-proof storage or platform-independent directory crash durability.",
     "contains-v1 verifies a text predicate, not product correctness; unknown or missing observations never become verifier success."
-  ]
+  ],
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42030640487,
+    "artifact": 13414939847,
+    "producer": "5e20b9fa5ea4d6fdf7c3ffa920f57feb8080f8aa",
+    "zipSha256": "EC7ACA77E1122E7CA3864AE9CEC082F460880E8A8D53B4B35F116E1033599B0A",
+    "exactImages": [
+      {
+        "path": "SRC/neothd/src/cli/workflow_replay.rs",
+        "pre": "7ef8ed02f99c2460b2bdfec4e41d6b0e58bb95a5",
+        "post": "23b8496190e39094d180a7097e750efda8d80eee"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
+  }
 }

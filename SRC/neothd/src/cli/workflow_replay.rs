@@ -210,7 +210,10 @@ impl ReplayTrialOutput {
             authority: "observational_only_no_effect_or_resume_admission",
         };
         let bytes = serde_json::to_vec_pretty(&contract)?;
-        write_new_bytes(&directory.join("workflow-replay-trial-contract-v1.json"), &bytes)?;
+        write_new_bytes(
+            &directory.join("workflow-replay-trial-contract-v1.json"),
+            &bytes,
+        )?;
         Ok(Self {
             directory,
             contract_sha256: sha256(&bytes),
@@ -248,7 +251,9 @@ impl ReplayTrialOutput {
             render_markdown(report).as_bytes(),
         )?;
         write_new_json(
-            &self.directory.join("workflow-replay-trial-completion-v1.json"),
+            &self
+                .directory
+                .join("workflow-replay-trial-completion-v1.json"),
             &serde_json::json!({
                 "schema_version": 1,
                 "kind": "workflow-replay-trial-completion-v1",
@@ -451,7 +456,10 @@ pub async fn run_workflow_replay_cmd(args: WorkflowReplayRunArgs) -> Result<()> 
     if args.json {
         println!("{json}");
     } else {
-        println!("workflow replay report written: {}", trial.directory.display());
+        println!(
+            "workflow replay report written: {}",
+            trial.directory.display()
+        );
         println!(
             "workflow replay: {}",
             if report.passed { "PASS" } else { "FAIL" }
@@ -760,16 +768,34 @@ mod tests {
         let parent = tempfile::tempdir().unwrap();
         let (mut corpus, mut config) = trial_fixture();
         let raw = serde_json::to_vec(&corpus).unwrap();
-        let first = ReplayTrialOutput::begin(parent.path(), &raw, &corpus, &config, "revision-a").unwrap();
-        let bytes = std::fs::read(first.directory.join("workflow-replay-trial-contract-v1.json")).unwrap();
+        let first =
+            ReplayTrialOutput::begin(parent.path(), &raw, &corpus, &config, "revision-a").unwrap();
+        let bytes = std::fs::read(
+            first
+                .directory
+                .join("workflow-replay-trial-contract-v1.json"),
+        )
+        .unwrap();
         let contract: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(first.contract_sha256, sha256(&bytes));
         assert_eq!(contract["corpus_sha256"], sha256(&raw));
         assert_eq!(contract["source_revision"], "revision-a");
-        assert_eq!(contract["episodes"][0]["input_sha256"], sha256(&serde_json::to_vec(&corpus.episodes[0]).unwrap()));
-        assert_eq!(contract["verifier_source_sha256"], sha256(include_bytes!("workflow_replay.rs")));
-        assert_eq!(contract["episodes"][0]["requested_skill"], "requested-skill");
-        assert_eq!(contract["authority"], "observational_only_no_effect_or_resume_admission");
+        assert_eq!(
+            contract["episodes"][0]["input_sha256"],
+            sha256(&serde_json::to_vec(&corpus.episodes[0]).unwrap())
+        );
+        assert_eq!(
+            contract["verifier_source_sha256"],
+            sha256(include_bytes!("workflow_replay.rs"))
+        );
+        assert_eq!(
+            contract["episodes"][0]["requested_skill"],
+            "requested-skill"
+        );
+        assert_eq!(
+            contract["authority"],
+            "observational_only_no_effect_or_resume_admission"
+        );
         let text = String::from_utf8(bytes.clone()).unwrap();
         assert!(!text.contains("private trial prompt"));
         assert!(!text.contains("private expected text"));
@@ -777,27 +803,68 @@ mod tests {
         corpus.episodes[0].expected_contains = "changed expectation".to_owned();
         config.effective_public_config_sha256 = "e".repeat(64);
         let changed_raw = serde_json::to_vec(&corpus).unwrap();
-        let second = ReplayTrialOutput::begin(parent.path(), &changed_raw, &corpus, &config, "revision-b").unwrap();
-        let changed: serde_json::Value = serde_json::from_slice(&std::fs::read(second.directory.join("workflow-replay-trial-contract-v1.json")).unwrap()).unwrap();
-        assert_ne!(changed["episodes"][0]["input_sha256"], contract["episodes"][0]["input_sha256"]);
+        let second =
+            ReplayTrialOutput::begin(parent.path(), &changed_raw, &corpus, &config, "revision-b")
+                .unwrap();
+        let changed: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                second
+                    .directory
+                    .join("workflow-replay-trial-contract-v1.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_ne!(
+            changed["episodes"][0]["input_sha256"],
+            contract["episodes"][0]["input_sha256"]
+        );
         assert_ne!(changed["config"], contract["config"]);
         assert_ne!(changed["corpus_sha256"], contract["corpus_sha256"]);
-        assert_eq!(std::fs::read(first.directory.join("workflow-replay-trial-contract-v1.json")).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(
+                first
+                    .directory
+                    .join("workflow-replay-trial-contract-v1.json")
+            )
+            .unwrap(),
+            bytes
+        );
     }
 
     #[test]
     fn trial_receipts_bind_observations_and_preserve_inconclusive_outcomes() {
         let parent = tempfile::tempdir().unwrap();
         let (corpus, config) = trial_fixture();
-        let trial = ReplayTrialOutput::begin(parent.path(), b"exact corpus", &corpus, &config, "unknown").unwrap();
-        for (ordinal, (outcome, expected)) in [("pass", "verified"), ("fail", "failed"), ("error", "inconclusive")].into_iter().enumerate() {
-            trial.record_episode(ordinal, &trial_episode(outcome)).unwrap();
-            let receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(trial.directory.join(format!("episode-{ordinal:04}.json"))).unwrap()).unwrap();
+        let trial =
+            ReplayTrialOutput::begin(parent.path(), b"exact corpus", &corpus, &config, "unknown")
+                .unwrap();
+        for (ordinal, (outcome, expected)) in [
+            ("pass", "verified"),
+            ("fail", "failed"),
+            ("error", "inconclusive"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            trial
+                .record_episode(ordinal, &trial_episode(outcome))
+                .unwrap();
+            let receipt: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(trial.directory.join(format!("episode-{ordinal:04}.json"))).unwrap(),
+            )
+            .unwrap();
             assert_eq!(receipt["contract_sha256"], trial.contract_sha256);
             assert_eq!(receipt["verifier_outcome"], expected);
             assert_eq!(receipt["episode"]["selected_skill"], "actual-skill");
-            assert_eq!(receipt["episode"]["selected_skill_content_sha256"], "c".repeat(64));
-            assert_eq!(receipt["verification_scope"], "contains_v1_terminal_text_only_not_product_correctness");
+            assert_eq!(
+                receipt["episode"]["selected_skill_content_sha256"],
+                "c".repeat(64)
+            );
+            assert_eq!(
+                receipt["verification_scope"],
+                "contains_v1_terminal_text_only_not_product_correctness"
+            );
         }
     }
 
@@ -805,8 +872,12 @@ mod tests {
     fn trial_outputs_never_replace_prior_trials_or_acknowledged_receipts() {
         let parent = tempfile::tempdir().unwrap();
         let (corpus, config) = trial_fixture();
-        let first = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
-        let second = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
+        let first =
+            ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision")
+                .unwrap();
+        let second =
+            ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision")
+                .unwrap();
         assert_ne!(first.directory, second.directory);
         first.record_episode(0, &trial_episode("pass")).unwrap();
         let receipt_path = first.directory.join("episode-0000.json");
@@ -831,12 +902,29 @@ mod tests {
             passed: true,
         };
         let json = first.finish(&report).unwrap();
-        let completion: serde_json::Value = serde_json::from_slice(&std::fs::read(first.directory.join("workflow-replay-trial-completion-v1.json")).unwrap()).unwrap();
+        let completion: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                first
+                    .directory
+                    .join("workflow-replay-trial-completion-v1.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(completion["contract_sha256"], first.contract_sha256);
         assert_eq!(completion["report_sha256"], sha256(json.as_bytes()));
         assert!(first.finish(&report).is_err());
-        assert_eq!(std::fs::read_to_string(first.directory.join("workflow-replay-report-v1.json")).unwrap(), json);
-        assert!(!second.directory.join("workflow-replay-report-v1.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(first.directory.join("workflow-replay-report-v1.json"))
+                .unwrap(),
+            json
+        );
+        assert!(
+            !second
+                .directory
+                .join("workflow-replay-report-v1.json")
+                .exists()
+        );
     }
 
     #[test]
@@ -845,13 +933,23 @@ mod tests {
         let (corpus, config) = trial_fixture();
         let blocked_parent = parent.path().join("not-a-directory");
         std::fs::write(&blocked_parent, b"preserve").unwrap();
-        assert!(ReplayTrialOutput::begin(&blocked_parent, b"corpus", &corpus, &config, "revision").is_err());
-        let trial = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
+        assert!(
+            ReplayTrialOutput::begin(&blocked_parent, b"corpus", &corpus, &config, "revision")
+                .is_err()
+        );
+        let trial =
+            ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision")
+                .unwrap();
         trial.record_episode(0, &trial_episode("pass")).unwrap();
         std::fs::create_dir(trial.directory.join("episode-0001.json")).unwrap();
         assert!(trial.record_episode(1, &trial_episode("pass")).is_err());
         assert!(trial.directory.join("episode-0000.json").is_file());
-        assert!(!trial.directory.join("workflow-replay-report-v1.json").exists());
+        assert!(
+            !trial
+                .directory
+                .join("workflow-replay-report-v1.json")
+                .exists()
+        );
         assert_eq!(std::fs::read(&blocked_parent).unwrap(), b"preserve");
     }
 
