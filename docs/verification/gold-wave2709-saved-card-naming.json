@@ -15,7 +15,7 @@
   "sources": [
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "50260B108D4A10F87154765909543C874F725488FA932148512053DBC1B4F9B9"
+      "sha256": "C61D862ECECC675B8F904EE3D18613AD98427BBF91B74E236C4744400297F058"
     },
     {
       "path": "SRC/neothd/src/memory/hindsight.rs",
@@ -40,5 +40,13 @@
     "Timestamp-and-prompt card generation and per-invocation storage semantics are unchanged; this batch does not claim concurrent card collision resolution.",
     "No full A07, device, native or Gold acceptance."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42106536111,
+    "artifact": 13451397909,
+    "producer": "eebb928469c376b70d8b9a88316d61a2d9d7ed7f",
+    "apiZipMemberAndPrePostImagesVerified": true,
+    "localFormatterExecuted": false,
+    "proof": "work/gold-20260906/wave2709-hosted-format/FORMAT_IMPORT.json"
+  }
 }

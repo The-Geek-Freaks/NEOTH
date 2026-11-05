@@ -20065,8 +20065,8 @@ modes:
 
         for continued_session in [false, true] {
             let home = tempdir().unwrap();
-            let old_path = hindsight::save_session_card(home.path(), 100, "Old topic", "Old reply")
-                .unwrap();
+            let old_path =
+                hindsight::save_session_card(home.path(), 100, "Old topic", "Old reply").unwrap();
             let old_id = hindsight::session_id_for(100, "Old topic");
             hindsight::update_display_name(home.path(), &old_id, "Preserved old title").unwrap();
             let old_bytes = std::fs::read(&old_path).unwrap();
@@ -20083,7 +20083,9 @@ modes:
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .and(path("/api/chat"))
-                .and(body_partial_json(serde_json::json!({ "model": "naming-fixture" })))
+                .and(body_partial_json(
+                    serde_json::json!({ "model": "naming-fixture" }),
+                ))
                 .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "model": "naming-fixture",
                     "message": { "content": "New saved title" },
@@ -20130,7 +20132,9 @@ modes:
             crate::wal::scan::for_each_frame(&bytes, |_, frame| {
                 if matches!(
                     frame.header.event_type,
-                    EVENT_TYPE_PROVIDER_REQUEST | EVENT_TYPE_PROVIDER_RESPONSE | EVENT_TYPE_PROVIDER_ERROR
+                    EVENT_TYPE_PROVIDER_REQUEST
+                        | EVENT_TYPE_PROVIDER_RESPONSE
+                        | EVENT_TYPE_PROVIDER_ERROR
                 ) {
                     let payload: serde_json::Value = serde_json::from_slice(frame.payload)?;
                     assert_eq!(payload["session_id"], logical_id);
@@ -20163,8 +20167,8 @@ modes:
             hindsight::save_session_card_best_effort(&blocked_home, 200, "New topic", "New reply");
         assert!(failed_save.is_none());
         let foreign_home = tempdir().unwrap();
-        let foreign = hindsight::save_session_card(foreign_home.path(), 200, "Foreign", "Reply")
-            .unwrap();
+        let foreign =
+            hindsight::save_session_card(foreign_home.path(), 200, "Foreign", "Reply").unwrap();
         let missing = hindsight::card_path(home.path(), "missing");
         let mismatched = hindsight::card_path(home.path(), "mismatched");
         std::fs::write(&mismatched, &old_bytes).unwrap();
@@ -20207,7 +20211,10 @@ modes:
             Ok(())
         })
         .unwrap();
-        assert_eq!(frames, 0, "skipped naming must not begin provider authorization");
+        assert_eq!(
+            frames, 0,
+            "skipped naming must not begin provider authorization"
+        );
     }
     #[test]
     fn session_naming_prompt_frames_adversarial_opening_as_typed_data() {
