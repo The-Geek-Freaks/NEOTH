@@ -34,7 +34,7 @@
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F"
+      "sha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD"
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
@@ -55,6 +55,10 @@
     {
       "path": "SRC/neothd/src/tokens/partial_prompt_origin.rs",
       "sha256": "66D350A42E3BC0838D713D38CE40090AD33596B436C48CFF55D74490CAD73C4A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+      "sha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F"
     }
   ],
   "validation": {
@@ -102,5 +106,10 @@
     "activeRunCancelled": false,
     "compilerOrTestsWeakened": false,
     "cause": "Unknown until terminal job logs are available"
-  }
+  },
+  "strengthenedConsumerTests": [
+    "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
+    "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
+    "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback"
+  ]
 }

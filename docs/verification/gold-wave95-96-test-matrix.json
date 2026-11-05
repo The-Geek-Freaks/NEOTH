@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Prior latest fast gates passed; future dependency step bounded; hosted runtime pending",
+  "status": "Partial-origin consumer regressions strengthened; runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474723,
-    "sha256": "55985880DC4DD9BDDD6AAA071F50ADC785C307868E91364707ABBA2DCBDD0B83"
+    "bytes": 474702,
+    "sha256": "0F6A9FEBC8AABE345E26385A5CC28F7D379442808258B3B06CEDD2BD405ABA8F"
   },
   "sourceInputs": 2590,
   "requiredNativeTests": [
@@ -3234,37 +3234,37 @@
     {
       "test": "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
@@ -18289,13 +18289,13 @@
     {
       "test": "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F",
+      "sourceSha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
       "junitClass": "neoth"
     },
     {
@@ -18727,103 +18727,103 @@
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_correlates_four_kinds_without_repricing_legacy_or_inventing_scope",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_compares_all_identities_without_normalizing_provider_aliases",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_retains_duplicates_and_prioritizes_conflicts_over_duplicate_status",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_binding_or_lifecycle_never_matches_by_invocation_alone",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_union_window_keeps_all_kinds_and_labels_outside_context",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_rejects_identity_and_price_contract_drift",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_terminal_unknown_zero_alias_and_frame_kind_remain_distinct",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_response_and_error_are_alternative_terminal_occurrences",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_rejects_recursive_duplicate_keys_without_echoing_payloads",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_shares_record_byte_and_diagnostic_limits_across_all_kinds",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_ignores_unrelated_event_types_and_discards_late_scan_failures",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_incomplete_prefix_and_diagnostics_limit_observed_matches",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_cli_conflicts_leave_legacy_and_acquisitions_modes_available",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_missing_home_stays_unknown_and_table_escapes_recorded_strings",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_real_authenticated_wal_is_readonly_and_rejects_changed_key",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
@@ -18991,37 +18991,37 @@
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_conserves_input_without_allocating_estimates",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_preserves_unknown_zero_and_timeout_counters",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_never_sums_overlapping_cache_counters",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_repeated_components_do_not_imply_cache_hits",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_requires_unique_bound_metadata_match",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::usage_acquisitions::provenance::tests::provenance_reconciliation_rendering_keeps_prefix_and_failure_boundaries",
       "sourcePath": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sourceSha256": "2FBAA13F9CDF373109F6774C2D34833E47D206A433084624B9FFB877B31380A6",
+      "sourceSha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
       "junitClass": "neoth"
     },
     {
@@ -94842,6 +94842,32 @@
       }
     ],
     "note": "Active Council11 run remained in apt preparation over23minutes; future prerequisite step10minutes, existing apt commands/tests unchanged, no cancellation or second heavy run.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2697ReaderCoverage": {
+    "base": "27e30fc41ba49bbb74656ce547b3c8bae1c3e3e2",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
+        "bytes": 5432,
+        "sha256": "2232796913C93256A7D1CC463F1702325E4D4ACFD4FD250552EA2177B2A79000",
+        "blob": "9419c2e444947414ba66e6897a06c6ac8014f4de"
+      },
+      {
+        "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
+        "bytes": 32627,
+        "sha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F",
+        "blob": "16f2d42ea734d2d229638e4b2b1af5f70f2f0176"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/capability_decay.rs",
+        "bytes": 34693,
+        "sha256": "7D6BF5C3C3397644CB663B00E50AD4B790689DE2E716FCF0B36C67A93D416DCD",
+        "blob": "5d4b287ba6897da1b8e6be2bbcc993a88813159c"
+      }
+    ],
+    "note": "Existing acquisition schema test now includesv6; authenticated capability history includes4 additionalv6 samples and malformed-snapshot refusal. Same135 identities.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

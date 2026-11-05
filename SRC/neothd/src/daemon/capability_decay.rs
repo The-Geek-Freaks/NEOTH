@@ -538,6 +538,15 @@ mod tests {
                 payload["prompt_tax"] = serde_json::to_value(event.prompt_tax).unwrap();
                 super::super::usage_log::terminal_usage_snapshot_v3(&event).unwrap()
             }
+            6 => {
+                payload["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
+                event.partial_prompt_origin = Some(
+                    crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(4, 512).unwrap(),
+                );
+                payload["partial_prompt_origin"] =
+                    serde_json::to_value(event.partial_prompt_origin).unwrap();
+                super::super::usage_log::terminal_usage_snapshot_v4(&event).unwrap()
+            }
             _ => panic!("unsupported fixture version"),
         };
         serde_json::to_vec(&payload).unwrap()
@@ -552,6 +561,7 @@ mod tests {
             (0..12, 3, now - RECENT_WINDOW_SECONDS - 10),
             (20..24, 4, now - 10),
             (24..28, 5, now - 10),
+            (28..32, 6, now - 10),
         ] {
             for invocation in ids {
                 let ok = invocation < 26;
@@ -573,13 +583,13 @@ mod tests {
         drop(writer);
         join.await.unwrap().unwrap();
         let report = inspect_authenticated_terminal_history(home.path(), now).unwrap();
-        assert_eq!(report.authenticated_terminal_sample_count, 20);
+        assert_eq!(report.authenticated_terminal_sample_count, 24);
         assert_eq!(report.legacy_terminal_rows, 0);
         assert_eq!(report.unattributed_terminal_rows, 0);
         assert_eq!(report.observations.len(), 1);
         assert_eq!(report.observations[0].baseline_samples, 12);
-        assert_eq!(report.observations[0].recent_samples, 8);
-        assert_eq!(report.observations[0].recent_failures, 2);
+        assert_eq!(report.observations[0].recent_samples, 12);
+        assert_eq!(report.observations[0].recent_failures, 6);
         assert_eq!(report.observations[0].trend, CapabilityTrend::Degrading);
         let outcome = crate::cli::doctor::run_all_checks(home.path())
             .into_iter()
@@ -591,7 +601,7 @@ mod tests {
 
     #[test]
     fn versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback() {
-        for version in [3, 4, 5] {
+        for version in [3, 4, 5, 6] {
             let payload = versioned_terminal_payload(1, 1, true, version);
             assert!(matches!(
                 terminal_sample_from_payload(EVENT_TYPE_PROVIDER_RESPONSE, &payload).unwrap(),

@@ -1,6 +1,7 @@
 use super::*;
 use crate::daemon::usage_log::{
     UsageEvent, terminal_usage_snapshot, terminal_usage_snapshot_v2, terminal_usage_snapshot_v3,
+    terminal_usage_snapshot_v4,
 };
 use crate::providers::cost::PriceRow;
 use crate::providers::pricing_basis::{AuthorizationPriceBound, PricingBasis};
@@ -100,10 +101,17 @@ fn terminal(version: u8) -> Value {
     if version >= 4 {
         value["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
     }
+    if version == 6 {
+        event.partial_prompt_origin = Some(
+            crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(4, 520).unwrap(),
+        );
+        value["partial_prompt_origin"] = serde_json::to_value(event.partial_prompt_origin).unwrap();
+    }
     if version >= 3 {
         value["usage_snapshot"] = match version {
             3 => terminal_usage_snapshot(&event).unwrap(),
             4 => terminal_usage_snapshot_v2(&event).unwrap(),
+            6 => terminal_usage_snapshot_v4(&event).unwrap(),
             _ => terminal_usage_snapshot_v3(&event).unwrap(),
         };
     }
@@ -316,7 +324,7 @@ fn provenance_plan_validates_frozen_rate_bits_and_preserves_zero_bound() {
 
 #[test]
 fn provenance_terminal_retains_each_frozen_schema_and_prompt_components() {
-    for version in [3, 4, 5] {
+    for version in [3, 4, 5, 6] {
         let payload = terminal(version);
         let decoded = decode::terminal(EVENT_TYPE_PROVIDER_RESPONSE, &bytes(&payload)).unwrap();
         assert_eq!(
@@ -328,6 +336,18 @@ fn provenance_terminal_retains_each_frozen_schema_and_prompt_components() {
             Some(format!("{:016x}", (-0.25_f64).to_bits()))
         );
         assert_eq!(decoded.event.pricing_basis.is_some(), version >= 4);
+        assert_eq!(decoded.event.partial_prompt_origin.is_some(), version == 6);
+        if version == 6 {
+            assert!(decoded.event.prompt_tax.is_none());
+            assert_eq!(
+                decoded
+                    .event
+                    .partial_prompt_origin
+                    .unwrap()
+                    .known_tool_result_bytes(),
+                4
+            );
+        }
         assert_eq!(
             decoded
                 .event
