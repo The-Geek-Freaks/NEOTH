@@ -28,6 +28,14 @@ read failure blocks pairing until a later explicit attempt succeeds. Forget
 invalidates any old startup result and requires a fresh read before another
 pairing. This does not cancel a native request that was already sent.
 
+Startup restores saved enrollment even when native bridge setup fails. An
+unavailable initial-link plugin cannot block that recovery or manual invite
+entry, and a late link does not overwrite an invite already being edited.
+Setup errors show a generic retry action without backend details. Pairing,
+chat and status operations wait for successful setup; a failure does not
+claim that an unpaired phone has device permission. Retained enrollment stays
+visible and is never replaced by retrying setup.
+
 For app-source changes, the existing Mobile Companion Native Producer workflow
 supports `source_qa_only=true` with the exact approved Flutter lock hash. It
 runs the same pinned SDK, lock check, analysis and complete package tests, then

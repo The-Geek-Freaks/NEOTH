@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T18:31:33.9184881Z",
-  "validationStatus": "Hosted revalidation pending; private production Council transport retained",
+  "capturedUtc": "2026-11-05T18:42:50.3945569Z",
+  "validationStatus": "Mobile startup source complete; hosted93 Flutter acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -468,8 +468,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
-      "bytes": 30360,
-      "sha256": "A0FE136910C6DC71463490440CC37C678B6FE977BF4F65AA4B9A5982920FCBEB"
+      "bytes": 32475,
+      "sha256": "3867F3F30471286CD8C843CB1841C61180BB912298A218A98BDADF9977873BF3"
     },
     {
       "path": "apps/neoth_companion/lib/companion_terminal_presentation.dart",
@@ -493,8 +493,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/main.dart",
-      "bytes": 18118,
-      "sha256": "0921FB9A39E057202F6EF32665CCA71DC182B564072C6DDF610D3FC038D5B1C9"
+      "bytes": 19234,
+      "sha256": "561686D3B42747CD096E1AA65DA0E9B965126BE0BB97BCA22AD241A3784ABF6B"
     },
     {
       "path": "apps/neoth_companion/lib/models.dart",
@@ -533,8 +533,8 @@
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "bytes": 8345,
-      "sha256": "E465C55D79823577432CAB7EAB5A61095721E5D201A0F92BADFE0097521E4374"
+      "bytes": 8845,
+      "sha256": "1DE34F602C579B67ACD3C2B559E9620389E3C68D9C16A9AEC977B892D0A98E34"
     },
     {
       "path": "apps/neoth_companion/test/activity_reason_test.dart",
@@ -553,8 +553,8 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "bytes": 55210,
-      "sha256": "F67C85C9E95DD29F8CD5C9300129CCE0E196B1EDBB06ABC08BE2125F74D1F04D"
+      "bytes": 63645,
+      "sha256": "DC1586CF33B6AA628F22E99E86AD02AEC9D6DCEE3CCF27B963BC46B7332CF20F"
     },
     {
       "path": "apps/neoth_companion/test/companion_terminal_presentation_test.dart",
@@ -4957,6 +4957,11 @@
       "sha256": "87F87C209FDB8BA8B86D78EA6CA8F8952A60DDAA0EFA241DF15290E21B023900"
     },
     {
+      "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
+      "bytes": 3275,
+      "sha256": "AC207A797C21061E79967EA9A297BAF4266130F3538E9A92B3D1A44E545BCEE7"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6218,8 +6223,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2808408,
-      "sha256": "B751D2CFAA096B28F28EB99EA37E8808C277C91215F9447FE207D11CFA549EDA"
+      "bytes": 2809371,
+      "sha256": "FFA23753A7556C538987A19D5B6EADF3BDC62C811BECC6F30613C01A8659E1C0"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

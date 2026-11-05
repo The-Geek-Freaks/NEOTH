@@ -1,0 +1,59 @@
+{
+  "schema": "neoth.wave2699.mobile-startup-recovery.v1",
+  "producerBase": "f9d04da6bd161f04f72df0e54369ee95d3deeb6c",
+  "batch": "B04",
+  "roadmap": [
+    "ADOPT-20261012-A05",
+    "GOLD-R4-12"
+  ],
+  "finding": "Optional initial-link failure blocked startup; native/storage errors escaped an unawaited future; failed/pairing view states falsely implied stored enrollment.",
+  "changes": [
+    "Initial-link loading runs independently of phone setup; platform unavailability leaves manual entry available and late hints preserve manual text.",
+    "Initialization shares one same-authority-epoch future, catches setup failures without backend text, and attempts protected enrollment restoration even after native bridge failure.",
+    "Generic explicit retry reuses successful setup components. Pair, status, capability and chat admission wait while setup is pending or failed.",
+    "Forget invalidates pending initialization and stale failures; unavailable native setup retains a retry path after forgetting.",
+    "Actual retained enrollment controls paired presentation; granted scope controls the displayed permission."
+  ],
+  "sourceBindings": [
+    {
+      "path": "apps/neoth_companion/lib/companion_controller.dart",
+      "sha256": "3867F3F30471286CD8C843CB1841C61180BB912298A218A98BDADF9977873BF3"
+    },
+    {
+      "path": "apps/neoth_companion/lib/main.dart",
+      "sha256": "561686D3B42747CD096E1AA65DA0E9B965126BE0BB97BCA22AD241A3784ABF6B"
+    },
+    {
+      "path": "apps/neoth_companion/test/companion_controller_test.dart",
+      "sha256": "DC1586CF33B6AA628F22E99E86AD02AEC9D6DCEE3CCF27B963BC46B7332CF20F"
+    },
+    {
+      "path": "apps/neoth_companion/README.md",
+      "sha256": "1DE34F602C579B67ACD3C2B559E9620389E3C68D9C16A9AEC977B892D0A98E34"
+    }
+  ],
+  "newFlutterCases": [
+    "JM05 startup restores retained enrollment after bridge failure and retries setup",
+    "JM05 startup storage failure stays unpaired and explicit retry restores authority",
+    "JM05 forgetting after native setup failure keeps explicit setup recovery available",
+    "JM05 forgotten startup failure cannot alter a newer initialization",
+    "JM05 optional link errors do not block startup or claim pairing",
+    "JM05 late initial link preserves manually entered invite",
+    "JM05 startup failure shows bounded recovery without paired permission claims"
+  ],
+  "newFlutterCaseCount": 7,
+  "expectedPackageTestCount": 93,
+  "review": "GPT-6.1 Terra high prompt-only lifecycle and recovery review; no remaining concrete defect in supplied excerpts",
+  "navigation": "Existing producer312fe759 Graphify file-navigation consulted for companion daemon/native ownership; Flutter source read directly; graph not rebuilt and not treated as semantic or acceptance proof.",
+  "verification": "Root bounded source/diff review only; hosted Flutter analysis and all93 package tests pending",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeDeviceAccepted": false,
+  "goldAccepted": false,
+  "rawRoadmapRowsClosed": 0,
+  "limits": [
+    "Setup retry does not retry pairing or daemon effects.",
+    "No Android/iOS/device/signing/release acceptance claimed.",
+    "Existing mobile daemon/native delivery and protected-store owners retained."
+  ]
+}

@@ -44,14 +44,19 @@ class _NeothCompanionAppState extends State<NeothCompanionApp> with WidgetsBindi
         setState(() => _pendingInvite = call.arguments as String);
       }
     });
-    unawaited(_start());
+    unawaited(_loadInitialInvite());
+    unawaited(widget.controller.initialize());
   }
 
-  Future<void> _start() async {
-    final initial = await _links.invokeMethod<String>('initialPairLink');
-    if (mounted && initial != null) setState(() => _pendingInvite = initial);
-    await widget.controller.prepareBridge();
-    await widget.controller.restore();
+  Future<void> _loadInitialInvite() async {
+    try {
+      final initial = await _links.invokeMethod<String>('initialPairLink');
+      if (mounted && initial != null && _pendingInvite == null) setState(() => _pendingInvite = initial);
+    } on PlatformException {
+      // An optional platform hint must not block protected identity recovery.
+    } on MissingPluginException {
+      // Manual invite entry remains available without platform link support.
+    }
   }
 
   @override
@@ -91,7 +96,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   @override
   void didUpdateWidget(covariant CompanionHome oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialInvite != null && widget.initialInvite != oldWidget.initialInvite) {
+    if (widget.initialInvite != null && widget.initialInvite != oldWidget.initialInvite && _invite.text.isEmpty) {
       _invite.text = widget.initialInvite!;
     }
   }
@@ -110,7 +115,8 @@ class _CompanionHomeState extends State<CompanionHome> {
       animation: widget.controller,
       builder: (context, _) {
         final state = widget.controller.state;
-        final paired = state != CompanionViewState.unpaired;
+        final paired = widget.controller.hasEnrollment;
+        final setupBlocked = widget.controller.initializationPending || widget.controller.initializationFailed;
         return Scaffold(
           appBar: AppBar(title: const Text('NEOTH Companion')),
           body: SafeArea(
@@ -120,6 +126,18 @@ class _CompanionHomeState extends State<CompanionHome> {
                 Text(_title(state), style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 8),
                 Text(_explanation(state)),
+                if (widget.controller.initializationPending) ...[
+                  const SizedBox(height: 12),
+                  const Text('Restoring this phone’s saved access…'),
+                  const LinearProgressIndicator(),
+                ] else if (widget.controller.initializationFailed) ...[
+                  const SizedBox(height: 12),
+                  const Text('Phone setup could not finish. Your saved access has not been replaced.'),
+                  OutlinedButton(
+                    onPressed: () => unawaited(widget.controller.initialize()),
+                    child: const Text('Retry phone setup'),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 const NotificationPreviewPanel(),
                 const SizedBox(height: 24),
@@ -128,7 +146,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                   const SizedBox(height: 12),
                   TextField(controller: _label, decoration: const InputDecoration(labelText: 'Device name', helperText: 'Maximum 64 UTF-8 bytes')),
                   FilledButton(
-                    onPressed: state == CompanionViewState.pairing
+                    onPressed: setupBlocked || state == CompanionViewState.pairing
                         ? null
                         : () async {
                             await widget.controller.pair(_invite.text, _label.text);
@@ -138,7 +156,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                   ),
                 ] else ...[
                   Text(
-                    widget.controller.canSendChat
+                    widget.controller.grantedScope == companionChatSendScope
                         ? 'This phone has permission to chat with NEOTH.'
                         : 'This phone has the paired read-only status permission.',
                   ),
@@ -157,7 +175,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                       if (widget.controller.capabilityInventoryMessage case final message?) Text(message),
                       const SizedBox(height: 8),
                       OutlinedButton.icon(
-                        onPressed: widget.controller.capabilityInventoryPending || widget.controller.chatPending || state == CompanionViewState.pairing
+                        onPressed: setupBlocked || widget.controller.capabilityInventoryPending || widget.controller.chatPending || state == CompanionViewState.pairing
                             ? null : () => unawaited(widget.controller.refreshCapabilityInventory()),
                         icon: const Icon(Icons.verified_user_outlined),
                         label: Text(widget.controller.capabilityInventoryPending ? 'Checking device access…' : 'Check device access'),

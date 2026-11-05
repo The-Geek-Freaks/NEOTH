@@ -22,6 +22,10 @@ class CompanionController extends ChangeNotifier {
   final NativeBridgeFactory _bridgeFactory;
   NativeBridge? _bridge;
   Future<void>? _bridgePreparation;
+  Future<void>? _initialization;
+  int? _initializationEpoch;
+  bool initializationPending = false;
+  bool initializationFailed = false;
   Future<bool>? _enrollmentRestoration;
   int? _enrollmentRestorationEpoch;
   int? _restoredEnrollmentEpoch;
@@ -51,6 +55,52 @@ class CompanionController extends ChangeNotifier {
   ConversationHistory? conversationHistory;
   bool conversationIncognito = false;
   String? conversationPendingMessage;
+
+  bool get hasEnrollment => _enrollment != null;
+
+  Future<void> initialize() {
+    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return Future<void>.value();
+    final epoch = _authorityEpoch;
+    if (_initializationEpoch == epoch && _initialization != null) return _initialization!;
+    initializationPending = true;
+    initializationFailed = false;
+    late final Future<void> operation;
+    operation = _initialize(epoch).whenComplete(() {
+      if (_ownsAuthority(epoch) && identical(_initialization, operation)) {
+        _initialization = null;
+        _initializationEpoch = null;
+        initializationPending = false;
+        _notify();
+      }
+    });
+    _initializationEpoch = epoch;
+    _initialization = operation;
+    _notify();
+    return operation;
+  }
+
+  Future<void> _initialize(int epoch) async {
+    var failed = false;
+    try {
+      await prepareBridge();
+    } on Object {
+      failed = true;
+    }
+    if (!_ownsAuthority(epoch)) return;
+    // Retained enrollment must remain discoverable even if native setup fails.
+    try {
+      if (!await _restoreEnrollmentForEpoch(epoch)) failed = true;
+    } on Object {
+      failed = true;
+    }
+    if (!_ownsAuthority(epoch)) return;
+    initializationFailed = failed || _bridge == null || _restoredEnrollmentEpoch != epoch;
+    if (initializationFailed) {
+      _set(CompanionViewState.failed);
+    } else if (state == CompanionViewState.failed) {
+      _set(hasEnrollment ? CompanionViewState.offline : CompanionViewState.unpaired);
+    }
+  }
 
   bool get conversationsAvailable => canSendChat && _store is CompanionConversationStore
       && _bridge is NativeBridgeWithConversation && (_bridge! as NativeBridgeWithConversation).conversationSupported;
@@ -122,7 +172,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> pair(String rawInvite, String label) async {
-    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || initializationPending || initializationFailed || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
     // A retained active enrollment must be deliberately cleared by the person
     // holding the device; a pasted invite cannot silently replace it.
     if (_enrollment != null) {
@@ -172,7 +222,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
-    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || initializationPending || initializationFailed || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
     final enrollment = _enrollment;
     if (enrollment == null) {
       _set(CompanionViewState.unpaired);
@@ -199,7 +249,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> refreshCapabilityInventory() async {
-    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || initializationPending || initializationFailed || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
     final enrollment = _enrollment;
     if (enrollment == null) { _set(CompanionViewState.unpaired); return; }
     final epoch = _authorityEpoch;
@@ -250,8 +300,8 @@ class CompanionController extends ChangeNotifier {
     if (_disposed || epoch != _inventoryEpoch || !capabilityInventoryPending || !capabilityInventoryCancelRequested) return;
     await _bridge?.cancelActiveChat();
   }
-  bool get canSendChat => _enrollment?.grantedScope == companionChatSendScope;
-  bool get canRefreshStatus => _enrollment?.grantedScope == companionStatusReadScope;
+  bool get canSendChat => !initializationPending && !initializationFailed && _enrollment?.grantedScope == companionChatSendScope;
+  bool get canRefreshStatus => !initializationPending && !initializationFailed && _enrollment?.grantedScope == companionStatusReadScope;
   bool get canStopWaiting => chatPending && !chatCancelRequested;
   String? get grantedScope => _enrollment?.grantedScope;
 
@@ -507,6 +557,10 @@ class CompanionController extends ChangeNotifier {
     if (_disposed || _forgetting) return;
     _forgetting = true;
     ++_authorityEpoch;
+    _initialization = null;
+    _initializationEpoch = null;
+    initializationPending = false;
+    initializationFailed = _bridge == null;
     _enrollment = null;
     status = null;
     ++_inventoryEpoch;

@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neoth_companion/bridge_input.dart';
 import 'package:neoth_companion/companion_controller.dart';
 import 'package:neoth_companion/models.dart';
 import 'package:neoth_companion/native_bridge.dart';
 import 'package:neoth_companion/secure_store.dart';
 import 'package:neoth_companion/conversation_models.dart';
+import 'package:neoth_companion/main.dart';
 
 void main() {
   capabilityInventoryRegressionCases();
@@ -605,6 +609,173 @@ Future<CompanionController> _conversationController(_ConversationStore store, _C
 }
 
 void conversationRegressionCases() {
+  test('JM05 startup restores retained enrollment after bridge failure and retries setup', () async {
+    final store = _MemoryStore(enrollment: _chatAccepted());
+    final bridge = _FakeBridge();
+    var attempts = 0;
+    final controller = CompanionController(store: store, bridgeFactory: (_) {
+      if (++attempts == 1) throw StateError('private backend failure');
+      return bridge;
+    });
+    final first = controller.initialize();
+    expect(identical(first, controller.initialize()), isTrue);
+    expect(controller.initializationPending, isTrue);
+    await first;
+    expect(controller.hasEnrollment, isTrue);
+    expect(controller.grantedScope, companionChatSendScope);
+    expect(controller.initializationFailed, isTrue);
+    expect(controller.canSendChat, isFalse);
+    expect(store.enrollmentLoads, 1);
+    await controller.pair(_invite, 'must not replace saved identity');
+    expect(bridge.pairCalls, 0);
+    await controller.initialize();
+    expect(attempts, 2);
+    expect(store.enrollmentLoads, 1);
+    expect(controller.initializationFailed, isFalse);
+    expect(controller.initializationPending, isFalse);
+    expect(controller.canSendChat, isTrue);
+    expect(controller.state, CompanionViewState.offline);
+    controller.dispose();
+  });
+
+  test('JM05 startup storage failure stays unpaired and explicit retry restores authority', () async {
+    final loaded = Completer<EnrollmentAccepted?>();
+    final store = _MemoryStore()..loadFuture = loaded.future;
+    final bridge = _FakeBridge();
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    final initializing = controller.initialize();
+    await Future<void>.delayed(Duration.zero);
+    loaded.completeError(StateError('private storage error'));
+    await initializing;
+    expect(controller.initializationFailed, isTrue);
+    expect(controller.initializationPending, isFalse);
+    expect(controller.hasEnrollment, isFalse);
+    expect(controller.state, CompanionViewState.failed);
+    await controller.pair(_invite, 'must wait for recovery');
+    expect(bridge.pairCalls, 0);
+    store.loadFuture = null;
+    store.enrollment = _accepted();
+    await controller.initialize();
+    expect(controller.hasEnrollment, isTrue);
+    expect(controller.initializationFailed, isFalse);
+    expect(controller.state, CompanionViewState.offline);
+    expect(store.enrollmentLoads, 2);
+    controller.dispose();
+  });
+
+  test('JM05 forgetting after native setup failure keeps explicit setup recovery available', () async {
+    final store = _MemoryStore(enrollment: _accepted());
+    var attempts = 0;
+    final controller = CompanionController(store: store, bridgeFactory: (_) {
+      if (++attempts == 1) throw StateError('native library unavailable');
+      return _FakeBridge();
+    });
+    await controller.initialize();
+    expect(controller.hasEnrollment, isTrue);
+    await controller.forgetLocalEnrollment();
+    expect(controller.hasEnrollment, isFalse);
+    expect(controller.initializationFailed, isTrue);
+    await controller.initialize();
+    expect(attempts, 2);
+    expect(controller.initializationFailed, isFalse);
+    expect(controller.state, CompanionViewState.unpaired);
+    controller.dispose();
+  });
+
+  test('JM05 forgotten startup failure cannot alter a newer initialization', () async {
+    final oldLoad = Completer<EnrollmentAccepted?>();
+    final newLoad = Completer<EnrollmentAccepted?>();
+    final store = _MemoryStore()..loadFuture = oldLoad.future;
+    final bridge = _FakeBridge();
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    final old = controller.initialize();
+    await Future<void>.delayed(Duration.zero);
+    await controller.forgetLocalEnrollment();
+    store.loadFuture = newLoad.future;
+    final current = controller.initialize();
+    await Future<void>.delayed(Duration.zero);
+    oldLoad.completeError(StateError('obsolete failure'));
+    await old;
+    expect(controller.initializationPending, isTrue);
+    expect(controller.initializationFailed, isFalse);
+    expect(identical(current, controller.initialize()), isTrue);
+    newLoad.complete(_chatAccepted());
+    await current;
+    expect(controller.hasEnrollment, isTrue);
+    expect(controller.initializationPending, isFalse);
+    expect(controller.initializationFailed, isFalse);
+    expect(bridge.pairCalls, 0);
+    controller.dispose();
+  });
+
+  testWidgets('JM05 optional link errors do not block startup or claim pairing', (tester) async {
+    const channel = MethodChannel('neoth_companion/deep_link');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    for (final error in <Object>[PlatformException(code: 'unavailable'), MissingPluginException()]) {
+      messenger.setMockMethodCallHandler(channel, (_) async => throw error);
+      final store = _MemoryStore();
+      final controller = CompanionController(store: store, bridgeFactory: (_) => _FakeBridge());
+      await tester.pumpWidget(NeothCompanionApp(controller: controller));
+      await tester.pumpAndSettle();
+      expect(store.enrollmentLoads, 1);
+      expect(controller.initializationFailed, isFalse);
+      expect(find.text('Pairing invite'), findsOneWidget);
+      expect(find.text('This phone has the paired read-only status permission.'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('JM05 late initial link preserves manually entered invite', (tester) async {
+    const channel = MethodChannel('neoth_companion/deep_link');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final link = Completer<String?>();
+    messenger.setMockMethodCallHandler(channel, (_) => link.future);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final controller = CompanionController(store: _MemoryStore(), bridgeFactory: (_) => _FakeBridge());
+    await tester.pumpWidget(NeothCompanionApp(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'manually chosen invite');
+    link.complete(_invite);
+    await tester.pumpAndSettle();
+    expect(find.text('manually chosen invite'), findsOneWidget);
+    expect(find.text(_invite), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('JM05 startup failure shows bounded recovery without paired permission claims', (tester) async {
+    const channel = MethodChannel('neoth_companion/deep_link');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final loaded = Completer<EnrollmentAccepted?>();
+    final store = _MemoryStore()..loadFuture = loaded.future;
+    final controller = CompanionController(store: store, bridgeFactory: (_) => _FakeBridge());
+    await tester.pumpWidget(NeothCompanionApp(controller: controller));
+    await tester.pump();
+    loaded.completeError(StateError('PRIVATE STORAGE CONTENT'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry phone setup'), findsOneWidget);
+    expect(find.textContaining('PRIVATE STORAGE CONTENT'), findsNothing);
+    expect(find.text('This phone has the paired read-only status permission.'), findsNothing);
+    final pairing = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Pair this phone'));
+    expect(pairing.onPressed, isNull);
+    store.loadFuture = null;
+    store.enrollment = _accepted();
+    await tester.tap(find.text('Retry phone setup'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry phone setup'), findsNothing);
+    expect(find.text('This phone has the paired read-only status permission.'), findsOneWidget);
+    expect(controller.hasEnrollment, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
   test('JM05 uncertain enrollment save forces a fresh read before another pairing', () async {
     final store = _MemoryStore()..failSaveAfterCommit = true;
     final bridge = _FakeBridge(pairResult: _acceptedResult());

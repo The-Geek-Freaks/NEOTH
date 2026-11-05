@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Hosted revalidation pending; private production Council transport retained",
+  "status": "Mobile startup source complete; hosted93 Flutter acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474711,
-    "sha256": "2D4C99AEDEEF593086D9055E81453A69B38C9D9CAEC785F22B8B0EAC1B80D8EF"
+    "bytes": 474899,
+    "sha256": "3B5D8462D1138716D2708D086A4BD99F66AAB4670E13E865404480FF01997E56"
   },
-  "sourceInputs": 2590,
+  "sourceInputs": 2591,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -94918,6 +94918,50 @@
       }
     ],
     "note": "Test-only sibling constructor repairs hosted E0451; exact hosted consumer format imported; same11Council and135cost cases",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2699MobileStartupRecovery": {
+    "base": "f9d04da6bd161f04f72df0e54369ee95d3deeb6c",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 32475,
+        "sha256": "3867F3F30471286CD8C843CB1841C61180BB912298A218A98BDADF9977873BF3",
+        "blob": "34feed4c7f41a5a1004d78c8cea52896ec2700e7"
+      },
+      {
+        "path": "apps/neoth_companion/lib/main.dart",
+        "bytes": 19234,
+        "sha256": "561686D3B42747CD096E1AA65DA0E9B965126BE0BB97BCA22AD241A3784ABF6B",
+        "blob": "921478b2dd7439508d5048cd3bfcfa4124de8304"
+      },
+      {
+        "path": "apps/neoth_companion/README.md",
+        "bytes": 8845,
+        "sha256": "1DE34F602C579B67ACD3C2B559E9620389E3C68D9C16A9AEC977B892D0A98E34",
+        "blob": "f803c3a0ec068d924130de1a38e8607de7a0f8be"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 63645,
+        "sha256": "DC1586CF33B6AA628F22E99E86AD02AEC9D6DCEE3CCF27B963BC46B7332CF20F",
+        "blob": "717e6024367df5462e0d408bcc7124a2d4d170e1"
+      },
+      {
+        "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
+        "bytes": 3275,
+        "sha256": "AC207A797C21061E79967EA9A297BAF4266130F3538E9A92B3D1A44E545BCEE7",
+        "blob": "e1b5db021523395a813e7eab34c6dde2f4bfd909"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2809371,
+        "sha256": "FFA23753A7556C538987A19D5B6EADF3BDC62C811BECC6F30613C01A8659E1C0",
+        "blob": "bcd09288e47c29a6f9f17a3ed8b91c6dea1c553a"
+      }
+    ],
+    "note": "Independent optional-link read, epoch-bound shared setup, retained enrollment after native failure and explicit setup recovery;7 new Flutter cases",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
