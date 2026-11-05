@@ -150,11 +150,17 @@ class CompanionController extends ChangeNotifier {
       if (!_ownsAuthority(epoch)) return;
       if (result.kind == NativeOperationResult.ok && result.publicJson != null) {
         final accepted = EnrollmentAccepted.fromBridgeJson(result.publicJson!);
+        // A failed acknowledgement can follow a committed protected-store
+        // write. Do not reuse the earlier empty snapshot on another attempt.
+        _restoredEnrollmentEpoch = null;
         await _store.saveEnrollment(accepted); // durable only after actual success
         if (!_ownsAuthority(epoch)) return;
         _enrollment = accepted;
         await _restoreConversation(accepted);
-        if (_ownsAuthority(epoch)) _set(CompanionViewState.offline);
+        if (_ownsAuthority(epoch)) {
+          _restoredEnrollmentEpoch = epoch;
+          _set(CompanionViewState.offline);
+        }
       } else {
         _setForResult(result);
       }

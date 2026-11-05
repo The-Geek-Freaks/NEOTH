@@ -386,6 +386,7 @@ class _MemoryStore implements CompanionStore {
   EnrollmentAccepted? enrollment;
   Future<EnrollmentAccepted?>? loadFuture;
   int enrollmentLoads = 0;
+  bool failSaveAfterCommit = false;
   Future<Uint8List>? secretFuture;
   int secretLoads = 0;
   Uint8List secret = Uint8List.fromList(List<int>.filled(32, 9));
@@ -405,7 +406,10 @@ class _MemoryStore implements CompanionStore {
     return Uint8List.fromList(secret);
   }
   @override
-  Future<void> saveEnrollment(EnrollmentAccepted value) async => enrollment = value;
+  Future<void> saveEnrollment(EnrollmentAccepted value) async {
+    enrollment = value;
+    if (failSaveAfterCommit) throw StateError('ambiguous enrollment save');
+  }
 }
 
 CompanionChatActivitySnapshot _activity({required String request, required int maximum, required bool incomplete}) => CompanionChatActivitySnapshot(
@@ -601,6 +605,25 @@ Future<CompanionController> _conversationController(_ConversationStore store, _C
 }
 
 void conversationRegressionCases() {
+  test('JM05 uncertain enrollment save forces a fresh read before another pairing', () async {
+    final store = _MemoryStore()..failSaveAfterCommit = true;
+    final bridge = _FakeBridge(pairResult: _acceptedResult());
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    await controller.pair(_invite, 'Pixel');
+    expect(controller.state, CompanionViewState.failed);
+    expect(controller.grantedScope, isNull);
+    expect(store.enrollment?.deviceId, _deviceId);
+    expect(bridge.pairCalls, 1);
+    store.failSaveAfterCommit = false;
+    await controller.pair(_chatInvite, 'replacement must not start');
+    expect(store.enrollmentLoads, 2);
+    expect(bridge.pairCalls, 1);
+    expect(controller.grantedScope, _accepted().grantedScope);
+    expect(store.enrollment?.grantedScope, _accepted().grantedScope);
+    controller.dispose();
+  });
+
   test('JM05 completed enrollment initialization cannot reopen a stale load before pairing', () async {
     final store = _MemoryStore();
     final paired = Completer<NativeBridgeResult>();

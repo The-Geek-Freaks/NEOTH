@@ -12,20 +12,21 @@
     "Successful initialization is cached for that authority epoch before publishing state. Enrollment and pending-conversation checkpoint become visible together; partial restoration cannot admit a chat.",
     "Concurrent startup/pair operations share one restoration future. Cleanup checks epoch and exact future identity; an old load cannot clear a newer flight.",
     "Forget advances the existing authority epoch, forcing a fresh load before a new pairing. Old completions cannot publish state or authorize a new pair.",
-    "A failed protected-store read blocks pairing without displaying backend payload; a later explicit attempt can retry. Existing native/store/delivery owners are unchanged."
+    "A failed protected-store read blocks pairing without displaying backend payload; a later explicit attempt can retry. Existing native/store/delivery owners are unchanged.",
+    "Invalidate the cached empty enrollment before saving an accepted pairing. A commit-then-error save acknowledgement forces a fresh protected-store read on the next explicit attempt; a retained identity cannot be replaced."
   ],
   "sourceBindings": [
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
-      "sha256": "ECF8EDAAB82341DA23D16F273109801ECC7BB4DF1665BFAAC4348C95D7490FF0"
+      "sha256": "EF763CC7C0BE2A2C79DEE68FDFC5C5394BD8E58856217CC104C69AC124B675CF"
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "sha256": "B0D4480C7F5938672AB37C29F771DE9A7C02F5AB22594F10CF94302C85DC1D03"
+      "sha256": "257E413DAC524DC4EA21E7D42BC4A64D3060E77F5C6CFE22502816FB4F567248"
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "sha256": "87F113B47138405595E266FE9F6300C5EAF9DC9583E340D49AC3B010CC05EF8C"
+      "sha256": "E465C55D79823577432CAB7EAB5A61095721E5D201A0F92BADFE0097521E4374"
     }
   ],
   "newFlutterCases": [
@@ -34,10 +35,11 @@
     "JM05 pairing waits for retained enrollment and never replaces it during startup",
     "JM05 concurrent startup and pairing share one load and one native operation",
     "JM05 failed enrollment read blocks pairing and a later explicit attempt can retry",
-    "JM05 forgotten startup load cannot authorize pairing or clear a newer restoration"
+    "JM05 forgotten startup load cannot authorize pairing or clear a newer restoration",
+    "JM05 uncertain enrollment save forces a fresh read before another pairing"
   ],
-  "newFlutterCaseCount": 6,
-  "verification": "Six controlled-future Flutter cases added; root text/diff review and GPT-6.1 Terra high prompt-only architecture/Flutter review. Reviewer-found second-load gap fixed using per-epoch initialization and atomic publication. No executable validation locally.",
+  "newFlutterCaseCount": 7,
+  "verification": "Seven controlled-future Flutter cases added; root text/diff and GPT-6.1 Terra high prompt-only review. The first six passed on predecessor 81aef90a in hosted run42033801059. The seventh commit-then-error save recovery and current changed source await successor hosted qualification. No executable validation locally.",
   "hostedAccepted": false,
   "localExecutableValidationRan": false,
   "nativeDeviceAccepted": false,
@@ -47,5 +49,11 @@
     "Epoch invalidation does not cancel an already issued native pairing effect or infer its remote outcome.",
     "Fresh hosted Flutter analysis/tests and actual Android/iOS device, signing and release acceptance remain separate and open.",
     "Whole A05 and GOLD-R4-12 are not closed by this startup repair."
-  ]
+  ],
+  "predecessorHostedProof": {
+    "run": 42033801059,
+    "producer": "81aef90a948241842576f4fe40db5c8520efe611",
+    "cases": 6,
+    "scope": "Flutter analysis and all package tests on predecessor only; no native/device/release acceptance"
+  }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T13:10:17.2588690Z",
-  "validationStatus": "W2685_MOBILE_SOURCE_QA_MODE_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T13:19:41.9041038Z",
+  "validationStatus": "static-reviewed-hosted-save-recovery-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -468,8 +468,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
-      "bytes": 30100,
-      "sha256": "E5BB4D3A9A0070364BA82CDC9D20CDD13F194337B21ED26F9EEF81338F4E9D1C"
+      "bytes": 30360,
+      "sha256": "A0FE136910C6DC71463490440CC37C678B6FE977BF4F65AA4B9A5982920FCBEB"
     },
     {
       "path": "apps/neoth_companion/lib/companion_terminal_presentation.dart",
@@ -553,8 +553,8 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "bytes": 54168,
-      "sha256": "28AAAF418056C186A90301A4995ECE5FD82C4BBCA02D1A752A7FC7448C9054FC"
+      "bytes": 55210,
+      "sha256": "F67C85C9E95DD29F8CD5C9300129CCE0E196B1EDBB06ABC08BE2125F74D1F04D"
     },
     {
       "path": "apps/neoth_companion/test/companion_terminal_presentation_test.dart",
@@ -4898,8 +4898,8 @@
     },
     {
       "path": "docs/verification/gold-wave2684-mobile-enrollment-startup.json",
-      "bytes": 3269,
-      "sha256": "6A2EE99EE337A946BB593F3C455DD874F68A17AC2BC5D778EC85E63AB7E51EDE"
+      "bytes": 3886,
+      "sha256": "1D0E27C1FC79A72DDED2CC90A9AB5AC446051A508A5CDDC26171D7C279C6C320"
     },
     {
       "path": "docs/verification/gold-wave2685-mobile-source-qa-mode.json",
@@ -6158,8 +6158,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2793138,
-      "sha256": "72638BABC2AD1D326A9B4BC374A7E6BEF6474F253238E830C4F23136472FF0F6"
+      "bytes": 2793913,
+      "sha256": "7F85F5D6AD40851837B9F90448433EB861E120983CC9D0DDD8F89CF859DEB136"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

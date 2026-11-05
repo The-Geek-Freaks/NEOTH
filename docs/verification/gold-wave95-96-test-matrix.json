@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2685_MOBILE_SOURCE_QA_MODE_HOSTED_PENDING",
+  "status": "static-reviewed-hosted-save-recovery-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 469927,
-    "sha256": "7B2C304725CB88169127127C00E7E1CFA916B99095AFB2071054974F1B88F33F"
+    "bytes": 469929,
+    "sha256": "DADB315AFD2FBF3DA6C13FCA1D1D44C313B099B4902D66D9A38186C1C9F7C915"
   },
   "sourceInputs": 2564,
   "requiredNativeTests": [
@@ -93629,6 +93629,38 @@
       }
     ],
     "note": "Existing mobile producer gains explicit default-off source-only mode. Same pinned Flutter analysis and all tests; default native DAG retained; mutually exclusive bootstrap enforced.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2684MobileSaveRecovery": {
+    "base": "81aef90a948241842576f4fe40db5c8520efe611",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 30360,
+        "sha256": "A0FE136910C6DC71463490440CC37C678B6FE977BF4F65AA4B9A5982920FCBEB",
+        "blob": "adfade46886001f79e19ff036bac39ec2e509162"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 55210,
+        "sha256": "F67C85C9E95DD29F8CD5C9300129CCE0E196B1EDBB06ABC08BE2125F74D1F04D",
+        "blob": "636ff67ce1bf97784e824652cee13be4bc59c41c"
+      },
+      {
+        "path": "docs/verification/gold-wave2684-mobile-enrollment-startup.json",
+        "bytes": 3886,
+        "sha256": "1D0E27C1FC79A72DDED2CC90A9AB5AC446051A508A5CDDC26171D7C279C6C320",
+        "blob": "93b7aebb2cdb192a1f7419f34e96972b4e6ae800"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2793913,
+        "sha256": "7F85F5D6AD40851837B9F90448433EB861E120983CC9D0DDD8F89CF859DEB136",
+        "blob": "d39415ce763a8dd6e1f73f9d6c5b77ae403c34bf"
+      }
+    ],
+    "note": "Invalidate empty enrollment cache before ambiguous protected-store save; seven Flutter cases, first six predecessor-hosted accepted, current successor pending; BSOD hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
