@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T12:39:13.8915398Z",
-  "validationStatus": "W2682_OLLAMA_FORMAT_BOUND_NATIVE_PENDING",
+  "capturedUtc": "2026-11-05T12:50:22.1441681Z",
+  "validationStatus": "W2683_REPLAY_TRIAL_EVIDENCE_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1763,8 +1763,8 @@
     },
     {
       "path": "docs/gold-wave787-workflow-replay.md",
-      "bytes": 5239,
-      "sha256": "D6F7CC8493248C436BA61E23DF0A9202AE1A2356D76D79C5B65623E91A469446"
+      "bytes": 7191,
+      "sha256": "C396CAD39B802A47751E095E7ED2709498AD8F7B5D455F02B420DDAD65130331"
     },
     {
       "path": "docs/gold-wave790-video-url.md",
@@ -4892,6 +4892,11 @@
       "sha256": "4A8D3AF8DA2D87C160B6A711BE7D3AEE478EAA972494C4AF6577B5B24CA01D9A"
     },
     {
+      "path": "docs/verification/gold-wave2683-replay-trial-evidence.json",
+      "bytes": 3054,
+      "sha256": "C6124012084296D3740AC76AAACEE77A562A034348B02356BB6F0CC4F0340A85"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6143,8 +6148,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2789432,
-      "sha256": "CF362F85155892D3A8A58E64A594374AB4E9811A3E50923B1A39D7AAA418AFC5"
+      "bytes": 2790987,
+      "sha256": "83DE47CF69A3B7841FADFB21FCA1D10F611115FACC583D1101247108440A8B3A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7583,8 +7588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/workflow_replay.rs",
-      "bytes": 34347,
-      "sha256": "C19970FA0992E2D087FD2BCF44B8DA5CA607DCBB6C89335FE7A4FC447577385B"
+      "bytes": 47544,
+      "sha256": "B5E32E2D6977CCF138E2521229F4F251B4720D718D3DC8D6D59CB955029CB96F"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",

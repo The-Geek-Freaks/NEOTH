@@ -1,0 +1,39 @@
+{
+  "schema": "neoth.wave2683.replay-trial-evidence.v1",
+  "producerBase": "d05b93af9a147ae8f93790428a9a3fa9713fd21c",
+  "batch": "B07",
+  "roadmap": [
+    "ADOPT-20261012-A01"
+  ],
+  "finding": "Repeated replay runs previously overwrote fixed report names in the same output directory; an interruption before final aggregate publication retained no per-episode report.",
+  "change": [
+    "Each run atomically creates a fresh UUID trial directory under the selected output parent. All artifacts use exclusive file creation plus file synchronization.",
+    "Before the first replay turn, an observational contract binds exact corpus bytes, serialized per-episode inputs, public config projection, requested skills, build revision, effect declarations, output schema and complete shipped replay-source hash as verifier identity.",
+    "Each observed turn is recorded before advancing. Receipt binds exact contract bytes, ordinal, actual skill snapshot and original typed-terminal score; verified/failed/inconclusive applies only to contains-v1 terminal-text scoring.",
+    "Final original-schema JSON and Markdown reports are followed by a separate contract/report-hash completion artifact. Existing release/comparison report gates remain unchanged.",
+    "A write failure stops the run without retrying provider effects; earlier files remain. Trial path is printed before first turn. Missing or partial receipt after interruption is unknown, never inferred not-run."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/cli/workflow_replay.rs",
+      "sha256": "B5E32E2D6977CCF138E2521229F4F251B4720D718D3DC8D6D59CB955029CB96F"
+    }
+  ],
+  "newCases": [
+    "cli::workflow_replay::tests::trial_contract_binds_exact_inputs_and_verifier_without_raw_prompt",
+    "cli::workflow_replay::tests::trial_receipts_bind_observations_and_preserve_inconclusive_outcomes",
+    "cli::workflow_replay::tests::trial_outputs_never_replace_prior_trials_or_acknowledged_receipts",
+    "cli::workflow_replay::tests::trial_artifact_failure_preserves_partial_evidence_without_terminal_report"
+  ],
+  "requiredPortableNativeTests": 3305,
+  "review": "GPT-6.1 Terra high prompt-only architecture and independent Rust review of supplied flow; no definite finding. Root text/diff inspection. Compiler and tests have not run locally.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "This observational replay slice does not pre-bind effective skill content before execution, authorize effects, implement selective recovery, or claim whole A01 acceptance.",
+    "Consent/provider construction precedes the contract; setup effects are not proven by this sidecar. Build source can remain unknown and existing release gates reject unknown source.",
+    "File synchronization and hashes do not provide tamper-proof storage or platform-independent directory crash durability.",
+    "contains-v1 verifies a text predicate, not product correctness; unknown or missing observations never become verifier success."
+  ]
+}

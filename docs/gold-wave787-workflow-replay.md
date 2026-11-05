@@ -77,10 +77,39 @@ work, council, and loop routes are not entered. The report states
 `external_tools: "deny_all"`; it does not manufacture tool-attempt counters.
 
 Without `--out-dir`, reports stay under the temporary replay root. With
-`--out-dir`, the command writes `workflow-replay-report-v1.json` and
-`workflow-replay-report-v1.md` to the supplied directory. `--json` also prints
-the JSON report. A failed or errored episode makes the command fail after it
-writes the report.
+`--out-dir`, each run creates a fresh `trial-<uuid>` child under the supplied
+directory. The command prints that child's path and writes
+`workflow-replay-report-v1.json` and `workflow-replay-report-v1.md` there.
+Existing trials and files are never overwritten. `--json` still prints the
+unchanged v1 JSON report. A failed or errored episode makes the command fail
+after it writes the report.
+The trial path is also printed to stderr before its first turn, including when
+`--json` is used, so an interrupted run's retained directory can be found.
+
+Before the first replay turn, the trial contains
+`workflow-replay-trial-contract-v1.json`: exact corpus and serialized episode
+input hashes, requested skills, the public configuration projection, build
+revision, declared effects, output schema and `contains-v1` verifier identity.
+Its verifier hash covers the complete shipped `workflow_replay.rs` source,
+including scoring and typed-terminal checks. Consent and provider construction
+precede this artifact; it is not a receipt for those setup operations.
+
+After each turn, `episode-0000.json`, `episode-0001.json`, and so on bind the
+observed episode result to the exact contract bytes. `verified`, `failed`, and
+`inconclusive` describe only the terminal-text contains check. Actual selected
+skill hashes are observations in these receipts, not pre-run skill bindings.
+These artifacts do not authorize effects, selective resumption, or automatic
+retries, and a positive text match does not prove product correctness.
+
+Artifact writes use exclusive creation and file synchronization. A write error
+stops the run and retains earlier artifacts. A missing or partial receipt after
+a crash has an unknown outcome; it does not mean `not-run`. No automatic resume
+is attempted. The files and hashes support comparison and integrity checks,
+not tamper-proof storage or platform-independent crash durability. Existing
+release and comparison gates continue consuming the v1 report at its new path.
+After both aggregate reports are written, a separate
+`workflow-replay-trial-completion-v1.json` binds the exact JSON report hash to
+the contract hash. Its absence means aggregate publication was not confirmed.
 
 ## Scoring and report provenance
 

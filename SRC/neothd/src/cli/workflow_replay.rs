@@ -32,7 +32,7 @@ pub struct WorkflowReplayCaptureArgs {
 pub struct WorkflowReplayRunArgs {
     /// Versioned operator-curated workflow replay corpus.
     pub corpus: PathBuf,
-    /// Persist reports here. Without it, reports remain in the contained temp root.
+    /// Parent for a new trial directory. Without it, use the contained temp root.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
     /// Print the machine report to stdout as JSON.
@@ -117,6 +117,147 @@ struct WorkflowReplayReportV1 {
     containment: ReplayContainmentV1,
     episodes: Vec<EpisodeReportV1>,
     passed: bool,
+}
+
+/// Observational replay provenance, not an authorization to replay effects or
+/// admit a dependent workflow. Actual skill selection remains owned by chat.
+#[derive(Serialize)]
+struct ReplayTrialContractV1<'a> {
+    schema_version: u32,
+    kind: &'static str,
+    run_id: &'a str,
+    corpus_sha256: String,
+    source_revision: &'a str,
+    config: &'a ReplayConfigProjectionV1,
+    episodes: Vec<ReplayTrialInputV1<'a>>,
+    verifier: &'static str,
+    verifier_source_sha256: String,
+    verifier_source_scope: &'static str,
+    output_schema: &'static str,
+    declared_effects: [&'static str; 3],
+    external_tools: &'static str,
+    skill_binding: &'static str,
+    authority: &'static str,
+}
+
+#[derive(Serialize)]
+struct ReplayTrialInputV1<'a> {
+    episode_id: &'a str,
+    input_sha256: String,
+    requested_skill: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct ReplayTrialReceiptV1<'a> {
+    schema_version: u32,
+    kind: &'static str,
+    contract_sha256: &'a str,
+    ordinal: usize,
+    verifier_outcome: &'static str,
+    verification_scope: &'static str,
+    episode: &'a EpisodeReportV1,
+}
+
+struct ReplayTrialOutput {
+    directory: PathBuf,
+    contract_sha256: String,
+}
+
+impl ReplayTrialOutput {
+    fn begin(
+        parent: &Path,
+        corpus_bytes: &[u8],
+        corpus: &WorkflowCorpusV1,
+        config: &ReplayConfigProjectionV1,
+        source_revision: &str,
+    ) -> Result<Self> {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        std::fs::create_dir_all(parent)?;
+        let directory = parent.join(format!("trial-{run_id}"));
+        // Atomic directory creation and create-new files preserve prior trials.
+        // A partial directory is retained on failure; it is never a retry token.
+        std::fs::create_dir(&directory)?;
+        let episodes = corpus
+            .episodes
+            .iter()
+            .map(|episode| {
+                Ok(ReplayTrialInputV1 {
+                    episode_id: &episode.episode_id,
+                    input_sha256: sha256(&serde_json::to_vec(episode)?),
+                    requested_skill: episode.skill.as_deref(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let contract = ReplayTrialContractV1 {
+            schema_version: 1,
+            kind: "workflow-replay-trial-contract-v1",
+            run_id: &run_id,
+            corpus_sha256: sha256(corpus_bytes),
+            source_revision,
+            config,
+            episodes,
+            verifier: SCORER,
+            verifier_source_sha256: sha256(include_bytes!("workflow_replay.rs")),
+            verifier_source_scope: "entire_compiled_workflow_replay_rs",
+            output_schema: REPORT_KIND,
+            declared_effects: [
+                "provider_requests",
+                "actual_home_provider_consent_and_cost_usage_audit",
+                "transient_replay_home_and_workspace",
+            ],
+            external_tools: "deny_all",
+            skill_binding: "requested_only_actual_snapshot_in_episode_receipt",
+            authority: "observational_only_no_effect_or_resume_admission",
+        };
+        let bytes = serde_json::to_vec_pretty(&contract)?;
+        write_new_bytes(&directory.join("workflow-replay-trial-contract-v1.json"), &bytes)?;
+        Ok(Self {
+            directory,
+            contract_sha256: sha256(&bytes),
+        })
+    }
+
+    fn record_episode(&self, ordinal: usize, episode: &EpisodeReportV1) -> Result<()> {
+        let receipt = ReplayTrialReceiptV1 {
+            schema_version: 1,
+            kind: "workflow-replay-trial-receipt-v1",
+            contract_sha256: &self.contract_sha256,
+            ordinal,
+            verifier_outcome: match episode.outcome {
+                "pass" => "verified",
+                "fail" => "failed",
+                _ => "inconclusive",
+            },
+            verification_scope: "contains_v1_terminal_text_only_not_product_correctness",
+            episode,
+        };
+        write_new_json(
+            &self.directory.join(format!("episode-{ordinal:04}.json")),
+            &receipt,
+        )
+    }
+
+    fn finish(&self, report: &WorkflowReplayReportV1) -> Result<String> {
+        let json = serde_json::to_string_pretty(report)?;
+        write_new_bytes(
+            &self.directory.join("workflow-replay-report-v1.json"),
+            json.as_bytes(),
+        )?;
+        write_new_bytes(
+            &self.directory.join("workflow-replay-report-v1.md"),
+            render_markdown(report).as_bytes(),
+        )?;
+        write_new_json(
+            &self.directory.join("workflow-replay-trial-completion-v1.json"),
+            &serde_json::json!({
+                "schema_version": 1,
+                "kind": "workflow-replay-trial-completion-v1",
+                "contract_sha256": self.contract_sha256,
+                "report_sha256": sha256(json.as_bytes()),
+            }),
+        )?;
+        Ok(json)
+    }
 }
 
 #[derive(Default)]
@@ -234,9 +375,23 @@ pub async fn run_workflow_replay_cmd(args: WorkflowReplayRunArgs) -> Result<()> 
         ),
         effective_public_config_sha256: public_config_fingerprint(&config)?,
     };
+    let source_revision = option_env!("NEOTH_SOURCE_HEAD")
+        .or(option_env!("GITHUB_SHA"))
+        .or(option_env!("VERGEN_GIT_SHA"))
+        .unwrap_or("unknown")
+        .to_owned();
+    let out_parent = args.out_dir.unwrap_or_else(|| replay_root.join("output"));
+    let trial = ReplayTrialOutput::begin(
+        &out_parent,
+        &raw,
+        &corpus,
+        &config_projection,
+        &source_revision,
+    )?;
+    eprintln!("workflow replay trial: {}", trial.directory.display());
 
     let mut episodes = Vec::with_capacity(corpus.episodes.len());
-    for episode in &corpus.episodes {
+    for (ordinal, episode) in corpus.episodes.iter().enumerate() {
         let mut sink = ReplaySink::default();
         let result = crate::cli::chat::run_workflow_replay_turn(
             config.clone(),
@@ -260,7 +415,7 @@ pub async fn run_workflow_replay_cmd(args: WorkflowReplayRunArgs) -> Result<()> 
             .ok()
             .and_then(|observation| observation.selected_skill.as_ref());
         let (outcome, reason) = score_replay_turn(&result, &sink, &episode.expected_contains);
-        episodes.push(EpisodeReportV1 {
+        let episode_report = EpisodeReportV1 {
             episode_id: episode.episode_id.clone(),
             outcome,
             reason,
@@ -269,18 +424,18 @@ pub async fn run_workflow_replay_cmd(args: WorkflowReplayRunArgs) -> Result<()> 
             selected_skill: selected_skill.map(|skill| skill.id.clone()),
             selected_skill_content_sha256: selected_skill.map(|skill| skill.content_sha256.clone()),
             response_sha256: (!response.is_empty()).then(|| sha256(response.as_bytes())),
-        });
+        };
+        // Stop on evidence failure. A missing receipt is unknown, never proof
+        // that a provider request did not execute and may be repeated.
+        trial.record_episode(ordinal, &episode_report)?;
+        episodes.push(episode_report);
     }
     let passed = episodes.iter().all(|episode| episode.outcome == "pass");
     let report = WorkflowReplayReportV1 {
         schema_version: 1,
         kind: REPORT_KIND,
         corpus_sha256: sha256(&raw),
-        source_revision: option_env!("NEOTH_SOURCE_HEAD")
-            .or(option_env!("GITHUB_SHA"))
-            .or(option_env!("VERGEN_GIT_SHA"))
-            .unwrap_or("unknown")
-            .to_owned(),
+        source_revision,
         scorer: SCORER,
         config: config_projection,
         containment: ReplayContainmentV1 {
@@ -292,19 +447,11 @@ pub async fn run_workflow_replay_cmd(args: WorkflowReplayRunArgs) -> Result<()> 
         episodes,
         passed,
     };
-    let out_dir = args.out_dir.unwrap_or_else(|| replay_root.join("output"));
-    std::fs::create_dir_all(&out_dir)
-        .with_context(|| format!("create replay report directory {}", out_dir.display()))?;
-    let json = serde_json::to_string_pretty(&report)?;
-    std::fs::write(out_dir.join("workflow-replay-report-v1.json"), &json)?;
-    std::fs::write(
-        out_dir.join("workflow-replay-report-v1.md"),
-        render_markdown(&report),
-    )?;
+    let json = trial.finish(&report)?;
     if args.json {
         println!("{json}");
     } else {
-        println!("workflow replay report written: {}", out_dir.display());
+        println!("workflow replay report written: {}", trial.directory.display());
         println!(
             "workflow replay: {}",
             if report.passed { "PASS" } else { "FAIL" }
@@ -445,6 +592,10 @@ fn read_bounded(path: &Path, name: &str) -> Result<Vec<u8>> {
 }
 
 fn write_new_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    write_new_bytes(path, &serde_json::to_vec_pretty(value)?)
+}
+
+fn write_new_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .context("workflow replay output has no parent directory")?;
@@ -454,8 +605,8 @@ fn write_new_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     use std::io::Write as _;
     let mut file = options
         .open(path)
-        .with_context(|| format!("create workflow replay corpus {}", path.display()))?;
-    file.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
+        .with_context(|| format!("create workflow replay artifact {}", path.display()))?;
+    file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
 }
@@ -563,6 +714,145 @@ mod tests {
     struct FailingReplayProvider {
         calls: AtomicUsize,
         requests: Mutex<Vec<Request>>,
+    }
+
+    fn trial_fixture() -> (WorkflowCorpusV1, ReplayConfigProjectionV1) {
+        (
+            WorkflowCorpusV1 {
+                schema_version: 1,
+                kind: CORPUS_KIND.to_owned(),
+                provenance: CorpusProvenanceV1 {
+                    label: "operator-curated+inputhash".to_owned(),
+                    input_sha256: "a".repeat(64),
+                },
+                episodes: vec![WorkflowEpisodeV1 {
+                    episode_id: "episode-one".to_owned(),
+                    prompt: "private trial prompt".to_owned(),
+                    expected_contains: "private expected text".to_owned(),
+                    skill: Some("requested-skill".to_owned()),
+                }],
+            },
+            ReplayConfigProjectionV1 {
+                provider: "recording-provider".to_owned(),
+                model: "recording-model".to_owned(),
+                max_per_request: 64,
+                fingerprint_sha256: config_fingerprint("recording-provider", "recording-model", 64),
+                effective_public_config_sha256: "b".repeat(64),
+            },
+        )
+    }
+
+    fn trial_episode(outcome: &'static str) -> EpisodeReportV1 {
+        EpisodeReportV1 {
+            episode_id: "episode-one".to_owned(),
+            outcome,
+            reason: None,
+            provider: "recording-provider".to_owned(),
+            model: "recording-model".to_owned(),
+            selected_skill: Some("actual-skill".to_owned()),
+            selected_skill_content_sha256: Some("c".repeat(64)),
+            response_sha256: Some("d".repeat(64)),
+        }
+    }
+
+    #[test]
+    fn trial_contract_binds_exact_inputs_and_verifier_without_raw_prompt() {
+        let parent = tempfile::tempdir().unwrap();
+        let (mut corpus, mut config) = trial_fixture();
+        let raw = serde_json::to_vec(&corpus).unwrap();
+        let first = ReplayTrialOutput::begin(parent.path(), &raw, &corpus, &config, "revision-a").unwrap();
+        let bytes = std::fs::read(first.directory.join("workflow-replay-trial-contract-v1.json")).unwrap();
+        let contract: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(first.contract_sha256, sha256(&bytes));
+        assert_eq!(contract["corpus_sha256"], sha256(&raw));
+        assert_eq!(contract["source_revision"], "revision-a");
+        assert_eq!(contract["episodes"][0]["input_sha256"], sha256(&serde_json::to_vec(&corpus.episodes[0]).unwrap()));
+        assert_eq!(contract["verifier_source_sha256"], sha256(include_bytes!("workflow_replay.rs")));
+        assert_eq!(contract["episodes"][0]["requested_skill"], "requested-skill");
+        assert_eq!(contract["authority"], "observational_only_no_effect_or_resume_admission");
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(!text.contains("private trial prompt"));
+        assert!(!text.contains("private expected text"));
+
+        corpus.episodes[0].expected_contains = "changed expectation".to_owned();
+        config.effective_public_config_sha256 = "e".repeat(64);
+        let changed_raw = serde_json::to_vec(&corpus).unwrap();
+        let second = ReplayTrialOutput::begin(parent.path(), &changed_raw, &corpus, &config, "revision-b").unwrap();
+        let changed: serde_json::Value = serde_json::from_slice(&std::fs::read(second.directory.join("workflow-replay-trial-contract-v1.json")).unwrap()).unwrap();
+        assert_ne!(changed["episodes"][0]["input_sha256"], contract["episodes"][0]["input_sha256"]);
+        assert_ne!(changed["config"], contract["config"]);
+        assert_ne!(changed["corpus_sha256"], contract["corpus_sha256"]);
+        assert_eq!(std::fs::read(first.directory.join("workflow-replay-trial-contract-v1.json")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn trial_receipts_bind_observations_and_preserve_inconclusive_outcomes() {
+        let parent = tempfile::tempdir().unwrap();
+        let (corpus, config) = trial_fixture();
+        let trial = ReplayTrialOutput::begin(parent.path(), b"exact corpus", &corpus, &config, "unknown").unwrap();
+        for (ordinal, (outcome, expected)) in [("pass", "verified"), ("fail", "failed"), ("error", "inconclusive")].into_iter().enumerate() {
+            trial.record_episode(ordinal, &trial_episode(outcome)).unwrap();
+            let receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(trial.directory.join(format!("episode-{ordinal:04}.json"))).unwrap()).unwrap();
+            assert_eq!(receipt["contract_sha256"], trial.contract_sha256);
+            assert_eq!(receipt["verifier_outcome"], expected);
+            assert_eq!(receipt["episode"]["selected_skill"], "actual-skill");
+            assert_eq!(receipt["episode"]["selected_skill_content_sha256"], "c".repeat(64));
+            assert_eq!(receipt["verification_scope"], "contains_v1_terminal_text_only_not_product_correctness");
+        }
+    }
+
+    #[test]
+    fn trial_outputs_never_replace_prior_trials_or_acknowledged_receipts() {
+        let parent = tempfile::tempdir().unwrap();
+        let (corpus, config) = trial_fixture();
+        let first = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
+        let second = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
+        assert_ne!(first.directory, second.directory);
+        first.record_episode(0, &trial_episode("pass")).unwrap();
+        let receipt_path = first.directory.join("episode-0000.json");
+        let original = std::fs::read(&receipt_path).unwrap();
+        assert!(first.record_episode(0, &trial_episode("error")).is_err());
+        assert_eq!(std::fs::read(&receipt_path).unwrap(), original);
+        assert!(!second.directory.join("episode-0000.json").exists());
+        let report = WorkflowReplayReportV1 {
+            schema_version: 1,
+            kind: REPORT_KIND,
+            corpus_sha256: sha256(b"corpus"),
+            source_revision: "revision".to_owned(),
+            scorer: SCORER,
+            config,
+            containment: ReplayContainmentV1 {
+                transient_home: true,
+                transient_workspace: true,
+                actual_home_effects: vec!["provider_consent_and_cost_usage_audit"],
+                external_tools: "deny_all",
+            },
+            episodes: vec![trial_episode("pass")],
+            passed: true,
+        };
+        let json = first.finish(&report).unwrap();
+        let completion: serde_json::Value = serde_json::from_slice(&std::fs::read(first.directory.join("workflow-replay-trial-completion-v1.json")).unwrap()).unwrap();
+        assert_eq!(completion["contract_sha256"], first.contract_sha256);
+        assert_eq!(completion["report_sha256"], sha256(json.as_bytes()));
+        assert!(first.finish(&report).is_err());
+        assert_eq!(std::fs::read_to_string(first.directory.join("workflow-replay-report-v1.json")).unwrap(), json);
+        assert!(!second.directory.join("workflow-replay-report-v1.json").exists());
+    }
+
+    #[test]
+    fn trial_artifact_failure_preserves_partial_evidence_without_terminal_report() {
+        let parent = tempfile::tempdir().unwrap();
+        let (corpus, config) = trial_fixture();
+        let blocked_parent = parent.path().join("not-a-directory");
+        std::fs::write(&blocked_parent, b"preserve").unwrap();
+        assert!(ReplayTrialOutput::begin(&blocked_parent, b"corpus", &corpus, &config, "revision").is_err());
+        let trial = ReplayTrialOutput::begin(parent.path(), b"corpus", &corpus, &config, "revision").unwrap();
+        trial.record_episode(0, &trial_episode("pass")).unwrap();
+        std::fs::create_dir(trial.directory.join("episode-0001.json")).unwrap();
+        assert!(trial.record_episode(1, &trial_episode("pass")).is_err());
+        assert!(trial.directory.join("episode-0000.json").is_file());
+        assert!(!trial.directory.join("workflow-replay-report-v1.json").exists());
+        assert_eq!(std::fs::read(&blocked_parent).unwrap(), b"preserve");
     }
 
     #[async_trait]
