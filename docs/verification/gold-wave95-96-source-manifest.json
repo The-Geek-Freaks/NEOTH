@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T08:11:11.4193870Z",
-  "validationStatus": "MCP_SECRET_ERROR_BOUNDARIES_SOURCE_READY_NATIVE_PENDING",
+  "capturedUtc": "2026-11-05T08:13:56.7554478Z",
+  "validationStatus": "MCP_SECRET_ERROR_BOUNDARIES_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4818,8 +4818,8 @@
     },
     {
       "path": "docs/verification/gold-wave2667-mcp-credential-errors.json",
-      "bytes": 2624,
-      "sha256": "80BACDB37A6BD174B0804B3D51D0A5EFABB3900AC6AA5395CDDF5D7684D853F7"
+      "bytes": 3352,
+      "sha256": "515ADAE6550FCD70CF651AD280785DACD9C33E3EFD63ACA6682FA64C71AE2BA3"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -8798,8 +8798,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
-      "bytes": 98937,
-      "sha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643"
+      "bytes": 98914,
+      "sha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588"
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "MCP_SECRET_ERROR_BOUNDARIES_SOURCE_READY_NATIVE_PENDING",
+  "status": "MCP_SECRET_ERROR_BOUNDARIES_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 466092,
-    "sha256": "63ADF27AC65E904E2898EDC4E3DF6782C5FC43177A857D940403FFC9E6719828"
+    "bytes": 466102,
+    "sha256": "446A749898533DADEA4E209A2BDC74216D2CF091376B3828D651AD55F6BA37F0"
   },
   "sourceInputs": 2544,
   "requiredNativeTests": [
@@ -19465,49 +19465,49 @@
     {
       "test": "mcp::config::tests::secret_store_read_errors_discard_backend_payloads",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::secret_store_open_errors_discard_backend_payloads",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::environment_errors_distinguish_missing_and_unicode_without_payloads",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::injected_secret_source_opens_once_and_preserves_values",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::from_secret_resolves_through_the_store",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::a_missing_secret_fails_loud_and_never_echoes_a_value",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::an_empty_secret_name_is_refused",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::config::tests::plain_values_and_from_env_are_untouched_by_the_new_path",
       "sourcePath": "SRC/neothd/src/mcp/config.rs",
-      "sourceSha256": "23A52B4D483E6FAFFECFF212F864B0EBE1589A7CB4FDBAC5299F935872C71643",
+      "sourceSha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
       "junitClass": "neoth"
     }
   ],
@@ -92259,6 +92259,26 @@
       }
     ],
     "note": "Four new safe-error regressions plus four existing MCP credential cases registered; current compile/runtime/native pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2667HostedFormat": {
+    "base": "d8cee29ef134471e91b56ff60ef000de2e3c3e4b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2667-mcp-credential-errors.json",
+        "bytes": 3352,
+        "sha256": "515ADAE6550FCD70CF651AD280785DACD9C33E3EFD63ACA6682FA64C71AE2BA3",
+        "blob": "43c266b5614038714c8816913fcfa43a9f7dc469"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/config.rs",
+        "bytes": 98914,
+        "sha256": "6197254E004A8AF21C495734AA2202D2D89413ED97B07A21A0D71A2424123588",
+        "blob": "aa30eef71f32e0db1a89e11cd35c4bb24ce90927"
+      }
+    ],
+    "note": "Authenticated hosted single-file rustfmt patch imported; four new and four existing cases stay source-bound; local formatter not executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

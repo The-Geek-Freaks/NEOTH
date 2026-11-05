@@ -459,11 +459,9 @@ impl McpServerConfig {
         &self,
         store: Option<&dyn crate::config::keychain::SecretStore>,
     ) -> Result<HashMap<String, String>> {
-        self.resolve_env_with_sources(
-            store,
-            crate::config::keychain::open_store,
-            |key| std::env::var(key),
-        )
+        self.resolve_env_with_sources(store, crate::config::keychain::open_store, |key| {
+            std::env::var(key)
+        })
     }
 
     fn resolve_env_with_sources(
