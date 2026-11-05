@@ -16,7 +16,7 @@
   "sources": [
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "E77567154EF951CAD2313E414A9E47074A2E81C1BB6B8C3374614BE9D54DF7C0"
+      "sha256": "EFF65A8576B8395DBC6C97ECA3DF81CB54F0895F3B2B610864C7AB0BEDE0C167"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -28,7 +28,7 @@
     },
     {
       "path": "SRC/neothd/src/recall/reconstruct.rs",
-      "sha256": "F1405D4EF335B81FD6AB91ED0AAC94013B3125666CA8D342D6CE7228FE495DA4"
+      "sha256": "5A48E4693F1B1EA28B0B17654EF33E5370C95A6367EE3BCEAEDC539A3A5E0DD1"
     },
     {
       "path": "docs/cli-reference.md",
@@ -56,5 +56,14 @@
     "No device override, native GUI change, live device, full A07 or Gold acceptance.",
     "Current active42092106950 uses predecessor fd5c0b37 and does not execute these cases."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42102992009,
+    "artifact": 13448514767,
+    "producer": "33c34323dbe527facb14ac86f166006737627807",
+    "apiZipAndMemberHashesVerified": true,
+    "exactPrePostImages": 2,
+    "localFormatterExecuted": false,
+    "proof": "work/gold-20260906/wave2705-hosted-format/FORMAT_IMPORT.json"
+  }
 }

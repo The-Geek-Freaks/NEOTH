@@ -16244,7 +16244,9 @@ fn hydrate_resume_context(
         if cp.mode != "chat"
             || !matches!(cp.phase.as_str(), "chat:session-start" | "chat:pre-compact")
         {
-            return Err("checkpoint local session identity has an invalid producer scope".to_string());
+            return Err(
+                "checkpoint local session identity has an invalid producer scope".to_string(),
+            );
         }
         crate::profile::communication::session::validate_control_id(&cp.session_id)
             .map_err(|_| "checkpoint local session identity is invalid".to_string())?;
@@ -26528,7 +26530,10 @@ template = "[REDACTED]"
         )
         .unwrap();
         let provider = NeverCalledProvider::default();
-        for (index, phase) in ["chat:session-start", "chat:pre-compact"].into_iter().enumerate() {
+        for (index, phase) in ["chat:session-start", "chat:pre-compact"]
+            .into_iter()
+            .enumerate()
+        {
             let cp = store_resume_identity_checkpoint(home, "retained-resume-session", phase, true);
             let args = ChatArgs {
                 message: Some("hello".to_string()),
@@ -26551,13 +26556,17 @@ template = "[REDACTED]"
             let chat_turn_pipeline::ChatPreparationOutcome::Ready(prepared) = outcome else {
                 panic!("explicit resume must prepare a fresh turn");
             };
-            assert_eq!(prepared.preparation.current_session_id, "retained-resume-session");
+            assert_eq!(
+                prepared.preparation.current_session_id,
+                "retained-resume-session"
+            );
             assert!(prepared.preparation.scoped_mcp_servers.is_empty());
             assert_eq!(
                 serde_json::to_value(&prepared.preparation.config).unwrap(),
                 serde_json::to_value(&config).unwrap()
             );
-            let (writer, joined) = wal_spawn(home.join(format!("resume-prompt-{index}.wal"))).unwrap();
+            let (writer, joined) =
+                wal_spawn(home.join(format!("resume-prompt-{index}.wal"))).unwrap();
             let prompt_args = ChatArgs {
                 system: prepared.input.system.clone(),
                 ..test_chat_args_default()
@@ -26588,8 +26597,15 @@ template = "[REDACTED]"
             drop(writer);
             joined.await.unwrap();
             let bundle = result.unwrap().0;
-            let expected = "Keep the response compact while preserving required actions and caveats.";
-            assert!(bundle.combined_system.as_deref().unwrap().contains(expected));
+            let expected =
+                "Keep the response compact while preserving required actions and caveats.";
+            assert!(
+                bundle
+                    .combined_system
+                    .as_deref()
+                    .unwrap()
+                    .contains(expected)
+            );
             let dispatch = crate::sub_agents::Dispatch {
                 agent_name: "resume-presentation".into(),
                 system: "agent-local policy".into(),
@@ -26599,7 +26615,8 @@ template = "[REDACTED]"
                 prompt: "question".into(),
                 omit_flags: crate::sub_agents::AgentOmitFlags::default(),
             };
-            let (agent, _, _) = build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
+            let (agent, _, _) =
+                build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
             assert!(agent.unwrap().contains(expected));
         }
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -26609,7 +26626,8 @@ template = "[REDACTED]"
     async fn legacy_resume_keeps_context_but_cannot_reuse_a_turn_identity() {
         let dir = tempdir().unwrap();
         let old_turn_id = "0123456789abcdef";
-        let cp = store_resume_identity_checkpoint(dir.path(), old_turn_id, "chat:pre-compact", false);
+        let cp =
+            store_resume_identity_checkpoint(dir.path(), old_turn_id, "chat:pre-compact", false);
         let hydration = hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None).unwrap();
         assert!(hydration.admitted_session_id.is_none());
         assert!(hydration.banner.contains("context-only"));
@@ -26641,7 +26659,11 @@ template = "[REDACTED]"
 
     #[tokio::test]
     async fn precompact_checkpoint_records_admitted_session_without_turn_id_fallback() {
-        for session_id in [Some("actual-local-session"), None, Some("incognito-private")] {
+        for session_id in [
+            Some("actual-local-session"),
+            None,
+            Some("incognito-private"),
+        ] {
             let dir = tempdir().unwrap();
             let segment = dir.path().join("precompact-session.wal");
             let (writer, joined) = wal_spawn(segment.clone()).unwrap();
@@ -26731,14 +26753,25 @@ template = "[REDACTED]"
     #[test]
     fn recorded_resume_rejects_invalid_identity_and_foreign_checkpoint_scope() {
         let dir = tempdir().unwrap();
-        for id in ["", " spaced", "incognito-private", "line\nbreak", &"x".repeat(257)] {
+        for id in [
+            "",
+            " spaced",
+            "incognito-private",
+            "line\nbreak",
+            &"x".repeat(257),
+        ] {
             let cp = store_resume_identity_checkpoint(dir.path(), id, "chat:session-start", true);
             assert!(matches!(
                 hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None),
                 Err(reason) if reason == "checkpoint local session identity is invalid"
             ));
         }
-        let cp = store_resume_identity_checkpoint(dir.path(), "valid-session", "channel:session-start", true);
+        let cp = store_resume_identity_checkpoint(
+            dir.path(),
+            "valid-session",
+            "channel:session-start",
+            true,
+        );
         assert!(matches!(
             hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None),
             Err(reason) if reason.contains("invalid producer scope")

@@ -64,7 +64,7 @@
   "validation": {
     "static": "Root bounded text and GPT-6.1 Terra high prompt-only algorithm review",
     "localExecutableValidationRan": false,
-    "hostedAccepted": false,
+    "hostedAccepted": true,
     "nativeAccepted": false,
     "goldAccepted": false
   },
@@ -131,7 +131,24 @@
     "cause": "All calls targeted an unknown server, so the existing no-progress guard correctly stopped before the expected third request.",
     "repair": "Existing real stdio read plus missing-server call in the same response; retain three iterations and origin assertions; additionally require exactly one actual tools/call, one success and one failure.",
     "productionGuardUnchanged": true,
-    "hostedRevalidation": "pending",
+    "hostedRevalidation": "Run42092106950 accepted135/135 on fd5c0b37276c94f33a64aa7c8450400342b92016",
     "proof": "work/gold-20260906/wave2698-council-cost-validation/ROOT_COST_FAILURE_DIAGNOSIS.json"
+  },
+  "focusedHostedAcceptance": {
+    "run": 42092106950,
+    "producer": "fd5c0b37276c94f33a64aa7c8450400342b92016",
+    "attempt": 1,
+    "platform": "ubuntu-24.04",
+    "workflowConclusion": "success",
+    "exactCases": 135,
+    "originalArtifact": 13446118233,
+    "archiveEntries": 276,
+    "sourceBindings": 46,
+    "workspaceClippy": true,
+    "publicCliBuild": true,
+    "proof": "work/gold-20260906/wave2703-council-cost-validation/ROOT_ADMISSION.json",
+    "proofSha256": "F33FEE2255EC498DAC0D7E17073CD9B0B90FB85DA572DEA387EEE30E6571B87F",
+    "fullCiAccepted": false,
+    "goldAccepted": false
   }
 }

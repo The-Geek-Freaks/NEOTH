@@ -339,7 +339,8 @@ mod tests {
         assert_ne!(cp.compute_hash(), legacy_hash);
         cp.stamp_hash();
         let current_hash = cp.checkpoint_hash.clone();
-        let roundtrip: ModeCheckpoint = serde_json::from_str(&serde_json::to_string(&cp).unwrap()).unwrap();
+        let roundtrip: ModeCheckpoint =
+            serde_json::from_str(&serde_json::to_string(&cp).unwrap()).unwrap();
         assert!(roundtrip.local_session_identity_recorded);
         assert_eq!(roundtrip.compute_hash(), current_hash);
         cp.session_id = "another-session".into();

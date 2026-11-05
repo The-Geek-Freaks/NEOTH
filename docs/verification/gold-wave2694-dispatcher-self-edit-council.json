@@ -62,7 +62,7 @@
   "validation": {
     "static": "Root bounded text review and GPT-6.1 Terra high prompt-only boundary review",
     "localExecutableValidationRan": false,
-    "hostedAccepted": false,
+    "hostedAccepted": true,
     "nativeAccepted": false,
     "goldAccepted": false
   },
@@ -124,5 +124,24 @@
     "nativeGoldAccepted": false,
     "proof": "work/gold-20260906/wave2698-council-cost-validation/ROOT_COUNCIL_ADMISSION.json",
     "limit": "Later cost fixture failed; focused Council proof remains scoped to its successful exact step and original artifact."
+  },
+  "focusedHostedAcceptance": {
+    "run": 42092106950,
+    "producer": "fd5c0b37276c94f33a64aa7c8450400342b92016",
+    "attempt": 1,
+    "platform": "ubuntu-24.04",
+    "rust": "1.91.0",
+    "workflowConclusion": "success",
+    "coreTestTypecheck": true,
+    "publicCliBuild": true,
+    "workspaceClippy": true,
+    "exactCases": 11,
+    "originalArtifact": 13447740507,
+    "archiveEntries": 28,
+    "sourceBindings": 23,
+    "proof": "work/gold-20260906/wave2703-council-cost-validation/ROOT_COUNCIL_ADMISSION.json",
+    "proofSha256": "6885DED32EAEFB645B0A05C140EB36ABCE8800B86C049AE8960613D0F2674C35",
+    "fullCiAccepted": false,
+    "goldAccepted": false
   }
 }
