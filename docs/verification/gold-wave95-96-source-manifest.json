@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T08:36:26.3227771Z",
-  "validationStatus": "STATIC_REVIEWED_SSH_FIXTURE_API_ADAPTATION_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T08:49:44.5511115Z",
+  "validationStatus": "STATIC_REVIEWED_BOUNDED_SOURCE_IDENTIFIERS_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4827,6 +4827,11 @@
       "sha256": "C704F467753577D59AF2E68157935976020FD3DBFD7BCAA03079C96C3FDFB349"
     },
     {
+      "path": "docs/verification/gold-wave2669-bounded-source-identifiers.json",
+      "bytes": 1590,
+      "sha256": "BF2F652221741CB6709D61CCD075A87A95F8FB767EACA8883F2295DDA0B4EB64"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6078,8 +6083,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2769021,
-      "sha256": "36EC89F258708E66397FE98BF0BF3D5CED89F695030AC49449E6C499268CD2A6"
+      "bytes": 2770464,
+      "sha256": "B3B07DAC365E5197FF862CF2F36F82E72AD9921205F8F5137EB46A6FCFE77590"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9335,6 +9340,11 @@
       "path": "SRC/neothd/src/pipeline/enriched_request.rs",
       "bytes": 59773,
       "sha256": "02D1377EEE46FACD07482915A038B6DB600C492602B46DA5C1E7D47725837BF4"
+    },
+    {
+      "path": "SRC/neothd/src/pipeline/untrusted_context.rs",
+      "bytes": 38619,
+      "sha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16"
     },
     {
       "path": "SRC/neothd/src/proactive/action_staging.rs",

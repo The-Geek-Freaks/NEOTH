@@ -1,0 +1,24 @@
+{
+  "schema": "neoth.wave2669.bounded-untrusted-source-id.v1",
+  "base": "1c5ee464d4a939b2ed404bc38ebd4b4c26351b81",
+  "roadmap": [
+    "GOLD-R3-14"
+  ],
+  "batch": "B07",
+  "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
+  "sourceSha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16",
+  "finding": "StableSourceId capped the final identifier but expanded the entire input before truncation, allowing a transient percent-encoded copy up to three times input byte length",
+  "change": "Stop canonical source-label encoding before its 240-byte bound; preserve complete percent tokens and hash the full original trimmed input when shortened",
+  "wireCompatibility": "Exactly 240 encoded bytes remain unhashed; overflow retains the existing token-safe 175-byte prefix budget and full SHA256 suffix",
+  "limits": "Intermediate canonical text is bounded. Hashing and input trim still inspect the full original input; no whole-pipeline memory or performance claim",
+  "newCases": [
+    "pipeline::untrusted_context::tests::source_ids_preserve_exact_encoding_and_hash_boundaries",
+    "pipeline::untrusted_context::tests::source_ids_bind_the_full_unexpanded_unicode_tail"
+  ],
+  "existingCaseNewlyRegistered": "pipeline::untrusted_context::tests::source_ids_are_ascii_bounded_and_use_full_digest_suffix",
+  "review": "GPT-6.1 Terra high, prompt-only supplied algorithm review found no equivalence issue; boundary cases requested and added",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false
+}

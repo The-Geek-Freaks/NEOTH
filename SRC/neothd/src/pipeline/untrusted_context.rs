@@ -165,16 +165,23 @@ impl StableSourceId {
         } else {
             trimmed
         };
-        let mut canonical = String::with_capacity(value.len());
+        let mut canonical = String::with_capacity(MAX_SOURCE_ID_BYTES);
+        let mut truncated = false;
         for byte in value.as_bytes() {
-            if source_id_byte_is_allowed(*byte) {
+            let allowed = source_id_byte_is_allowed(*byte);
+            let encoded_len = if allowed { 1 } else { 3 };
+            if canonical.len() + encoded_len > MAX_SOURCE_ID_BYTES {
+                truncated = true;
+                break;
+            }
+            if allowed {
                 canonical.push(char::from(*byte));
             } else {
                 write!(canonical, "%{byte:02X}").expect("writing to String cannot fail");
             }
         }
 
-        if canonical.len() <= MAX_SOURCE_ID_BYTES {
+        if !truncated {
             return Self(canonical);
         }
 
@@ -988,6 +995,45 @@ mod tests {
             .expect("long source ID has digest suffix")
             .0;
         assert_eq!(prefix.len() % 3, 0, "percent tokens stay complete");
+    }
+
+    #[test]
+    fn source_ids_preserve_exact_encoding_and_hash_boundaries() {
+        let exact_ascii = "a".repeat(MAX_SOURCE_ID_BYTES);
+        assert_eq!(StableSourceId::new(&exact_ascii).as_str(), exact_ascii);
+        let exact_escaped = format!("{}%", "a".repeat(237));
+        assert_eq!(
+            StableSourceId::new(&exact_escaped).as_str(),
+            format!("{}%25", "a".repeat(237))
+        );
+
+        for prefix_len in 238..=240 {
+            let input = format!("{}%", "a".repeat(prefix_len));
+            let expected = format!("{}~{}", "a".repeat(175), sha256_hex(input.as_bytes()));
+            assert_eq!(StableSourceId::new(&input).as_str(), expected);
+        }
+
+        let split_escape = format!("{}%{}", "a".repeat(174), "b".repeat(100));
+        let expected = format!("{}~{}", "a".repeat(174), sha256_hex(split_escape.as_bytes()));
+        assert_eq!(StableSourceId::new(&split_escape).as_str(), expected);
+    }
+
+    #[test]
+    fn source_ids_bind_the_full_unexpanded_unicode_tail() {
+        let shared = "é".repeat(16 * 1024);
+        let left = format!("{shared}A");
+        let right = format!("{shared}B");
+        let left_id = StableSourceId::new(&left);
+        let right_id = StableSourceId::new(&right);
+        for (input, identifier) in [(&left, &left_id), (&right, &right_id)] {
+            assert_eq!(
+                identifier.as_str(),
+                format!("{}~{}", "%C3%A9".repeat(29), sha256_hex(input.as_bytes()))
+            );
+            assert!(canonical_source_id_is_valid(identifier.as_str()));
+            assert!(identifier.as_str().len() <= MAX_SOURCE_ID_BYTES);
+        }
+        assert_ne!(left_id, right_id);
     }
 
     #[test]
