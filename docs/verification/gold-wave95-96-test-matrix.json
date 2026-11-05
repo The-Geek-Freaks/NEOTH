@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_BOUNDED_SOURCE_IDENTIFIERS_HOSTED_PENDING",
+  "status": "HOSTED_FORMAT_PATCH_IMPORTED_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 466848,
-    "sha256": "3549D9AB77E1036229A457B56AD293292E111F1CA7D1989721E40E1FD21094E8"
+    "bytes": 466834,
+    "sha256": "729649524EB61E72B50DF038DEA0FEE2B95B166607A1226FB46BCBD816D05A84"
   },
   "sourceInputs": 2548,
   "requiredNativeTests": [
@@ -19513,19 +19513,19 @@
     {
       "test": "pipeline::untrusted_context::tests::source_ids_preserve_exact_encoding_and_hash_boundaries",
       "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
-      "sourceSha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16",
+      "sourceSha256": "0C9C1F34B3B033F450494598ACF09C45FB97DC09427F0ED93A6BFC83037076DF",
       "junitClass": "neoth"
     },
     {
       "test": "pipeline::untrusted_context::tests::source_ids_bind_the_full_unexpanded_unicode_tail",
       "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
-      "sourceSha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16",
+      "sourceSha256": "0C9C1F34B3B033F450494598ACF09C45FB97DC09427F0ED93A6BFC83037076DF",
       "junitClass": "neoth"
     },
     {
       "test": "pipeline::untrusted_context::tests::source_ids_are_ascii_bounded_and_use_full_digest_suffix",
       "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
-      "sourceSha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16",
+      "sourceSha256": "0C9C1F34B3B033F450494598ACF09C45FB97DC09427F0ED93A6BFC83037076DF",
       "junitClass": "neoth"
     }
   ],
@@ -92349,6 +92349,26 @@
       }
     ],
     "note": "Preserve canonical StableSourceId wire values while bounding intermediate encoding to240bytes;2new+1existing exact cases registered; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2669HostedFormat": {
+    "base": "4af0cd310f5f7be33390d420d932bbd1e080f0df",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2669-bounded-source-identifiers.json",
+        "bytes": 2335,
+        "sha256": "67B9B2A3890A6CD5C9F503E2ED25E4F07FBAC6D861787B65ABA159B503DB5515",
+        "blob": "f79a74f8ddfc8c01f5b1e8d67143ff305aa61c8d"
+      },
+      {
+        "path": "SRC/neothd/src/pipeline/untrusted_context.rs",
+        "bytes": 38665,
+        "sha256": "0C9C1F34B3B033F450494598ACF09C45FB97DC09427F0ED93A6BFC83037076DF",
+        "blob": "5c6936ad931f829fa63e6570dacc78566d60e06c"
+      }
+    ],
+    "note": "Verified exact original hosted format archive and full-index pre/postimages; layout-only assertion change; no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

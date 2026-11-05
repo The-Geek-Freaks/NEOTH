@@ -1014,7 +1014,11 @@ mod tests {
         }
 
         let split_escape = format!("{}%{}", "a".repeat(174), "b".repeat(100));
-        let expected = format!("{}~{}", "a".repeat(174), sha256_hex(split_escape.as_bytes()));
+        let expected = format!(
+            "{}~{}",
+            "a".repeat(174),
+            sha256_hex(split_escape.as_bytes())
+        );
         assert_eq!(StableSourceId::new(&split_escape).as_str(), expected);
     }
 

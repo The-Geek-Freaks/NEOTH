@@ -6,7 +6,7 @@
   ],
   "batch": "B07",
   "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
-  "sourceSha256": "08410F76C0850A8893E6D959CAA83D1A7C8981B6BED07E7EFF1B50E62F6D4B16",
+  "sourceSha256": "0C9C1F34B3B033F450494598ACF09C45FB97DC09427F0ED93A6BFC83037076DF",
   "finding": "StableSourceId capped the final identifier but expanded the entire input before truncation, allowing a transient percent-encoded copy up to three times input byte length",
   "change": "Stop canonical source-label encoding before its 240-byte bound; preserve complete percent tokens and hash the full original trimmed input when shortened",
   "wireCompatibility": "Exactly 240 encoded bytes remain unhashed; overflow retains the existing token-safe 175-byte prefix budget and full SHA256 suffix",
@@ -20,5 +20,20 @@
   "localExecutableValidationRan": false,
   "hostedAccepted": false,
   "nativeAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "hostedFormatting": {
+    "run": 41997538717,
+    "producer": "4af0cd310f5f7be33390d420d932bbd1e080f0df",
+    "artifact": 13400474342,
+    "zipSha256": "7C97FFF03D773B14FBD955A46263D770B9F7F61D9F28C72A0A505453BDC6FB70",
+    "memberSha256": {
+      "rustfmt.patch": "76a6b3e82764f98b89c08b54155258da15d10a8de863a4c4905a6fdcfd13c59d",
+      "SHA256SUMS": "83ba630cf20ebefc7e7b23e5175bebc7876cffae56c7559298f5ae1415c75a2a",
+      "source-head.txt": "9ea99cd2abe10cc520c3dc6cb2e71fa035be14c77253596749cb776d04937d89"
+    },
+    "preimage": "1f380bcc4a5b08252697c81429b6c633237abfe8",
+    "postimage": "5c6936ad931f829fa63e6570dacc78566d60e06c",
+    "sourcePath": "SRC/neothd/src/pipeline/untrusted_context.rs",
+    "localFormatterRan": false
+  }
 }
