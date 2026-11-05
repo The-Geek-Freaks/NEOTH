@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "self-edit-council-static-hosted-pending",
+  "status": "council-formatted-clippy-repaired-runtime-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 473016,
-    "sha256": "59E4920D86C2BDA5C6BAE6A646C28FCDC93CE753DCDD78A1453A4A010E3FFE5C"
+    "bytes": 473210,
+    "sha256": "4F90EB80D08FC5B7BE8C61B224B5BDEE9AABE422D71DDCAF298927DF205186A3"
   },
-  "sourceInputs": 2581,
+  "sourceInputs": 2582,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -19807,31 +19807,31 @@
     {
       "test": "providers::ollama_api::tests::native_tool_fields_are_rejected_before_text_or_terminal_projection",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+      "sourceSha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+      "sourceSha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::native_tool_ndjson_line_and_tail_preserve_only_prior_text",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+      "sourceSha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::ndjson_eof_without_done_never_synthesizes_success",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+      "sourceSha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ollama_api::tests::final_done_frame_preserves_its_text_usage_and_reason_with_or_without_newline",
       "sourcePath": "SRC/neothd/src/providers/ollama_api.rs",
-      "sourceSha256": "360EDF18653FEF4FF3F0F31A88F68965C2C173F32F03C168FD9A62BD33831768",
+      "sourceSha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
       "junitClass": "neoth"
     },
     {
@@ -19933,31 +19933,31 @@
     {
       "test": "coding::self_source_gate::council_review::tests::risk_policy_uses_component_boundaries_and_rejects_invalid_configuration",
       "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "sourceSha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
       "junitClass": "neoth"
     },
     {
       "test": "coding::self_source_gate::council_review::tests::three_strict_role_verdicts_bind_action_policy_and_separate_override",
       "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "sourceSha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
       "junitClass": "neoth"
     },
     {
       "test": "coding::self_source_gate::council_review::tests::malformed_missing_and_timed_out_reviews_never_mint_a_capability",
       "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "sourceSha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
       "junitClass": "neoth"
     },
     {
       "test": "coding::self_source_gate::council_review::tests::required_review_receipt_refuses_a_closed_writer",
       "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "sourceSha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
       "junitClass": "neoth"
     },
     {
       "test": "coding::self_source_gate::council_review::tests::central_self_edit_review_reaches_real_effect_only_after_all_gates_and_receipt",
       "sourcePath": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sourceSha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9",
+      "sourceSha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
       "junitClass": "neoth"
     }
   ],
@@ -94107,6 +94107,56 @@
       }
     ],
     "note": "Five portable review regressions and actual central effect seam registered; no local runtime. Hosted CLI reference copied from bound producer. Full predecessor CI still running.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2692CiFollowup": {
+    "base": "8d5e672fbdeaa0ab95cca308269f1a5d5f7d82eb",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2691-self-edit-council.json",
+        "bytes": 3636,
+        "sha256": "637B040D3CB92E2D4A85911FD6EB63331E8D6A425C0F9C7D78D3B818D1E6220E",
+        "blob": "b5704e89b7eeda27eba56cb9327457156491c6e8"
+      },
+      {
+        "path": "docs/verification/gold-wave2692-ci-followup.json",
+        "bytes": 1716,
+        "sha256": "5CC0D03A22DC0252955AE42C288FA4BD246BF303E91765EE064292E279EB53F9",
+        "blob": "b01c3b8b2edb02f67a2bb82e2045df0e7cc6cd46"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2801552,
+        "sha256": "00901592AA507A9970DBB64905A95481FC97F0B2441127866D6318F111ED7CBB",
+        "blob": "66b647164c1a16b88c5d9c639bd1583b8db1252d"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_council_tests.rs",
+        "bytes": 11342,
+        "sha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827",
+        "blob": "e1f67f3145e5dfde198dfc0fb806927f75550838"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_council.rs",
+        "bytes": 14032,
+        "sha256": "4D27A038E1636D8E3DA36078CB3C2E18919E6CFC2FAC3CCC7FF7CAFD9A2E1D87",
+        "blob": "a0336428c91e340f842d126364ead6ca7f9ad5c0"
+      },
+      {
+        "path": "SRC/neothd/src/coding/self_source_gate.rs",
+        "bytes": 116002,
+        "sha256": "58DE3A41B4E7863E67D930127AC841FF28BAE87F88B7F575158E7BAFC8F823DF",
+        "blob": "dcea8dd347b1e520144338a24702f184b1afe20c"
+      },
+      {
+        "path": "SRC/neothd/src/providers/ollama_api.rs",
+        "bytes": 64877,
+        "sha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17",
+        "blob": "6f6c04970e3fd120433e49ae32010d63322547c0"
+      }
+    ],
+    "note": "Observed Linux19814/19815 and Windows19671/19672, sole docgen test failure. Minimal existing Ollama lint correction and admitted C5 hosted formatting. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

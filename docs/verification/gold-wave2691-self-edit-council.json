@@ -28,15 +28,15 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council_tests.rs",
-      "sha256": "B623B1969E80C17DEC45048988C1C20D47C6539D25A24F7645B49DB10E63FFC9"
+      "sha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
-      "sha256": "F66B89BF4A436A3E6259768F0BA65C96C3BAC45CB7552ED31D2DCA78278AD201"
+      "sha256": "4D27A038E1636D8E3DA36078CB3C2E18919E6CFC2FAC3CCC7FF7CAFD9A2E1D87"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "sha256": "710CAD222694D769707DACEA7BE0245FFCDC6D3964D73CCF60AA67D5ED170553"
+      "sha256": "58DE3A41B4E7863E67D930127AC841FF28BAE87F88B7F575158E7BAFC8F823DF"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -61,5 +61,13 @@
     "General PatchApplyToRepo remains a separate integration; no raw roadmap row closed.",
     "Shared provider infrastructure remains an existing trusted dependency, not a complete transitive self-modification proof."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42067236277,
+    "artifact": 13434593097,
+    "producer": "8d5e672fbdeaa0ab95cca308269f1a5d5f7d82eb",
+    "apiZipAndMemberDigestsVerified": true,
+    "exactPrePostImages": 3,
+    "nativeAccepted": false
+  }
 }

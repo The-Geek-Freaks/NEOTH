@@ -718,8 +718,7 @@ mod tests {
             let error = build_adapter_against(&mock.uri())
                 .complete(Request::default())
                 .await
-                .err()
-                .expect("unfinished/tool response must fail");
+                .expect_err("unfinished/tool response must fail");
             assert_eq!(
                 error.to_string(),
                 if tools {

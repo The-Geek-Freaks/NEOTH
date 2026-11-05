@@ -1,0 +1,52 @@
+{
+  "schema": "neoth.wave2692.full-ci-followup.v1",
+  "observedRun": 42044284023,
+  "producer": "056bcde7ea225290299153af37d784a4876660b9",
+  "linux": {
+    "job": 127302922498,
+    "testsRun": 19815,
+    "passed": 19814,
+    "failed": 1,
+    "skipped": 32,
+    "onlyTestFailure": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "clippy": "err_expect in providers/ollama_api.rs:721"
+  },
+  "windows": {
+    "job": 127302922448,
+    "testsRun": 19672,
+    "passed": 19671,
+    "failed": 1,
+    "skipped": 34,
+    "onlyTestFailure": "cli::docgen::tests::cli_commands_md_is_up_to_date"
+  },
+  "repairs": [
+    "Verified hosted CLI reference imported in 8d5e672f",
+    "Ollama test .err().expect replaced by expect_err; Completion implements Debug",
+    "Verified hosted C5 formatting plus explicit timeout assertion without Debug bound"
+  ],
+  "staticReview": "Root and GPT-6.1 Terra high prompt-only lint review",
+  "accepted": {
+    "correctedProducerRuntime": false,
+    "fullCi": false,
+    "nativeGold": false
+  },
+  "localExecutableValidationRan": false,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/coding/self_source_council_tests.rs",
+      "sha256": "2D7EDBF4ED74BDEBF100263E41A23F0933AC92D218D2C8BDCF13A4FB3030B827"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_council.rs",
+      "sha256": "4D27A038E1636D8E3DA36078CB3C2E18919E6CFC2FAC3CCC7FF7CAFD9A2E1D87"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_gate.rs",
+      "sha256": "58DE3A41B4E7863E67D930127AC841FF28BAE87F88B7F575158E7BAFC8F823DF"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ollama_api.rs",
+      "sha256": "5FE9771B439F8D54DF2E6149208DC62289D7A740B22CEA3713FC861621C18E17"
+    }
+  ]
+}
