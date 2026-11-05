@@ -18,6 +18,8 @@ use crate::config::{CommunicationProfileConfig, CommunicationPromptExport};
 
 #[path = "communication_session.rs"]
 pub(crate) mod session;
+#[path = "communication_device.rs"]
+pub(crate) mod device;
 
 pub const STATE_RELATIVE_PATH: &str = "profile/communication.json";
 /// The one explicitly supported operator-global profile subject. All other
@@ -210,11 +212,12 @@ pub enum CommunicationScope {
     Channel(String),
     Task(String),
     Session(String),
+    Device(String),
 }
 
 impl CommunicationScope {
     fn applies_to(&self, target: Option<&Self>) -> bool {
-        !matches!(self, Self::Session(_)) && (matches!(self, Self::Global) || target == Some(self))
+        !matches!(self, Self::Session(_) | Self::Device(_)) && (matches!(self, Self::Global) || target == Some(self))
     }
 
     fn audit_code(&self) -> &'static str {
@@ -223,6 +226,7 @@ impl CommunicationScope {
             Self::Channel(_) => "channel",
             Self::Task(_) => "task",
             Self::Session(_) => "session",
+            Self::Device(_) => "device",
         }
     }
 }
@@ -803,6 +807,7 @@ fn validate_session_id(session_id: &str) -> Result<()> {
 fn validate_scope(scope: &CommunicationScope) -> Result<()> {
     match scope {
         CommunicationScope::Session(id) => session::validate_id(id),
+        CommunicationScope::Device(id) => device::validate_id(id),
         CommunicationScope::Channel(id) | CommunicationScope::Task(id)
             if id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control) =>
         {
@@ -903,6 +908,13 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                     &item.scope,
                     &item.session_id,
                 )?;
+                device::validate_evidence(
+                    subject_id,
+                    item.authenticated_origin,
+                    item.source,
+                    &item.scope,
+                    &item.session_id,
+                )?;
                 validate_reason_code(&item.reason_code)?;
             }
         }
@@ -921,8 +933,8 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
             }
             validate_scope(&estimate.scope_provenance)?;
             anyhow::ensure!(
-                !matches!(&estimate.scope_provenance, CommunicationScope::Session(_)),
-                "session pins cannot become global cached estimates"
+                !matches!(&estimate.scope_provenance, CommunicationScope::Session(_) | CommunicationScope::Device(_)),
+                "session/device pins cannot become global cached estimates"
             );
             if estimate.durable_by_full_auto
                 && (subject_id != COMMUNICATION_OPERATOR_SUBJECT
@@ -1312,6 +1324,13 @@ fn validate_evidence_input(input: &EvidenceInput) -> Result<()> {
         &input.scope,
         &input.session_id,
     )?;
+    device::validate_evidence(
+        input.subject_id(),
+        Some(input.subject.origin()),
+        input.source,
+        &input.scope,
+        &input.session_id,
+    )?;
     Ok(())
 }
 
@@ -1372,11 +1391,11 @@ pub(crate) fn record_evidence_batch(
                 outcome.rate_limited += 1;
                 continue;
             }
-            // Session pins are local explicit controls. Their timestamp is a
+            // Session/device pins are local explicit controls. Their timestamp is a
             // logical order under the state lock, so clock rollback or same-
             // second writers cannot resurrect an earlier choice. event_hash is
             // the stable caller action identity, not a digest of these fields.
-            let observed_at_unix = if matches!(&input.scope, CommunicationScope::Session(_)) {
+            let observed_at_unix = if matches!(&input.scope, CommunicationScope::Session(_) | CommunicationScope::Device(_)) {
                 match evidence
                     .iter()
                     .filter(|item| item.scope == input.scope)
@@ -2356,6 +2375,7 @@ fn compile_prompt_at(
         policy,
         target_scope,
         None,
+        None,
         incognito,
         now_unix,
     )
@@ -2376,17 +2396,42 @@ pub(crate) fn compile_prompt_for_session(
         policy,
         target_scope,
         Some(session_id),
+        None,
         incognito,
         crate::time::now_unix_secs() as i64,
     )
 }
 
+pub(crate) fn compile_prompt_for_admitted_device(
+    home: &Path,
+    subject_id: &str,
+    policy: &CommunicationProfileConfig,
+    session_id: &str,
+    device_id: Option<&str>,
+    incognito: bool,
+) -> Result<Option<CompiledCommunicationPrompt>> {
+    if device_id.is_none() {
+        return compile_prompt_for_session(home, subject_id, policy, None, session_id, incognito);
+    }
+    compile_prompt_context_at(
+        home,
+        subject_id,
+        policy,
+        None,
+        Some(session_id),
+        device_id,
+        incognito,
+        crate::time::now_unix_i64(),
+    )
+}
+#[allow(clippy::too_many_arguments)]
 fn compile_prompt_context_at(
     home: &Path,
     subject_id: &str,
     policy: &CommunicationProfileConfig,
     target_scope: Option<&CommunicationScope>,
     session_id: Option<&str>,
+    device_id: Option<&str>,
     incognito: bool,
     now_unix: i64,
 ) -> Result<Option<CompiledCommunicationPrompt>> {
@@ -2397,6 +2442,9 @@ fn compile_prompt_context_at(
     if let Some(session_id) = session_id {
         session::validate_id(session_id)?;
     }
+    if let Some(device_id) = device_id {
+        device::validate_id(device_id)?;
+    }
     let state = load_state(home)?;
     let Some(subject) = state.subjects.get(subject_id) else {
         return Ok(None);
@@ -2405,6 +2453,10 @@ fn compile_prompt_context_at(
     let mut instructions = Vec::new();
     for dimension in CommunicationDimension::ALL {
         if let Some(value) = session_id.and_then(|id| session::selected(subject, id, dimension)) {
+            instructions.push(instruction_for(value));
+            continue;
+        }
+        if let Some(value) = device_id.and_then(|id| device::selected(subject, id, dimension)) {
             instructions.push(instruction_for(value));
             continue;
         }

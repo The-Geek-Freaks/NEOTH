@@ -25,6 +25,8 @@ use crate::memory::store;
 
 #[path = "profile_communication_session.rs"]
 mod communication_session;
+#[path = "profile_communication_device.rs"]
+mod communication_device;
 
 /// Opaque capability minted only by the local profile-control CLI boundary.
 pub(crate) struct LocalProfileCommunicationOperator(());
@@ -409,6 +411,16 @@ pub enum PersonaSub {
 /// Operator-facing controls for the deterministic communication profile.
 #[derive(Subcommand, Debug, Clone)]
 pub enum CommunicationSub {
+    /// Inspect or override presentation for one currently paired device.
+    Device {
+        /// Canonical device UUID from companion devices list; revision is resolved by the daemon.
+        device_id: String,
+        /// Inspect or clear an old pairing revision locally; cannot be used with set.
+        #[arg(long)]
+        revision: Option<u64>,
+        #[command(subcommand)]
+        sub: CommunicationSessionSub,
+    },
     /// Inspect or override presentation for one existing conversation identity.
     Session {
         /// Exact session id shown by the conversation receipt; never an Incognito id.
@@ -582,6 +594,8 @@ pub(crate) enum CommunicationControlAction {
     ClearContext = 8,
     SetSessionPreference = 9,
     ResetSessionPreference = 10,
+    SetDevicePreference = 11,
+    ResetDevicePreference = 12,
 }
 
 #[derive(Debug, Clone)]
@@ -952,6 +966,7 @@ fn communication_scope_name(
         crate::profile::communication::CommunicationScope::Channel(_) => "channel",
         crate::profile::communication::CommunicationScope::Task(_) => "task",
         crate::profile::communication::CommunicationScope::Session(_) => "session",
+        crate::profile::communication::CommunicationScope::Device(_) => "device",
     }
 }
 
@@ -1581,6 +1596,9 @@ async fn run_communication_sub_at(
     output: &OutputFormat,
 ) -> Result<()> {
     match sub {
+        CommunicationSub::Device { device_id, revision, sub } => {
+            communication_device::run(home, &device_id, revision, sub, output).await
+        }
         CommunicationSub::Session { session_id, sub } => {
             communication_session::run(home, &session_id, sub, output).await
         }

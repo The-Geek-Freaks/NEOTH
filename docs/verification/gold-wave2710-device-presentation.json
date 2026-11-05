@@ -1,0 +1,152 @@
+{
+  "schema": "neoth.wave2710.device-presentation.v1",
+  "producerBase": "2e1f574a16aa33395166cb331bb8b001c803ef14",
+  "batch": "B08",
+  "roadmap": [
+    "ADOPT-20261012-A07",
+    "GOLD-R4-11"
+  ],
+  "changes": [
+    "Local operator device show/set/reset controls use the existing communication profile and post-commit WAL.",
+    "New preferences require the unique active paired-device grant. Explicit historical revision permits only inspect/reset and reclaims old epoch capacity.",
+    "Only signed active Companion v1 conversation admission supplies the private UUID-plus-grant-revision scope. Reconnect retains the epoch; revocation/re-pair cannot transfer it.",
+    "Shared primary and agent prompt preparation resolve explicit Session then Device then existing global/channel preferences.",
+    "Incognito, disabled adaptation, stateless legacy requests, generic exports, GUI and checkpoint identity hydration do not mint device context.",
+    "Existing input and stored-state validators reject nonlocal, passive, mismatched and globally cached device evidence.",
+    "The existing CLI-reference workflow adds one bounded 29-case mode with exact identity, discovery, pass and source bindings, followed by actual CLI export."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/profile/communication_device_tests.rs",
+      "sha256": "AD212493025310B1DDD0428B10A6BD15EC546C59CD46F2E04FE6906B1A884F28"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_session_tests.rs",
+      "sha256": "36A5F3329085070A90EDC0008F02317E5E2BF98413AA202AFDB8D4B7958E4B78"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_device_tests.rs",
+      "sha256": "D35A200A41C75BA6E5A16B19104410D78457349240F8B6AF3E6050E5B96AF654"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
+      "sha256": "FA23092F9FCBCBD930DCF6E86B9A78A2083F7990D726425FE03B3EDB9A2C9189"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "9B33B3FA4254D05DC3A4655B4145C098BC00CA9B7CB8AFF657838B4429FB4AB9"
+    },
+    {
+      "path": "SRC/neothd/src/recall/reconstruct.rs",
+      "sha256": "5A48E4693F1B1EA28B0B17654EF33E5370C95A6367EE3BCEAEDC539A3A5E0DD1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_authority.rs",
+      "sha256": "AEAAB9DE7932FE9E51EF75F494E202C986EDF80A7ADF0506295A08AB650B7DBB"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication.rs",
+      "sha256": "739326848A2383AFAA8229A7A0D7DF3E5A2C71A91E4E7852C56A8398B7567A3E"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_device.rs",
+      "sha256": "685D451A0E736B30C8FBAA88F05F4D6B3C064D65523BBD6579710C46B4EF62C3"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_session.rs",
+      "sha256": "B97E2012AB01FAE220A8AFE2E8D5FC22DC55ACD5B002F75C257CD722FBFC1A24"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile.rs",
+      "sha256": "BB90D09FD9150FBFC6A12E1427874698DB6E9B8C1B91D900C563D592BA0535A9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_device.rs",
+      "sha256": "744954A1BDE1067A3C8CF42634B7DC8286F3BED0B081221061F05E54106A7C83"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_session.rs",
+      "sha256": "C0DEF933667D2D308A5966FCA78811247F0B54E9D8E2C47963758863254E54B9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "EA018ED1B332D21CAE0EA64EF901F6B7F15C926CA4B8641405EEB2497048A5D5"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "sha256": "371AD5C91DEBFA38ED30B390CD2C989D4E77D8FA59A0606E1AEC1E4845F8A571"
+    },
+    {
+      "path": "SRC/neothd/src/memory/hindsight.rs",
+      "sha256": "2C6687F084472266C0B75B34FC8752629997CF008035545526BF46AB86317E9D"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "FEB0801F89805D5FB5FA199A4E96247B21AC673AFDA39C730396FA72DDD44599"
+    },
+    {
+      "path": "docs/profile.md",
+      "sha256": "C5A24DA38F2048A8BEC15C214B2A5A3AF4D356F347C4660AFC4DA822FF83B055"
+    },
+    {
+      "path": "docs/cli-reference.md",
+      "sha256": "96D81497E1EF22446EEA5522A5AA3A13F383E8BECAA56CAE02542B45F9D87FA6"
+    }
+  ],
+  "tests": [
+    "profile::communication::device::tests::device_pin_preserves_session_precedence_epoch_isolation_and_generic_export",
+    "profile::communication::device::tests::device_pin_old_epoch_reset_reclaims_capacity_without_transferring_preferences",
+    "profile::communication::device::tests::device_pin_rejects_bad_provenance_and_private_or_disabled_paths_do_no_io",
+    "cli::profile::communication_device::tests::device_cli_resolves_only_unique_active_grant_and_parses_old_revision_controls",
+    "cli::profile::communication_device::tests::device_cli_old_revision_reset_reclaims_pin_and_writes_redacted_audit",
+    "cli::chat::tests::device_presentation_reaches_primary_and_agent_rebuild_without_identity_export"
+  ],
+  "regressionTests": [
+    "profile::communication::device::tests::device_pin_preserves_session_precedence_epoch_isolation_and_generic_export",
+    "profile::communication::device::tests::device_pin_old_epoch_reset_reclaims_capacity_without_transferring_preferences",
+    "profile::communication::device::tests::device_pin_rejects_bad_provenance_and_private_or_disabled_paths_do_no_io",
+    "cli::profile::communication_device::tests::device_cli_resolves_only_unique_active_grant_and_parses_old_revision_controls",
+    "cli::profile::communication_device::tests::device_cli_old_revision_reset_reclaims_pin_and_writes_redacted_audit",
+    "cli::chat::tests::device_presentation_reaches_primary_and_agent_rebuild_without_identity_export",
+    "profile::communication::session::tests::session_pin_survives_reload_overrides_global_and_reset_restores_fallback",
+    "profile::communication::session::tests::session_pin_coexists_with_channel_scope_without_entering_generic_exports",
+    "profile::communication::session::tests::session_pin_capacity_rejects_new_scope_atomically_and_keeps_existing_pins",
+    "profile::communication::session::tests::session_pin_order_survives_clock_rollback_deduplication_and_overflow",
+    "profile::communication::session::tests::session_scope_rejects_untrusted_or_mismatched_evidence_and_cached_projection",
+    "profile::communication::session::tests::session_controls_and_prompt_bypass_profile_io_when_private_or_disabled",
+    "cli::profile::communication_session::tests::session_cli_parses_show_set_and_scoped_reset",
+    "cli::profile::communication_session::tests::session_cli_persists_exact_scope_and_redacted_control_receipt",
+    "cli::profile::communication_session::tests::session_cli_rejects_private_ids_before_io_and_reports_postcommit_audit_failure",
+    "cli::chat::tests::session_presentation_uses_prepared_identity_in_primary_and_agent_prompts",
+    "recall::reconstruct::tests::reconstruct_rejects_invalid_prefix_before_database_access",
+    "recall::reconstruct::tests::reconstruct_rejects_distinct_prefix_matches_in_either_timestamp_order",
+    "recall::reconstruct::tests::reconstruct_accepts_duplicate_identical_snapshots",
+    "recall::reconstruct::tests::reconstruct_does_not_hide_older_matching_corruption",
+    "cli::chat::tests::explicit_resume_preserves_recorded_session_in_preparation_and_prompt_rebuild",
+    "cli::chat::tests::legacy_resume_keeps_context_but_cannot_reuse_a_turn_identity",
+    "cli::chat::tests::recorded_resume_rejects_invalid_identity_and_foreign_checkpoint_scope",
+    "cli::chat::tests::precompact_checkpoint_records_admitted_session_without_turn_id_fallback",
+    "recall::reconstruct::tests::local_session_discriminator_preserves_legacy_hash_and_binds_new_identity",
+    "cli::chat::tests::session_naming_targets_saved_card_and_preserves_logical_audit_identity",
+    "cli::chat::tests::session_naming_skips_failed_missing_foreign_or_mismatched_saved_cards",
+    "daemon::companion_authority::conversation_tests::jm05_conversation_binding_survives_restart_and_denies_foreign_owner_and_revoke",
+    "daemon::companion_authority::conversation_tests::jm05_conversation_incognito_and_replayed_creation_do_not_create_second_binding"
+  ],
+  "newPortableCases": 6,
+  "totalPortableCases": 3348,
+  "validation": {
+    "static": "Root bounded owner/caller/epoch tracing and GPT-6.1 Terra high prompt-only independent review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Generated docs/cli-commands.md is pending exact-producer hosted CLI export and later docgen/full validation.",
+    "Existing active full CI42104709764 uses c5c767e5 and excludes this batch.",
+    "No native device or UI acceptance; no .slint changes. Legacy stateless Companion lacks the admitted epoch context.",
+    "Checkpoint session identity cannot mint device authority. No remote preference configuration endpoint.",
+    "No complete A07 or GOLD-R4-11 acceptance before the remaining surface and native evidence."
+  ],
+  "rawRoadmapRowsClosed": 0
+}

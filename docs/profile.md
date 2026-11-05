@@ -73,9 +73,10 @@ neoth profile communication session <SESSION_ID> reset processing-load
 Use the exact existing conversation session ID. Session pins take precedence
 only when the prepared chat turn carries that ID. Other sessions and generic
 channel prompts keep their existing preferences. The primary chat prompt and
-its delegated prompt rebuild retain the selected presentation layer. This does
-not add a device override, native GUI controls, or a guarantee that a checkpoint
-resume creating a new session ID keeps the old session preference.
+its delegated prompt rebuild retain the selected presentation layer. Explicit
+resume reuses a session only when a validated local checkpoint records that
+identity; legacy context-only resume still creates a new session. Native GUI
+controls remain separate from these local operator commands.
 
 `show` lists explicit overrides only. Session reset removes all earlier pins
 for that dimension in that session, revealing the underlying preference. Global
@@ -271,6 +272,39 @@ current-state record.
 The separate general `idx_profile` fact-claim set is not yet exported, so
 complete fact-profile export remains an open Gold requirement.
 
+
+### Paired-device presentation overrides
+
+Use the device UUID shown by the running daemon's companion device list:
+
+    neoth companion devices list
+    neoth profile communication device <DEVICE_ID> show
+    neoth profile communication device <DEVICE_ID> set processing-load compact
+    neoth profile communication device <DEVICE_ID> reset processing-load
+
+The command resolves the current active pairing revision through the existing
+local daemon connection. A session override wins over a device override; the
+device override wins over inferred and global preferences. Companion turns with
+an admitted persistent conversation carry the verified device and pairing
+revision into the shared prompt builder. Reconnect and delegated prompt rebuild
+retain that context. Stateless legacy Companion turns have no device override.
+
+Revocation or re-pairing cannot transfer an old preference to a new grant. To
+inspect or remove an old revision without an active daemon grant, use:
+
+    neoth profile communication device <DEVICE_ID> --revision <OLD_REVISION> show
+    neoth profile communication device <DEVICE_ID> --revision <OLD_REVISION> reset processing-load
+
+An explicit revision is accepted only for show/reset, never set. This cleanup
+recovers bounded profile capacity without reactivating a revoked device. The
+ordinary communication reset/forget controls also cover device preferences.
+Device preferences share the existing communication-profile store; they do not
+change permissions, cost gates or tool authority, and do not infer medical
+labels. Incognito and disabled adaptation do not read or write these preferences.
+Provider prompts contain only the selected presentation instructions, not device
+identifiers. The device CLI reports state already committed if its required
+post-commit WAL audit fails. Native settings UI and real-device qualification
+remain separate acceptance work.
 ## Privacy checklist
 
 ```bash

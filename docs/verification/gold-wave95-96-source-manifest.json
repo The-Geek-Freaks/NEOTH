@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T20:49:20.3081839Z",
-  "validationStatus": "W2709 verified hosted format; runtime pending",
+  "capturedUtc": "2026-11-05T21:09:53.1568448Z",
+  "validationStatus": "W2710 source prepared; exact29 hosted and generated CLI reference pending; no local executable validation",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 62561,
-      "sha256": "F27CF42E517CFE3191B3C020E672627F81F476F08A7B71F35B97059F5E89926C"
+      "bytes": 69755,
+      "sha256": "FEB0801F89805D5FB5FA199A4E96247B21AC673AFDA39C730396FA72DDD44599"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -718,8 +718,8 @@
     },
     {
       "path": "docs/cli-reference.md",
-      "bytes": 31730,
-      "sha256": "07197768CB64BA43CC924B4C554AC352CC7F1C45FF078F13E73A53F9E33179F7"
+      "bytes": 31979,
+      "sha256": "96D81497E1EF22446EEA5522A5AA3A13F383E8BECAA56CAE02542B45F9D87FA6"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1908,8 +1908,8 @@
     },
     {
       "path": "docs/profile.md",
-      "bytes": 12987,
-      "sha256": "BCE7D716652C569759174621C07070132906507184F60547DDD4D45C82B010E1"
+      "bytes": 14947,
+      "sha256": "C5A24DA38F2048A8BEC15C214B2A5A3AF4D356F347C4660AFC4DA822FF83B055"
     },
     {
       "path": "docs/providers.md",
@@ -4982,6 +4982,11 @@
       "sha256": "C871B50F102A4D5295131F8766DEA2721CD07690AB3794DCBB4A958FDFBA32BD"
     },
     {
+      "path": "docs/verification/gold-wave2710-device-presentation.json",
+      "bytes": 9028,
+      "sha256": "B2A95EF3B2488E612F9C09DB4BD5F59D7349406E9984AAABF7E59884F4A14B48"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6243,8 +6248,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2819687,
-      "sha256": "109426A35B48FCC4524320F47FA2195227171942EA1F4FEF0C0D6C133AA60407"
+      "bytes": 2821514,
+      "sha256": "594FF089E3C15D8B7846395A0E4843189AC8BD3F647C278CF2AC9A1ECFE6E25B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7203,8 +7208,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 176234,
-      "sha256": "D91F0216053D5D7D007089B192BC12D0444E5A57927D34EE57C6AD4B40ACAB62"
+      "bytes": 176676,
+      "sha256": "EA018ED1B332D21CAE0EA64EF901F6B7F15C926CA4B8641405EEB2497048A5D5"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -7213,8 +7218,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1272090,
-      "sha256": "C61D862ECECC675B8F904EE3D18613AD98427BBF91B74E236C4744400297F058"
+      "bytes": 1277391,
+      "sha256": "9B33B3FA4254D05DC3A4655B4145C098BC00CA9B7CB8AFF657838B4429FB4AB9"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -7537,6 +7542,16 @@
       "sha256": "1212B6B52C976A641831836048B0061D57EA860E9A798A8B448CADECF8798312"
     },
     {
+      "path": "SRC/neothd/src/cli/profile_communication_device_tests.rs",
+      "bytes": 3797,
+      "sha256": "D35A200A41C75BA6E5A16B19104410D78457349240F8B6AF3E6050E5B96AF654"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile_communication_device.rs",
+      "bytes": 7959,
+      "sha256": "744954A1BDE1067A3C8CF42634B7DC8286F3BED0B081221061F05E54106A7C83"
+    },
+    {
       "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
       "bytes": 6318,
       "sha256": "FA23092F9FCBCBD930DCF6E86B9A78A2083F7990D726425FE03B3EDB9A2C9189"
@@ -7548,8 +7563,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
-      "bytes": 233967,
-      "sha256": "50445CF391CC5178B46D4E20BF645A2B07EE3DB4A45EA49C97BA893E501B1DE3"
+      "bytes": 234771,
+      "sha256": "BB90D09FD9150FBFC6A12E1427874698DB6E9B8C1B91D900C563D592BA0535A9"
     },
     {
       "path": "SRC/neothd/src/cli/providers.rs",
@@ -8288,8 +8303,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 103042,
-      "sha256": "122361A684F51C68EDA29CEC6883DC04D51506B8D5DBA469FC09EABB33E39864"
+      "bytes": 103243,
+      "sha256": "371AD5C91DEBFA38ED30B390CD2C989D4E77D8FA59A0606E1AEC1E4845F8A571"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -8298,8 +8313,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_authority.rs",
-      "bytes": 87035,
-      "sha256": "04143DDFCC75D0B611F187151616D853EBCA2A5B76E277672F99DF013430975D"
+      "bytes": 87928,
+      "sha256": "AEAAB9DE7932FE9E51EF75F494E202C986EDF80A7ADF0506295A08AB650B7DBB"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
@@ -9587,6 +9602,16 @@
       "sha256": "F73D074AE6E4B316897B748F291DBEC6AEE0375B61FB2D908FDEA79E7D00D106"
     },
     {
+      "path": "SRC/neothd/src/profile/communication_device_tests.rs",
+      "bytes": 7128,
+      "sha256": "AD212493025310B1DDD0428B10A6BD15EC546C59CD46F2E04FE6906B1A884F28"
+    },
+    {
+      "path": "SRC/neothd/src/profile/communication_device.rs",
+      "bytes": 5835,
+      "sha256": "685D451A0E736B30C8FBAA88F05F4D6B3C064D65523BBD6579710C46B4EF62C3"
+    },
+    {
       "path": "SRC/neothd/src/profile/communication_session_tests.rs",
       "bytes": 11520,
       "sha256": "36A5F3329085070A90EDC0008F02317E5E2BF98413AA202AFDB8D4B7958E4B78"
@@ -9598,8 +9623,8 @@
     },
     {
       "path": "SRC/neothd/src/profile/communication.rs",
-      "bytes": 118534,
-      "sha256": "EA9946B0257962DDDF23D965FD798A015A1DBDDC53068FC89532582CD5F0A5E0"
+      "bytes": 120195,
+      "sha256": "739326848A2383AFAA8229A7A0D7DF3E5A2C71A91E4E7852C56A8398B7567A3E"
     },
     {
       "path": "SRC/neothd/src/profile/extract.rs",

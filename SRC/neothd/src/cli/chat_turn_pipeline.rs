@@ -342,6 +342,7 @@ pub(crate) struct ChatTurnPreparation {
     pub(crate) selected_config_path: PathBuf,
     pub(crate) prompt: String,
     pub(crate) current_session_id: String,
+    pub(crate) admitted_device_scope: Option<String>,
     /// Opaque attribution capability minted once at the admitted execution
     /// boundary, after the caller has initialized this home's WAL writer.
     /// It is never reconstructed from provider or RPC data.
@@ -555,6 +556,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
                 selected_config_path,
                 prompt,
                 current_session_id,
+                admitted_device_scope,
                 wal_session,
                 chat_ts_unix,
                 mcp_servers,
@@ -895,6 +897,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         PromptBuildContext {
             args: &args,
             session_id: current_session_id.as_str(),
+            admitted_device_scope: admitted_device_scope.as_deref(),
             prompt_bundle_hash: &intent_bundle_hash,
             writer: &writer,
             current_path: &prompt_current_path,
@@ -1880,6 +1883,7 @@ mod tests {
                 selected_config_path,
                 prompt: "W207 streaming prompt".to_owned(),
                 current_session_id: "w207-streaming-regression".to_owned(),
+                admitted_device_scope: None,
                 wal_session: None,
                 chat_ts_unix: 1_725_000_207,
                 mcp_servers: crate::mcp::McpServers::default(),
@@ -2570,6 +2574,7 @@ mod tests {
                 selected_config_path,
                 prompt: "neutral engine prompt".to_owned(),
                 current_session_id: "neutral-engine-regression".to_owned(),
+                admitted_device_scope: None,
                 wal_session: None,
                 chat_ts_unix: 1_725_000_000,
                 mcp_servers: crate::mcp::McpServers::default(),
@@ -3057,7 +3062,7 @@ mod tests {
                     first_tour_home: home.clone(),
                     selected_config_path,
                     prompt: "find retained_context_marker".to_owned(),
-                    current_session_id: "retained-context-retry-regression".to_owned(), wal_session: None,
+                    current_session_id: "retained-context-retry-regression".to_owned(), admitted_device_scope: None, wal_session: None,
                     chat_ts_unix: 1_725_000_002,
                     mcp_servers: crate::mcp::McpServers::default(),
                     scoped_mcp_servers: Vec::new(),
@@ -3292,7 +3297,7 @@ mod tests {
             });
             let mut prepared = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true, normal_chat_role: None },
+                preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), admitted_device_scope: None, wal_session: None, chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true, normal_chat_role: None },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
             feedback_eligible_agent_receipt: None,
             };
@@ -3338,7 +3343,7 @@ mod tests {
 
             let mut fresh = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true, normal_chat_role: None },
+                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), admitted_device_scope: None, wal_session: None, chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true, normal_chat_role: None },
                 abliterated_loader: None, deferred_failure_output: None, deferred_terminal: None,
             feedback_eligible_agent_receipt: None,
             };
@@ -3407,7 +3412,7 @@ mod tests {
             let selected_config_path = home.join("freedom.yaml");
             let mut prepared = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("find retained_context_marker".to_owned()), model: Some("retained-context-fallback-model".to_owned()), skill: None, system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint fallback chat canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "find retained_context_marker".to_owned(), current_session_id: "retained-context-fallback-regression".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_004, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: false, normal_chat_role: None },
+                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, replay_context: None, replay_selected_skill: None, retained_skill_admission: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint fallback chat canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "find retained_context_marker".to_owned(), current_session_id: "retained-context-fallback-regression".to_owned(), admitted_device_scope: None, wal_session: None, chat_ts_unix: 1_725_000_004, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: false, normal_chat_role: None },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
             feedback_eligible_agent_receipt: None,
             };
@@ -3510,7 +3515,7 @@ mod tests {
                     cancellation: ChatTurnCancellation::default(),
                     session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint failure fixture canary")),
                     instance_paths, first_tour_home: home.clone(), selected_config_path, prompt,
-                    current_session_id: "final-binding-failure-regression".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_003,
+                    current_session_id: "final-binding-failure-regression".to_owned(), admitted_device_scope: None, wal_session: None, chat_ts_unix: 1_725_000_003,
                     mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(),
                     tweaks: crate::tweaks::Tweaks::default(),
                     profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(),
@@ -3618,6 +3623,7 @@ mod tests {
                 selected_config_path: selected_config_path.clone(),
                 prompt: "/skill disable academic_research".to_owned(),
                 current_session_id: "custom-config-action-regression".to_owned(),
+                admitted_device_scope: None,
                 wal_session: None,
                 chat_ts_unix: 1_725_000_001,
                 mcp_servers: crate::mcp::McpServers::default(),

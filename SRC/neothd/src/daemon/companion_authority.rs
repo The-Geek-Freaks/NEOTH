@@ -31,9 +31,15 @@ const MAX_DEVICE_CONVERSATIONS: usize = 8;
 pub struct AdmittedCompanionConversation {
     conversation_id: Option<Uuid>,
     session_id: Option<String>,
+    #[cfg_attr(not(any(test, feature = "cluster")), allow(dead_code))]
+    device_presentation_scope: Option<String>,
     incognito: bool,
 }
 impl AdmittedCompanionConversation {
+    #[cfg(any(test, feature = "cluster"))]
+    pub(crate) fn device_presentation_scope(&self) -> Option<&str> {
+        self.device_presentation_scope.as_deref()
+    }
     pub fn conversation_id(&self) -> Option<Uuid> {
         self.conversation_id
     }
@@ -1066,6 +1072,7 @@ impl DeviceAuthority {
         let conversation = binding.map(|binding| AdmittedCompanionConversation {
             conversation_id: Some(binding.conversation_id),
             session_id: Some(binding.private_session_id.to_string()),
+            device_presentation_scope: None,
             incognito: false,
         });
         let delivery_id = Uuid::now_v7();
@@ -1232,6 +1239,7 @@ fn resolve_conversation(
         return Ok(Some(AdmittedCompanionConversation {
             conversation_id: None,
             session_id: None,
+            device_presentation_scope: None,
             incognito: true,
         }));
     }
@@ -1299,6 +1307,7 @@ fn resolve_conversation(
     Ok(Some(AdmittedCompanionConversation {
         conversation_id: Some(binding.conversation_id),
         session_id: Some(binding.private_session_id.to_string()),
+        device_presentation_scope: Some(crate::profile::communication::device::scope_id(binding.device_id, binding.revision)?),
         incognito: false,
     }))
 }
@@ -1829,6 +1838,8 @@ mod conversation_tests {
         let admitted = lease.admitted_conversation().unwrap();
         let public = admitted.conversation_id().unwrap();
         let private = admitted.session_id().unwrap().to_owned();
+        let device_epoch = crate::profile::communication::device::scope_id(first.device_id.0, first.revision).unwrap();
+        assert_eq!(admitted.device_presentation_scope(), Some(device_epoch.as_str()));
         assert!(!admitted.is_incognito());
         assert_ne!(public.to_string(), private);
         assert!(
@@ -1855,6 +1866,7 @@ mod conversation_tests {
             lease.admitted_conversation().unwrap().session_id(),
             Some(private.as_str())
         );
+        assert_eq!(lease.admitted_conversation().unwrap().device_presentation_scope(), Some(device_epoch.as_str()));
         assert_eq!(
             lease.admitted_conversation().unwrap().conversation_id(),
             Some(public)
@@ -1941,6 +1953,7 @@ mod conversation_tests {
         let admitted = lease.admitted_conversation().unwrap();
         assert!(admitted.is_incognito());
         assert!(admitted.session_id().is_none());
+        assert!(admitted.device_presentation_scope().is_none());
         assert!(admitted.conversation_id().is_none());
         lease.complete_confirmed().unwrap();
         drop(lease);
