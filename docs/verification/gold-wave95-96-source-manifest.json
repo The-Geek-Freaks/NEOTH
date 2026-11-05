@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T17:03:49.8132768Z",
-  "validationStatus": "published candidate; hosted pending",
+  "capturedUtc": "2026-11-05T17:28:09.1608181Z",
+  "validationStatus": "source candidate; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 61322,
-      "sha256": "93C05BA847971FB6C08B413E01A53BDBCC858E1159A0F4C1FFA94218BC4ECF31"
+      "bytes": 62181,
+      "sha256": "C0AEB5FF09DF7F32907913FF406E50CCFF87E49BD96102D4CCD2576C575276B6"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -738,8 +738,8 @@
     },
     {
       "path": "docs/configuration.md",
-      "bytes": 54407,
-      "sha256": "788A05E10BE2F7108FC9006604E19B4872750AF580992BDF6F31D73586DB843F"
+      "bytes": 55338,
+      "sha256": "D8FA66BD057C6550F307116274AF76C1F7BC99484A5FA680CA3D3A486D566613"
     },
     {
       "path": "docs/converted-channel-relink.md",
@@ -4933,8 +4933,8 @@
     },
     {
       "path": "docs/verification/gold-wave2691-self-edit-council.json",
-      "bytes": 3636,
-      "sha256": "637B040D3CB92E2D4A85911FD6EB63331E8D6A425C0F9C7D78D3B818D1E6220E"
+      "bytes": 3671,
+      "sha256": "8640CEE32B87DFCAB0C29B234F8CADF68C12AA7199B263224F8C02C63C4A3E37"
     },
     {
       "path": "docs/verification/gold-wave2692-ci-followup.json",
@@ -4945,6 +4945,11 @@
       "path": "docs/verification/gold-wave2693-council-ci-and-macos-budget.json",
       "bytes": 1565,
       "sha256": "FE9270C85265FA6AF824D0B0058069638B0F5B70C4739FB09D5262E73871AA61"
+    },
+    {
+      "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
+      "bytes": 3603,
+      "sha256": "F378D4C7C359D70F2928A803400EEC472BDCC41972DACF370374AA6AB86C7CEC"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6183,8 +6188,8 @@
     },
     {
       "path": "PLAN/ADOPT31_C5_SELF_EDIT_COUNCIL_DESIGN.md",
-      "bytes": 6657,
-      "sha256": "3F8FC659DA3655BB47A557482D3AD2A56B164C721F65777DADE1C2E5FBD5DE8D"
+      "bytes": 7978,
+      "sha256": "498B68C0ED9022710456288113977D19459FD6F35DBD4100987733533AC702AC"
     },
     {
       "path": "PLAN/ADR/001-slint-gui-framework.md",
@@ -6208,8 +6213,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2802778,
-      "sha256": "8E2260CFF9FBD8A3C4395473CDBD46F1E010D4917076D0689C167C225D1CDFB7"
+      "bytes": 2804318,
+      "sha256": "29D57A6328854FEBB228FA8B521F3A60B4CB65F24BAF9BDEE759D8F21CAA4471"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7203,8 +7208,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/code.rs",
-      "bytes": 148618,
-      "sha256": "7E5B83619217B67C57FA4B73CA7516AF01AE7DFEDABEB60EF4BFCA34FE931DC2"
+      "bytes": 148662,
+      "sha256": "9993DACE20D9EB3B88AB0639B170A74F032E0F5E343F4EC2079A6E12C9C593C0"
     },
     {
       "path": "SRC/neothd/src/cli/companion_mcp_stream.rs",
@@ -7892,9 +7897,19 @@
       "sha256": "A344116AD099BD3063CBEC5DE5DA5293D55FC43F65291B6CB6421E14F631BFD3"
     },
     {
+      "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+      "bytes": 9640,
+      "sha256": "C7522D580FE5AFEB730FEE3B9ED9FC775197EA46E4AF9E7061891F7FA140104E"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher_council.rs",
+      "bytes": 10666,
+      "sha256": "F55010B51C787E9E198E5CC1750D58FB44C1B9A3C95795B28959C32B32E71B3C"
+    },
+    {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
-      "bytes": 252176,
-      "sha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7"
+      "bytes": 253937,
+      "sha256": "B52048CB90B6778473BD217F5C824D9F6824DB7D12D94783479DA6C0A69539C5"
     },
     {
       "path": "SRC/neothd/src/coding/feed.rs",
@@ -7923,13 +7938,18 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
-      "bytes": 14032,
-      "sha256": "4D27A038E1636D8E3DA36078CB3C2E18919E6CFC2FAC3CCC7FF7CAFD9A2E1D87"
+      "bytes": 14186,
+      "sha256": "03B2AB5BE8457E0253C2B136B53F3FBA3BA9331BF7A0D638FE5D188E54D755B3"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "bytes": 116002,
-      "sha256": "58DE3A41B4E7863E67D930127AC841FF28BAE87F88B7F575158E7BAFC8F823DF"
+      "bytes": 116330,
+      "sha256": "4E4B8257419511EC31F6F56F1AB8E356929C8BFA93F72D500E0841497F150E93"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source.rs",
+      "bytes": 19812,
+      "sha256": "55C98071D1882818FEEEAE425D83DF67BA73B12B93FEC52886073A15CDCCBC7A"
     },
     {
       "path": "SRC/neothd/src/coding/service_runtime_tests.rs",
@@ -7938,8 +7958,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/service.rs",
-      "bytes": 152994,
-      "sha256": "7810D92702E3371E5E4B125AD4DE0649007355218A07F87371537E8DEE07EBFC"
+      "bytes": 153014,
+      "sha256": "D1BF1ABC287EF5727338174D4C6C585531A6A575CA41205B53605BD87ADE9B59"
     },
     {
       "path": "SRC/neothd/src/coding/store.rs",
@@ -7960,6 +7980,11 @@
       "path": "SRC/neothd/src/coding/worker.rs",
       "bytes": 39941,
       "sha256": "795210895051E67746CBC56F765899793F6C74918FF8FE1CCC7C3924679656E7"
+    },
+    {
+      "path": "SRC/neothd/src/coding/worktree.rs",
+      "bytes": 44835,
+      "sha256": "F859D7530FB50D30F6B9708C79B6C98F92EA8292FA41D1DB2BB64BF92E56C294"
     },
     {
       "path": "SRC/neothd/src/computer_use.rs",

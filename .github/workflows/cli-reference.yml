@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
       self_edit_regressions:
-        description: 'Also run five exact Council self-edit cases plus CLI reference and Ollama completion regressions'
+        description: 'Also run nine exact Council self-edit cases plus CLI reference and Ollama completion regressions'
         type: boolean
         default: false
       macos_provider_regression:
@@ -174,29 +174,38 @@ jobs:
           matrix_path = "docs/verification/gold-wave95-96-test-matrix.json"
           report = json.loads((root / report_path).read_bytes())
           matrix = json.loads((root / matrix_path).read_bytes())
+          dispatcher_path = "docs/verification/gold-wave2694-dispatcher-self-edit-council.json"
+          dispatcher = json.loads((root / dispatcher_path).read_bytes())
+          if len(dispatcher["tests"]) != 4 or len(set(dispatcher["tests"])) != 4:
+              raise SystemExit("expected four unique dispatcher/risk regressions")
           council = report["tests"]
           if len(council) != 5 or len(set(council)) != 5:
               raise SystemExit("expected five unique report-bound Council tests")
-          names = sorted(council + [
+          names = sorted(council + dispatcher["tests"] + [
               "cli::docgen::tests::cli_commands_md_is_up_to_date",
               "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success",
           ])
-          if len(set(names)) != 7 or not all(re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
-              raise SystemExit("invalid exact seven-test selection")
+          if len(set(names)) != 11 or not all(re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
+              raise SystemExit("invalid exact eleven-test selection")
           allowed = {
               "SRC/neothd/src/coding/self_source_council_tests.rs",
+              "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+              "SRC/neothd/src/coding/self_source.rs",
               "SRC/neothd/src/cli/docgen.rs",
               "SRC/neothd/src/providers/ollama_api.rs",
           }
           inputs = {}
-          for relative in (report_path, matrix_path, ".github/workflows/cli-reference.yml", "docs/cli-commands.md", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml"):
+          for relative in (report_path, dispatcher_path, matrix_path, ".github/workflows/cli-reference.yml", "docs/cli-commands.md", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml"):
               inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
-          for source in report["sources"]:
+          for source in report["sources"] + dispatcher["sources"]:
               relative = source["path"]
               if relative not in {
                   "SRC/neothd/src/cli/self_edit.rs", "SRC/neothd/src/coding/self_source_council_tests.rs",
                   "SRC/neothd/src/coding/self_source_council.rs", "SRC/neothd/src/coding/self_source_gate.rs",
                   "SRC/neothd/src/config/ops.rs", "SRC/neothd/src/wal/events.rs",
+                  "SRC/neothd/src/coding/dispatcher_council.rs", "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+                  "SRC/neothd/src/coding/dispatcher.rs", "SRC/neothd/src/coding/service.rs",
+                  "SRC/neothd/src/cli/code.rs", "SRC/neothd/src/coding/worktree.rs", "SRC/neothd/src/coding/self_source.rs",
               }:
                   raise SystemExit("unexpected Council source")
               actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
@@ -217,7 +226,7 @@ jobs:
           receipt = {
               "schema": "neoth.self-edit-regressions.v1", "producer": os.environ["GITHUB_SHA"],
               "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"],
-              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "requiredCount": 7,
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "requiredCount": 11,
               "fixtures": records, "inputs": inputs,
           }
           (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -246,8 +255,8 @@ jobs:
               failed_or_missing=$((failed_or_missing + 1))
             fi
           done < "$proof_dir/fixture-names.txt"
-          printf 'selected=7\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
-          test "$visited" -eq 7
+          printf 'selected=11\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 11
           test "$failed_or_missing" -eq 0
           (cd "$proof_dir" && sha256sum selection.json fixture-names.txt selection-validation.log compile.log final-counts.txt *.discovery.log *.test.log > SHA256SUMS)
 

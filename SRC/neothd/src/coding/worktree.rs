@@ -220,12 +220,30 @@ pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
 /// Create the task-scoped worktree from `HEAD` of `repo_root`.
 /// Returns the path so the caller can chain apply + test.
 ///
-/// The worktree carries the operator's current HEAD — a future
-/// follow-up adds a `from_ref: &str` parameter so the
-/// dispatcher can pin against a specific branch / commit when
-/// the operator has a multi-step session that builds on a prior
-/// task's patch.
+/// Ordinary callers retain HEAD semantics; reviewed self-edits use the
+/// crate-private exact-commit variant below.
 pub fn create_task_worktree(repo_root: &Path, task_id: KanbanTaskId) -> Result<PathBuf> {
+    create_task_worktree_from_ref(repo_root, task_id, "HEAD")
+}
+
+/// Pin a reviewed worktree to an object ID, never a mutable ref or option.
+pub(crate) fn create_task_worktree_at(
+    repo_root: &Path,
+    task_id: KanbanTaskId,
+    commit: &str,
+) -> Result<PathBuf> {
+    anyhow::ensure!(
+        matches!(commit.len(), 40 | 64) && commit.bytes().all(|b| b.is_ascii_hexdigit()),
+        "reviewed worktree base must be an exact Git object ID"
+    );
+    create_task_worktree_from_ref(repo_root, task_id, commit)
+}
+
+fn create_task_worktree_from_ref(
+    repo_root: &Path,
+    task_id: KanbanTaskId,
+    from_ref: &str,
+) -> Result<PathBuf> {
     let path = worktree_path_for(repo_root, task_id);
     let git_repo_root = verified_git_transport_path(repo_root)?;
     let git_path = verified_git_transport_new_child_path(&path)?;
@@ -236,7 +254,7 @@ pub fn create_task_worktree(repo_root: &Path, task_id: KanbanTaskId) -> Result<P
         .arg("add")
         .arg("--detach")
         .arg(git_path)
-        .arg("HEAD")
+        .arg(from_ref)
         .output()
         .context("spawn git worktree add")?;
     if !out.status.success() {

@@ -32,11 +32,11 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
-      "sha256": "4D27A038E1636D8E3DA36078CB3C2E18919E6CFC2FAC3CCC7FF7CAFD9A2E1D87"
+      "sha256": "03B2AB5BE8457E0253C2B136B53F3FBA3BA9331BF7A0D638FE5D188E54D755B3"
     },
     {
       "path": "SRC/neothd/src/coding/self_source_gate.rs",
-      "sha256": "58DE3A41B4E7863E67D930127AC841FF28BAE87F88B7F575158E7BAFC8F823DF"
+      "sha256": "4E4B8257419511EC31F6F56F1AB8E356929C8BFA93F72D500E0841497F150E93"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -58,7 +58,7 @@
     "Feature disabled until explicitly configured; no operator config activated.",
     "Immutable invocation config snapshot: on-disk edits take effect on next invocation, not immediate revocation.",
     "Positive interactive override and native paid-provider execution not proven by injected transport fixtures.",
-    "General PatchApplyToRepo remains a separate integration; no raw roadmap row closed.",
+    "Dispatcher follow-up is separately implemented in W2694; acceptance remains producer-bound; no raw roadmap row closed.",
     "Shared provider infrastructure remains an existing trusted dependency, not a complete transitive self-modification proof."
   ],
   "rawRoadmapRowsClosed": 0,

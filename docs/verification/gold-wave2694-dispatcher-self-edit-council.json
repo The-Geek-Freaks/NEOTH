@@ -1,0 +1,77 @@
+{
+  "schema": "neoth.wave2694.dispatcher-self-edit-council.v1",
+  "producerBase": "f06584e8e84d2a01d86e005c81ad27b53c704aa2",
+  "roadmap": [
+    "ADOPT31-C5"
+  ],
+  "changes": [
+    "Actual service/CLI config and home required at dispatcher construction",
+    "Configured source identity; strict old/new diff paths; no-follow alias refusal; unrelated repos keep existing flow",
+    "Existing source enable/allowlist/permission checks; exact policy/base/source/patch review binding",
+    "Same central source exclusion crosses blocking handoff; pinned worktree commit; repeated drift/expiry checks",
+    "Fresh CLI TTY override only; prior CLI/GUI grants cannot override Council dissent",
+    "Required durable resolution before final PatchApply permission and first worktree effect",
+    "Shared changed-line count now counts header-like source lines inside hunks"
+  ],
+  "tests": [
+    "coding::dispatcher::council_tests::dispatcher_reviews_before_real_worktree_and_never_inherits_dissent_override",
+    "coding::dispatcher::council_tests::dispatcher_review_rejects_changed_base_and_expiry_at_blocking_effect",
+    "coding::dispatcher::council_tests::dispatcher_source_scope_covers_moves_deletions_and_rejects_ambiguous_paths",
+    "coding::self_source::tests::changed_line_budget_counts_header_like_source_inside_hunks"
+  ],
+  "newPortableCases": 4,
+  "totalPortableCases": 3326,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/coding/dispatcher_council.rs",
+      "sha256": "F55010B51C787E9E198E5CC1750D58FB44C1B9A3C95795B28959C32B32E71B3C"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
+      "sha256": "C7522D580FE5AFEB730FEE3B9ED9FC775197EA46E4AF9E7061891F7FA140104E"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher.rs",
+      "sha256": "B52048CB90B6778473BD217F5C824D9F6824DB7D12D94783479DA6C0A69539C5"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "sha256": "D1BF1ABC287EF5727338174D4C6C585531A6A575CA41205B53605BD87ADE9B59"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code.rs",
+      "sha256": "9993DACE20D9EB3B88AB0639B170A74F032E0F5E343F4EC2079A6E12C9C593C0"
+    },
+    {
+      "path": "SRC/neothd/src/coding/worktree.rs",
+      "sha256": "F859D7530FB50D30F6B9708C79B6C98F92EA8292FA41D1DB2BB64BF92E56C294"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source.rs",
+      "sha256": "55C98071D1882818FEEEAE425D83DF67BA73B12B93FEC52886073A15CDCCBC7A"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_gate.rs",
+      "sha256": "4E4B8257419511EC31F6F56F1AB8E356929C8BFA93F72D500E0841497F150E93"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_council.rs",
+      "sha256": "03B2AB5BE8457E0253C2B136B53F3FBA3BA9331BF7A0D638FE5D188E54D755B3"
+    }
+  ],
+  "validation": {
+    "static": "Root bounded text review and GPT-6.1 Terra high prompt-only boundary review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Disabled until explicitly configured; no operator configuration activated",
+    "Dispatcher retains isolated worktree behavior and configured tests; not the central green-tested live-source apply",
+    "Missing configured source identity refuses while Council enabled; explicit actual Git top-level required",
+    "Positive interactive TTY, native paid-provider and cross-OS evidence remain open",
+    "Strict supported diff grammar and no-follow behavior require native regression acceptance; no entire transitive source protection claim"
+  ],
+  "rawRoadmapRowsClosed": 0
+}

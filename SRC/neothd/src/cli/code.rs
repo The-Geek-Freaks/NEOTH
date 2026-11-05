@@ -1713,7 +1713,7 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     }
 
     let apply_cfg = if let Some(repo) = args.apply.as_ref() {
-        let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed)
+        let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed, &cfg, &FreedomConfig::default_neoth_home())
             .with_local_cli_confirmation()
             .with_policy(cfg.autonomy_policy());
         // CLI advice is opt-in only for an already present regular DB. It

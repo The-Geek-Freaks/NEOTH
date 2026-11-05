@@ -265,12 +265,47 @@ pub fn diff_sha256(diff: &[u8]) -> String {
 ///
 /// Used by Layer-2 `max_lines_changed` cap.
 pub fn diff_line_count(diff: &str) -> usize {
-    diff.lines()
-        .filter(|l| {
-            (l.starts_with('+') && !l.starts_with("+++"))
-                || (l.starts_with('-') && !l.starts_with("---"))
-        })
-        .count()
+    // A source line may itself begin with ++ or --. Inside a hunk those are
+    // changed lines, not file headers, and must count toward both safety caps.
+    let mut remaining = (0u64, 0u64);
+    let mut changed = 0usize;
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            remaining = (0, 0);
+            continue;
+        }
+        if line.starts_with("@@ ") {
+            let mut fields = line.split_whitespace().skip(1);
+            let count = |field: Option<&str>, sign| {
+                field?.strip_prefix(sign)?
+                    .split_once(',')
+                    .map_or(Some(1), |(_, count)| count.parse::<u64>().ok())
+            };
+            // Malformed bounds cannot buy a smaller count; Git still owns
+            // validity and rejects malformed patches before source apply.
+            remaining = (
+                count(fields.next(), '-').unwrap_or(u64::MAX),
+                count(fields.next(), '+').unwrap_or(u64::MAX),
+            );
+            continue;
+        }
+        let in_hunk = remaining.0 != 0 || remaining.1 != 0;
+        if line.starts_with('+') {
+            if in_hunk || !line.starts_with("+++") {
+                changed = changed.saturating_add(1);
+            }
+            if in_hunk { remaining.1 = remaining.1.saturating_sub(1); }
+        } else if line.starts_with('-') {
+            if in_hunk || !line.starts_with("---") {
+                changed = changed.saturating_add(1);
+            }
+            if in_hunk { remaining.0 = remaining.0.saturating_sub(1); }
+        } else if line.starts_with(' ') && in_hunk {
+            remaining.0 = remaining.0.saturating_sub(1);
+            remaining.1 = remaining.1.saturating_sub(1);
+        }
+    }
+    changed
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -279,6 +314,15 @@ pub fn diff_line_count(diff: &str) -> usize {
 mod tests {
     use super::*;
 
+    #[test]
+    fn changed_line_budget_counts_header_like_source_inside_hunks() {
+        let patch = "--- a/src/x.rs\n+++ b/src/x.rs\n@@ -1,2 +1,2 @@\n---old\n-old2\n+++new\n+new2\n--- a/src/y.rs\n+++ b/src/y.rs\n@@ -0,0 +1 @@\n+added\n";
+        assert_eq!(diff_line_count(patch), 5);
+        let policy = crate::config::ops::SelfEditCouncilConfig {
+            enabled: true, changed_line_threshold: 5, risky_paths: vec![], ..Default::default()
+        };
+        assert!(crate::coding::self_source_gate::council_review::required(&policy, &["src/x.rs".into()], diff_line_count(patch)).unwrap());
+    }
     #[test]
     fn source_roots_resolve_for_nested_repo_layout() {
         // P0 regression: NEOTH's real layout has .git at the repo root,

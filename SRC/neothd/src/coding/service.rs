@@ -567,7 +567,7 @@ async fn build_dispatch_plan(
             // becomes local authority or a trust-ledger subject.
             ApplyConfirmation::Unattended => ApplyOrigin::ChannelRequested,
         };
-        let mut apply = DispatchApplyConfig::new(&request.repository_root, origin)
+        let mut apply = DispatchApplyConfig::new(&request.repository_root, origin, config, neoth_home)
             .with_policy(config.autonomy_policy());
         // This is an explicit service dependency, not a dispatcher default or
         // CWD lookup. The read-only open happens only after patch admission;

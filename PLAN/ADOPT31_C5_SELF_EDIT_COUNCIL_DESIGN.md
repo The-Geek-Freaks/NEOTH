@@ -110,3 +110,23 @@ The shared provider infrastructure is an existing trusted dependency; the new
 module, verdict validator and call-budget implementation are hard-denied as
 self-edit targets. This is not a claim that every transitive source dependency
 is protected against arbitrary code changes.
+## W2694 dispatcher connection
+
+The subsequent PatchApplyToRepo connection is now implemented, pending hosted/native
+acceptance. It receives actual config/home from both production owners, identifies
+the configured NEOTH crate and classifies both sides of strict Git diffs. Enabled
+Council with unavailable source identity fails closed. Unrelated repositories keep
+the existing flow. Existing source enable, allowlist and autonomy checks remain.
+
+Review and durable resolution precede the first worktree effect. The central source
+lock, immutable source/base/policy/patch binding and process-local capability cross
+the blocking handoff. The worktree uses the exact reviewed object ID; HEAD/index,
+physical roots and expiry are rechecked before apply and configured tests. This is
+an isolated dispatcher worktree, not the central green-tested live-tree path.
+Fresh TTY override is available only to the actual local CLI; GUI/unattended
+dissent cannot reuse their existing patch confirmation.
+
+The shared changed-line counter includes source lines beginning with ++/-- inside
+hunks, so header-like content cannot evade the configured line threshold. Four new
+portable cases cover actual apply/refusal, stale base/expiry and scope/count edges.
+No raw roadmap checkbox or native/interactive/provider acceptance is inferred.

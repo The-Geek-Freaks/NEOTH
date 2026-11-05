@@ -1112,5 +1112,19 @@ identity and an explicit successful finish reason.
 The loaded configuration is a fixed snapshot for one invocation; config edits
 during the review take effect on the next invocation. Review resolution and
 permission are durably recorded before apply. Neither an old WAL receipt nor a
-provider verdict independently grants permission. The general patch dispatcher
-is outside this first self-source integration.
+provider verdict independently grants permission.
+
+The patch dispatcher also applies this policy when a patch touches the configured
+NEOTH crate. Its service/CLI owner supplies the actual config and home. An enabled
+policy requires an available source root; a downloaded release must set
+coding.self_edit.source_root. Requests use the actual Git top level, strict Git
+diff headers and both old/new paths. Binary or ambiguous patches and filesystem
+aliases are refused. Unrelated repositories retain the existing apply flow.
+
+The dispatcher reviews before creating its task worktree, pins that worktree to
+the reviewed commit and checks source identity, HEAD/index and review expiry at
+the effect boundary. It keeps the existing isolated-worktree and configured-test
+behavior; this is distinct from the central self-edit gate's green check and
+live-source apply. Native GUI or unattended dissent refuses until a separate
+bound confirmation channel exists; an existing GUI patch approval cannot
+override dissent. The local CLI can use the fresh TTY ceremony.

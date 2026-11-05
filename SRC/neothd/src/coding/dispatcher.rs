@@ -11,6 +11,12 @@
 //!   Q3 review gating → policy-driven review/promotion
 //!   Q4 cycle prevention → time + count budget enforced (both)
 
+#[path = "dispatcher_council.rs"]
+mod council_review;
+#[cfg(test)]
+#[path = "dispatcher_council_tests.rs"]
+mod council_tests;
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -181,6 +187,7 @@ pub struct DispatchApplyConfig {
     /// to Allow (only `CliConfirmed`). See [`ApplyOrigin`].
     pub origin: ApplyOrigin,
     confirmation: ApplyConfirmation,
+    council_context: council_review::Context,
     /// Installed only by the service after a real RunState exists. It is
     /// private so UI labels and external callers cannot mint admission.
     gui_patch_approval: Option<super::service::GuiPatchApprovalBroker>,
@@ -226,11 +233,17 @@ impl DispatchApplyConfig {
     /// one-shots pass `ApplyOrigin::CliConfirmed`; daemon/channel apply
     /// paths must pass their own origin so the `Confirm` gate is NOT
     /// silently degraded for an unattended apply.
-    pub fn new(repo_root: impl Into<std::path::PathBuf>, origin: ApplyOrigin) -> Self {
+    pub fn new(
+        repo_root: impl Into<std::path::PathBuf>,
+        origin: ApplyOrigin,
+        config: &crate::config::FreedomConfig,
+        home: &std::path::Path,
+    ) -> Self {
         Self {
             repo_root: repo_root.into(),
             origin,
             confirmation: ApplyConfirmation::Unattended,
+            council_context: council_review::Context::new(config, home),
             gui_patch_approval: None,
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
@@ -1240,6 +1253,7 @@ struct AdmittedPatchApply {
     task_id: KanbanTaskId,
     accepted_patch_sha256: [u8; 32],
     request_binding_sha256: String,
+    council: Option<council_review::Admission>,
 }
 
 /// Internal outcome used only to distinguish a joined, pre-effect
@@ -1359,6 +1373,10 @@ async fn authorize_patch_apply_before_worktree(
         repo_root: target.path().to_path_buf(),
         task_id: task.task_id.raw() as u64,
     };
+    let council = council_review::admit(
+        &cfg.council_context, &target, patch, &binding, writer, cfg.confirmation,
+    ).await?;
+    let permission_binding = council.as_ref().map(|review| review.permission_binding(&binding)).transpose()?.unwrap_or_else(|| binding.clone());
     let mut gate = crate::permissions::Gate::for_policy(policy.clone())
         .with_confirm(crate::permissions::ConfirmStrategy::FailClosed);
     if let Some(confirmation_source) = confirmation_source {
@@ -1368,7 +1386,7 @@ async fn authorize_patch_apply_before_worktree(
         &action,
         crate::permissions::PermissionAuditSink::Writer(writer),
         true,
-        Some(&binding),
+        Some(&permission_binding),
     )
     .await
     .map_err(|error| {
@@ -1382,6 +1400,7 @@ async fn authorize_patch_apply_before_worktree(
         task_id: task.task_id,
         accepted_patch_sha256,
         request_binding_sha256: binding,
+        council,
     }))
 }
 
@@ -1611,6 +1630,9 @@ fn apply_admitted_patch_in_worktree(
         return Err("patch apply request binding changed after permission admission".to_string());
     }
 
+    if let Some(review) = &admission.council {
+        review.validate(&cfg.council_context, &current_target, &binding)?;
+    }
     if cancellation_probe.is_some_and(|probe| probe.load(std::sync::atomic::Ordering::Acquire)) {
         return Err(APPLY_CANCELLED_BEFORE_WORKTREE.to_string());
     }
@@ -1625,14 +1647,13 @@ fn apply_admitted_patch_in_worktree(
     );
     log_pre_apply_impact_advisory(task, impact_advisory.as_ref());
 
-    let wt_path =
-        crate::coding::worktree::create_task_worktree(current_target.path(), task.task_id)
-            .map_err(|e| {
-                format!(
-                    "worktree create failed for task {}: {e}",
-                    task.task_id.raw()
-                )
-            })?;
+    let wt_path = match &admission.council {
+        Some(review) => {
+            review.validate(&cfg.council_context, &current_target, &binding)?;
+            crate::coding::worktree::create_task_worktree_at(current_target.path(), task.task_id, review.commit())
+        }
+        None => crate::coding::worktree::create_task_worktree(current_target.path(), task.task_id),
+    }.map_err(|e| format!("worktree create failed for task {}: {e}", task.task_id.raw()))?;
 
     // WS-BUG P1: the worktree path is deterministic per task_id, so leaking it
     // on ANY error path below made every retry fail at git "already checked
@@ -1758,6 +1779,10 @@ fn apply_admitted_patch_in_worktree(
             }
         }
 
+        if let Some(review) = &admission.council {
+            review.validate(&cfg.council_context, &current_target, &binding)?;
+            review.verify_worktree(&wt_path)?;
+        }
         let patch_hash = crate::coding::worktree::patch_hash_bytes(patch_text.as_bytes());
 
         match crate::coding::worktree::apply_patch_bytes_in_worktree(
@@ -1774,6 +1799,9 @@ fn apply_admitted_patch_in_worktree(
                 // test command, run it inside the worktree. A
                 // non-zero exit routes through the retry-policy
                 // path the same way a git apply rejection does.
+                if let Some(review) = &admission.council {
+                    review.validate(&cfg.council_context, &current_target, &binding)?;
+                }
                 let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
                     run_worktree_tests(&worktree_path, cmd, cfg.test_timeout, task)
                 } else {
@@ -2503,9 +2531,9 @@ mod tests {
 
     /// A canned worker — returns the same outcome every call.
     /// Sufficient to pin the dispatch path's contract.
-    struct CannedWorker {
-        outcome: WorkerOutcome,
-        name: &'static str,
+    pub(super) struct CannedWorker {
+        pub(super) outcome: WorkerOutcome,
+        pub(super) name: &'static str,
     }
 
     #[async_trait]
@@ -2624,7 +2652,7 @@ mod tests {
         (dir, conn)
     }
 
-    fn green_outcome() -> WorkerOutcome {
+    pub(super) fn green_outcome() -> WorkerOutcome {
         WorkerOutcome {
             patch_text: "diff --git a/x b/x\n+ok\n".into(),
             patch_path: std::path::PathBuf::new(),
@@ -2641,7 +2669,7 @@ mod tests {
         }
     }
 
-    fn notes_task(description: Option<&str>) -> KanbanTask {
+    pub(super) fn notes_task(description: Option<&str>) -> KanbanTask {
         KanbanTask {
             task_id: KanbanTaskId(1),
             session_id: KanbanSessionId(1),
@@ -3433,7 +3461,7 @@ mod tests {
         }
     }
 
-    fn authenticated_apply_writer(
+    pub(super) fn authenticated_apply_writer(
         home: &std::path::Path,
     ) -> (
         std::sync::Arc<crate::wal::writer::WalWriterHandle>,
@@ -3451,7 +3479,7 @@ mod tests {
         repo: &std::path::Path,
         writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
     ) -> DispatchApplyConfig {
-        DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed)
+        DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Full)
             .with_local_cli_confirmation()
             .with_wal_writer(std::sync::Arc::clone(writer))
@@ -4448,7 +4476,7 @@ mod tests {
         writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
         broker: crate::coding::service::GuiPatchApprovalBroker,
     ) -> DispatchApplyConfig {
-        let mut config = DispatchApplyConfig::new(repo, ApplyOrigin::GuiRequested)
+        let mut config = DispatchApplyConfig::new(repo, ApplyOrigin::GuiRequested, &crate::config::FreedomConfig::default(), repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Full)
             .with_gui_interactive_confirmation()
             .with_wal_writer(std::sync::Arc::clone(writer));
@@ -4792,7 +4820,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         let home = dir.path().join("neoth-home");
         let (writer, _writer_join) = authenticated_apply_writer(&home);
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Strict)
             .with_local_cli_confirmation()
             .with_wal_writer(std::sync::Arc::clone(&writer));
@@ -5004,7 +5032,7 @@ mod tests {
                 name: "native-gui-missing-broker",
             }),
         );
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::GuiRequested)
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::GuiRequested, &crate::config::FreedomConfig::default(), &repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Full)
             .with_gui_interactive_confirmation()
             .with_wal_writer(writer);
@@ -5210,7 +5238,7 @@ mod tests {
                 name: "missing-required-writer",
             }),
         );
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Full)
             .with_local_cli_confirmation();
         let outcome = dispatch_session_with_apply(
@@ -5376,7 +5404,7 @@ mod tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::DaemonScheduled)
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::DaemonScheduled, &crate::config::FreedomConfig::default(), &repo)
             .with_autonomy(crate::permissions::AutonomyLevel::Full)
             .with_wal_writer(std::sync::Arc::clone(&writer));
         let outcome = dispatch_session_with_apply(
@@ -5472,7 +5500,7 @@ mod tests {
             );
 
             let repo = dir.path().join("never-created-repo");
-            let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
+            let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed, &crate::config::FreedomConfig::default(), &repo);
             let result = (if with_apply {
                 dispatch_session_with_apply(
                     &conn,

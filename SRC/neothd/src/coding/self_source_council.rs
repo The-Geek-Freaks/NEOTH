@@ -31,7 +31,7 @@ fn digest(value: &impl Serialize) -> Result<String, String> {
 
 /// This is observational audit data, not a replayable approval capability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct ReviewReceipt {
+pub(in crate::coding) struct ReviewReceipt {
     schema_version: u8,
     review_id: String,
     action_binding_sha256: String,
@@ -49,7 +49,7 @@ struct RoleReceipt {
 }
 
 /// Only review() constructs the capability. No deserialize/clone/public fields.
-pub(super) struct ReviewedEdit {
+pub(in crate::coding) struct ReviewedEdit {
     receipt: ReviewReceipt,
     deadline: tokio::time::Instant,
     dissent: Vec<String>,
@@ -57,21 +57,21 @@ pub(super) struct ReviewedEdit {
 }
 
 impl ReviewedEdit {
-    pub(super) fn dissent(&self) -> &[String] {
+    pub(in crate::coding) fn dissent(&self) -> &[String] {
         &self.dissent
     }
-    pub(super) fn confirmation_binding(&self) -> Result<String, String> {
+    pub(in crate::coding) fn confirmation_binding(&self) -> Result<String, String> {
         digest(&self.receipt)
     }
-    pub(super) fn binding(&self) -> Result<String, String> {
+    pub(in crate::coding) fn binding(&self) -> Result<String, String> {
         digest(&(&self.receipt, &self.override_confirmation))
     }
-    pub(super) fn acknowledge_override(&mut self) -> Result<(), String> {
+    pub(in crate::coding) fn acknowledge_override(&mut self) -> Result<(), String> {
         // Keep the confirmed review immutable; bind its separate resolution.
         self.override_confirmation = Some(self.confirmation_binding()?);
         Ok(())
     }
-    pub(super) fn validate(
+    pub(in crate::coding) fn validate(
         &self,
         action_binding: &str,
         policy: &SelfEditCouncilConfig,
@@ -91,7 +91,7 @@ impl ReviewedEdit {
         }
         Ok(())
     }
-    pub(super) async fn persist(&self, writer: &WalWriterHandle) -> Result<(), String> {
+    pub(in crate::coding) async fn persist(&self, writer: &WalWriterHandle) -> Result<(), String> {
         let payload = serde_json::to_vec(&(&self.receipt, &self.override_confirmation))
             .map_err(|_| "review receipt serialization failed")?;
         let header =
@@ -110,7 +110,7 @@ impl ReviewedEdit {
     }
 }
 
-pub(super) fn required(
+pub(in crate::coding) fn required(
     policy: &SelfEditCouncilConfig,
     paths: &[String],
     changed: usize,
@@ -162,7 +162,7 @@ pub(super) fn required(
         }))
 }
 
-pub(super) struct LeafContext<'a> {
+pub(in crate::coding) struct LeafContext<'a> {
     cfg: &'a FreedomConfig,
     home: &'a Path,
     authorizer: &'a ProviderCallAuthorizer,
@@ -170,21 +170,21 @@ pub(super) struct LeafContext<'a> {
     calls: &'a BudgetToken,
 }
 
-pub(super) struct LeafOutput {
+pub(in crate::coding) struct LeafOutput {
     text: String,
     completion_identity_sha256: String,
 }
 
 /// Private transport seam; production always uses NativeLeaf. No CLI switch.
 #[async_trait::async_trait]
-pub(super) trait ReviewLeaf: Send + Sync {
+pub(in crate::coding) trait ReviewLeaf: Send + Sync {
     async fn ask(
         &self,
         role: HemisphereRole,
         context: &LeafContext<'_>,
     ) -> Result<LeafOutput, String>;
 }
-pub(super) struct NativeLeaf;
+pub(in crate::coding) struct NativeLeaf;
 
 #[async_trait::async_trait]
 impl ReviewLeaf for NativeLeaf {
@@ -263,7 +263,7 @@ impl ReviewLeaf for NativeLeaf {
     }
 }
 
-pub(super) async fn review(
+pub(in crate::coding) async fn review(
     cfg: &FreedomConfig,
     home: &Path,
     diff: &str,

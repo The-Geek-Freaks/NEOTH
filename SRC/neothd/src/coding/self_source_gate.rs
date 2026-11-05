@@ -59,7 +59,7 @@
 //! self-edit while one is in flight.
 
 #[path = "self_source_council.rs"]
-mod council_review;
+pub(in crate::coding) mod council_review;
 
 use std::path::{Path, PathBuf};
 
@@ -113,6 +113,11 @@ static HARD_DENY_PREFIXES: &[&str] = &[
     // The gate's own source — self-edit may never rewrite the gate.
     "src/coding/self_source_gate.rs",
     "src/coding/self_source_council.rs",
+    "src/coding/dispatcher_council.rs",
+    "src/coding/dispatcher.rs",
+    "src/coding/service.rs",
+    "src/code_map/diff.rs",
+    "src/cli/code.rs",
     "src/council/qa_verdict.rs",
     "src/council/budget.rs",
     "src/coding/self_source.rs",
@@ -1185,14 +1190,14 @@ impl Drop for WorktreeGuard {
 /// releases it. A crash leaves a stale file, so acquisition steals locks
 /// older than [`Self::STALE_AFTER`].
 #[derive(Debug)]
-struct SelfEditLock {
+pub(in crate::coding) struct SelfEditLock {
     path: PathBuf,
 }
 
 impl SelfEditLock {
     const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-    fn acquire(source_root: &Path) -> Result<Self, String> {
+    pub(in crate::coding) fn acquire(source_root: &Path) -> Result<Self, String> {
         let key = diff_sha256(source_root.to_string_lossy().as_bytes());
         let path = std::env::temp_dir().join(format!("neoth_self_edit_{}.lock", &key[..16]));
         match Self::try_create(&path) {
@@ -1239,7 +1244,7 @@ impl Drop for SelfEditLock {
 // ── Layer implementations ─────────────────────────────────────────────────────
 
 /// Layer 1: check the kill-switch.
-fn layer1_kill_switch(cfg: &SelfEditConfig) -> Result<(), String> {
+pub(in crate::coding) fn layer1_kill_switch(cfg: &SelfEditConfig) -> Result<(), String> {
     if cfg.enabled {
         Ok(())
     } else {
@@ -1260,7 +1265,7 @@ fn layer1_kill_switch(cfg: &SelfEditConfig) -> Result<(), String> {
 /// 3. Secret-pattern filenames (case-insensitive).
 /// 4. Line-count cap (`max_lines_changed`).
 /// 5. Positive allowlist (at least one `allowed_modules` prefix must match).
-fn layer2_allowlist(
+pub(in crate::coding) fn layer2_allowlist(
     cfg: &SelfEditConfig,
     paths: &[String],
     changed_lines: usize,
@@ -1364,7 +1369,7 @@ fn layer2_allowlist(
 /// contract impossible for a future caller to forget: a bare `run_gate_stack`
 /// call with `operator_acked = false` REFUSES a Confirm decision instead of
 /// silently applying it.
-fn layer3_permission<P: permissions::PolicyArgument>(
+pub(in crate::coding) fn layer3_permission<P: permissions::PolicyArgument>(
     policy: P,
     target_paths: &[String],
     operator_acked: bool,
@@ -1653,7 +1658,7 @@ fn verify_git_truth(
 ///
 /// Both values are used by [`verify_base_snapshot`] right before the live
 /// apply to detect any concurrent mutation of the repo state.
-fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
+pub(in crate::coding) fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
     let run_git = |args: &[&str]| -> Result<String, String> {
         let out = std::process::Command::new("git")
             .arg("-C")
@@ -1689,7 +1694,7 @@ fn capture_base_snapshot(git_root: &Path) -> Result<BaseShaSnapshot, String> {
 /// the live apply runs. The error message names the old/new values (first 12
 /// chars) so the operator understands what happened without needing to grep
 /// the WAL.
-fn verify_base_snapshot(git_root: &Path, base: &BaseShaSnapshot) -> Result<(), String> {
+pub(in crate::coding) fn verify_base_snapshot(git_root: &Path, base: &BaseShaSnapshot) -> Result<(), String> {
     let run_git = |args: &[&str]| -> Result<String, String> {
         let out = std::process::Command::new("git")
             .arg("-C")
