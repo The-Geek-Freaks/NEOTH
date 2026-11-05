@@ -207,6 +207,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
     }
     print!("{}", render_prompt_tax_section(roll.prompt_tax.as_ref()));
     print!("{}", render_prompt_components_section(roll));
+    print!("{}", render_partial_prompt_origin_section(roll));
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
@@ -259,6 +260,18 @@ pub(crate) fn render_prompt_tax_section(totals: Option<&PromptTaxTotals>) -> Str
             totals.unattributed_tokens,
         ),
     }
+}
+
+pub(crate) fn render_partial_prompt_origin_section(roll: &UsageRollup) -> String {
+    if roll.partial_prompt_origin_overflowed {
+        return "  post-compaction tool origin: unavailable (rollup overflow)\n".into();
+    }
+    let Some(partial) = &roll.partial_prompt_origin else { return String::new(); };
+    format!(
+        "  post-compaction tool origin: {}/{} calls; known subsequently appended tool bytes={}\n    compacted base and other origins: unknown; request upper bound={} (local byte estimates; not provider tokens or allocated cost)\n",
+        partial.observed_call_count, roll.total_call_count,
+        partial.known_tool_result_bytes, partial.request_upper_bound,
+    )
 }
 
 pub(crate) fn render_prompt_components_section(roll: &UsageRollup) -> String {

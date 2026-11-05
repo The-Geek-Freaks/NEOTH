@@ -353,10 +353,26 @@ pub struct LoopOutcome {
     pub goal_hash: Option<String>,
 }
 
-/// Caller-supplied completion driver. Takes the (already-assembled)
-/// prompt string for the current iteration + returns the LLM response
-/// text. Implementations typically wrap their existing `Provider::complete`
-/// call with whatever request-shape building they do upstream.
+/// Loop-owned evidence, kept separate from provider-wire request metadata.
+#[derive(Clone, Copy, Debug)]
+pub struct ToolOriginEvidence {
+    bytes: u32,
+    compacted: bool,
+}
+
+impl ToolOriginEvidence {
+    pub(crate) fn initial(bytes: u32) -> Self {
+        Self { bytes, compacted: false }
+    }
+
+    pub(crate) fn after_compaction(bytes: u32) -> Self {
+        Self { bytes, compacted: true }
+    }
+
+    pub(crate) fn bytes(self) -> u32 { self.bytes }
+    pub(crate) fn compacted(self) -> bool { self.compacted }
+}
+
 pub trait CompletionDriver {
     fn complete<'a>(
         &'a mut self,
@@ -371,6 +387,19 @@ pub trait CompletionDriver {
         _tool_result_bytes: Option<u32>,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
         self.complete(prompt)
+    }
+
+    /// Partial evidence must never become a full zero-origin estimate in an
+    /// older driver. Drivers without support retain the unavailable boundary.
+    fn complete_with_tool_origin<'a>(
+        &'a mut self,
+        prompt: &'a str,
+        evidence: Option<ToolOriginEvidence>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        self.complete_with_tool_attribution(
+            prompt,
+            evidence.filter(|e| !e.compacted).map(|e| e.bytes),
+        )
     }
 }
 
@@ -655,6 +684,7 @@ where
 {
     let mut prompt = initial_prompt;
     let mut retained_tool_result_bytes = Some(0u32);
+    let mut tool_origin_compacted = false;
     let mut iterations = 0u32;
     let mut hit_cap = false;
     let mut successful_calls = 0u32;
@@ -747,9 +777,10 @@ where
             )
             .await?;
             if sha2::Sha256::digest(prompt.as_bytes()) != before_compaction {
-                // Aggregate historical counters cannot describe a retained
-                // subset after compaction. Unknown is not a measured zero.
-                retained_tool_result_bytes = None;
+                // The compacted base has unknown origins. Count only future
+                // rendered appends; zero does not describe the retained base.
+                retained_tool_result_bytes = Some(0);
+                tool_origin_compacted = true;
             }
         }
         // GOLD-ADAPT-HARNESS-04 — per-turn input token guard: if the estimated
@@ -779,7 +810,7 @@ where
             }
         }
         current_text = driver
-            .complete_with_tool_attribution(&prompt, retained_tool_result_bytes)
+            .complete_with_tool_origin(&prompt, retained_tool_result_bytes.map(|bytes| if tool_origin_compacted { ToolOriginEvidence::after_compaction(bytes) } else { ToolOriginEvidence::initial(bytes) }))
             .await?;
         let mut extraction = extract_tool_calls(&current_text);
         // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model returned
@@ -804,7 +835,7 @@ where
                 crate::mcp::harness::LEAKED_CALL_NUDGE
             );
             current_text = driver
-                .complete_with_tool_attribution(&nudge_prompt, retained_tool_result_bytes)
+                .complete_with_tool_origin(&nudge_prompt, retained_tool_result_bytes.map(|bytes| if tool_origin_compacted { ToolOriginEvidence::after_compaction(bytes) } else { ToolOriginEvidence::initial(bytes) }))
                 .await?;
             extraction = extract_tool_calls(&current_text);
             response_was_harness_replay = true;
@@ -4929,6 +4960,7 @@ mod tests {
         cursor: Arc<AtomicUsize>,
         seen_prompts: std::sync::Mutex<Vec<String>>,
         seen_attribution: std::sync::Mutex<Vec<Option<u32>>>,
+        seen_partial: std::sync::Mutex<Vec<Option<u32>>>,
     }
 
     impl ScriptedDriver {
@@ -4938,11 +4970,21 @@ mod tests {
                 cursor: Arc::new(AtomicUsize::new(0)),
                 seen_prompts: std::sync::Mutex::new(Vec::new()),
                 seen_attribution: std::sync::Mutex::new(Vec::new()),
+                seen_partial: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
 
     impl CompletionDriver for ScriptedDriver {
+        fn complete_with_tool_origin<'a>(
+            &'a mut self,
+            prompt: &'a str,
+            evidence: Option<ToolOriginEvidence>,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+            self.seen_partial.lock().unwrap().push(evidence.filter(|e| e.compacted).map(|e| e.bytes));
+            self.complete_with_tool_attribution(prompt, evidence.filter(|e| !e.compacted).map(|e| e.bytes))
+        }
+
         fn complete_with_tool_attribution<'a>(
             &'a mut self,
             prompt: &'a str,
@@ -5779,6 +5821,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compacted_loop_counts_only_new_rendered_tool_blocks() {
+        let home = test_instance_home();
+        let tool = "```mcp-tool-call\n{\"server\":\"missing\",\"tool\":\"read\",\"arguments\":{}}\n```";
+        let mut driver = ScriptedDriver::new(vec!["done", "compact summary", tool, "done"]);
+        let outcome = run_tool_loop_with_cap(
+            &mut driver, "x".repeat(10_001), &McpServers::default(),
+            AutonomyLevel::Standard, None, None, &McpToolScope::default(), 3,
+            &crate::config::SecurityPolicy::default(), None,
+            crate::mcp::goal_tracker::GoalContext { goal: None, grind: Some("continue".into()) },
+            false,
+            crate::context::compaction::CompactionPolicy {
+                enabled: true, threshold_tokens: 10_000, prompt_capacity_tokens: 30_000, progressive: false,
+            },
+            None, None, &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(), home.path(),
+        ).await.unwrap();
+        assert_eq!(outcome.iterations, 3);
+        let partial = driver.seen_partial.lock().unwrap();
+        assert_eq!(partial.len(), 3);
+        assert_eq!(partial[0], None);
+        assert_eq!(partial[1], Some(0));
+        let bytes = partial[2].unwrap();
+        assert!(bytes > 0);
+        assert_eq!(*driver.seen_attribution.lock().unwrap(), vec![Some(0), None, None]);
+        let seen = driver.seen_prompts.lock().unwrap();
+        let final_prompt = seen.last().unwrap();
+        assert!(final_prompt.starts_with(crate::context::compaction::SUMMARY_MARKER));
+        assert!(final_prompt.contains("missing"));
+        assert!(usize::try_from(bytes).unwrap() < final_prompt.len());
+    }
+
+    #[tokio::test]
     async fn loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it() {
         for compact in [false, true] {
             let home = test_instance_home();
@@ -5829,6 +5903,8 @@ mod tests {
                 vec![Some(0), if compact { None } else { Some(0) }],
                 "a summary must never relabel old prompt components",
             );
+            assert_eq!(*driver.seen_partial.lock().unwrap(), vec![None, compact.then_some(0)],
+                "zero counts only post-compaction appends, not tool content in the summary");
             assert_eq!(
                 driver.cursor.load(Ordering::SeqCst),
                 if compact { 3 } else { 2 }

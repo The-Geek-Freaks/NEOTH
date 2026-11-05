@@ -1128,3 +1128,9 @@ behavior; this is distinct from the central self-edit gate's green check and
 live-source apply. Native GUI or unattended dissent refuses until a separate
 bound confirmation channel exists; an existing GUI patch approval cannot
 override dissent. The local CLI can use the fresh TTY ceremony.
+
+### Partial prompt origins after compaction
+
+When MCP compaction rewrites history, NEOTH leaves the origins of the compacted base and historical prompt-tax counters unknown. Subsequent rendered tool-result blocks can carry separate partial evidence, bound to the actual provider request. A recorded zero means no such bytes have been appended since that compaction; it does not mean the summary contains no tool-derived content.
+
+The usage CLI and shared JSON rollup show this coverage separately as post-compaction appended tool bytes. These are local UTF-8 byte estimates, not provider-reported tokens or allocated charges. The existing terminal WAL and usage repair retain the partial evidence without replaying provider requests. Older terminal and snapshot formats remain readable and cannot silently acquire the new field.

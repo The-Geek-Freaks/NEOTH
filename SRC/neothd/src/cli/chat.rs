@@ -16003,13 +16003,25 @@ pub(crate) async fn run_mcp_dispatch_loop_with_activity(
             tool_result_bytes: Option<u32>,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'b>>
         {
+            self.complete_with_tool_origin(
+                prompt,
+                tool_result_bytes.map(crate::mcp::dispatch_loop::ToolOriginEvidence::initial),
+            )
+        }
+
+        fn complete_with_tool_origin<'b>(
+            &'b mut self,
+            prompt: &'b str,
+            evidence: Option<crate::mcp::dispatch_loop::ToolOriginEvidence>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + 'b>>
+        {
             let mut req = self.base.clone();
             req.prompt = prompt.to_string();
             let attribution =
-                crate::providers::cost_authorization::PromptContinuationBinding::for_request(
+                crate::providers::cost_authorization::PromptContinuationBinding::for_origin(
                     &self.base,
                     &req,
-                    tool_result_bytes,
+                    evidence,
                 );
             let provider = self.provider;
             // QM-10 Phase 2.5: streaming MCP-loop also consults the

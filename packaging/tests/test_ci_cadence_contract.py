@@ -416,6 +416,16 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(len(expected), 130)
         self.assertEqual(len(set(expected)), 130)
         self.assertEqual(selection["requiredTests"], sorted(expected))
+        partial = json.loads(
+            (ROOT / "docs/verification/gold-wave2697-partial-tool-origin.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(partial["tests"]), 5)
+        expected.extend(partial["tests"])
+        selection = matrix["wave2697PartialOriginRegressions"]
+        self.assertEqual(selection["requiredCount"], 135)
+        self.assertEqual(len(expected), 135)
+        self.assertEqual(len(set(expected)), 135)
+        self.assertEqual(selection["requiredTests"], sorted(expected))
         source_hashes: dict[Path, str] = {}
         for identity in expected:
             with self.subTest(test=identity):

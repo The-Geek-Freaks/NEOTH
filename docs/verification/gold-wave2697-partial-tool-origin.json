@@ -1,0 +1,74 @@
+{
+  "schema": "neoth.wave2697.partial-tool-origin.v1",
+  "producerBase": "ef62e91b9b2b1983d44b0c8b65813f7cf7e5d005",
+  "roadmap": "ADOPT-20261012-A02",
+  "tests": [
+    "tokens::partial_prompt_origin::tests::partial_origin_retains_zero_coverage_and_rejects_invalid_or_overflowing_evidence",
+    "providers::cost_authorization::tests::compacted_continuation_binds_partial_bytes_without_historical_zeroes",
+    "providers::cost_authorization::tests::terminal_v6_wal_repairs_partial_origins_without_provider_replay",
+    "daemon::usage_log::tests::terminal_v6_partial_origin_replays_unknown_history_and_rejects_mixed_evidence",
+    "mcp::dispatch_loop::tests::compacted_loop_counts_only_new_rendered_tool_blocks"
+  ],
+  "newPortableCases": 5,
+  "totalPortableCases": 3331,
+  "focusedRequiredCount": 135,
+  "changes": [
+    "MCP retains only measured rendered tool appends after the last actual compaction; compacted base stays unknown",
+    "Private initial/final request binding and existing normalized leaf bound; no new reservation or accounting owner",
+    "Historical PromptTax stays absent; separate post_compaction_appends_v1 coverage including known zero",
+    "Versioned terminal v6/snapshot v4 retains exact partial evidence through existing idempotent WAL repair; older formats reject the field, including null",
+    "CLI text and shared JSON rollup expose partial coverage separately from provider tokens and charges; acquisition and capability readers use canonical decoder"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "4CBE8CFEBF98C435B895252C10E83BCE5552F4CD1432C388CE13CA13CE7E7131"
+    },
+    {
+      "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
+      "sha256": "675F9906FAC1D5E2D39A08B7C4287BB258DA095B44D139955BEF87EC5040B179"
+    },
+    {
+      "path": "SRC/neothd/src/cli/usage.rs",
+      "sha256": "D101FD552B21EA8ECFCDD9A0C2EA06188CAAE5976D6A9D600BB6C6C732A613E1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sha256": "BB33502C7EE45AB737E5CC9081E96C649CA80BD7F665DB326BF1613C3D0E459E"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/usage_log.rs",
+      "sha256": "4A216B559B504A0BA3E29E295941BBC0B461AE0B3CA7755C3CEB0F1E34C6294D"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sha256": "19061CCCB20CFD8870DC26DAC043FEEF1489D7FE008D98391EDD3681253211FF"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sha256": "5548C68926A0EBCFAA3233C64B02FBED87C00BDA3EEB2F93CD9281AEE8F55759"
+    },
+    {
+      "path": "SRC/neothd/src/tokens/mod.rs",
+      "sha256": "64CF5866C1C4CD136567C3EBECEBDDC527B1E9A08BD2F3DCB9AD9D1BC87255A9"
+    },
+    {
+      "path": "SRC/neothd/src/tokens/partial_prompt_origin.rs",
+      "sha256": "E71D99FB44495C829F65E67C26372F58934B7F2C44D7542D8EB4380D6CD49419"
+    }
+  ],
+  "validation": {
+    "static": "Root bounded text and GPT-6.1 Terra high prompt-only algorithm review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Does not recover origins inside a compacted summary",
+    "No provider-measured component tokens or allocated per-component charges",
+    "Live GUI/mobile partial display not asserted; shared rollup and CLI only",
+    "Existing append-only attribution and all prior130 focused regressions retained"
+  ],
+  "rawRoadmapRowsClosed": 0
+}

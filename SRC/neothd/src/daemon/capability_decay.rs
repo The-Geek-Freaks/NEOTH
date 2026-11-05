@@ -220,7 +220,7 @@ fn terminal_sample_from_payload(event_type: u8, payload: &[u8]) -> Result<Termin
         .and_then(serde_json::Value::as_str)
     {
         Some("neoth.provider-usage.v2") => {}
-        Some("neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5") => {
+        Some("neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5" | "neoth.provider-usage.v6") => {
             // Reuse the canonical snapshot validator before projecting quality
             // fields. A declared current format must not fall back to Legacy.
             super::usage_log::usage_event_from_terminal_payload(payload)?
