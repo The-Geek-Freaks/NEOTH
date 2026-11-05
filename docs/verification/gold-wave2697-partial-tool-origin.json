@@ -91,5 +91,16 @@
     "diagnostic": "PowerShell culture sort disagreed with hosted Python ordinal order at providers::cost versus providers::cost_authorization",
     "repair": "Ordinal StringComparer order for all135 same identities; no selection or assertion removed",
     "hostedRevalidation": "pending"
+  },
+  "hostedDependencyPreparation": {
+    "observedRun": 42078920867,
+    "producer": "ef62e91b9b2b1983d44b0c8b65813f7cf7e5d005",
+    "step": "Install Linux workspace-Clippy build deps",
+    "startedUtc": "2026-11-05T17:53:19Z",
+    "stillRunningObservedUtc": "2026-11-05T18:16:49Z",
+    "futureStepLimitMinutes": 10,
+    "activeRunCancelled": false,
+    "compilerOrTestsWeakened": false,
+    "cause": "Unknown until terminal job logs are available"
   }
 }

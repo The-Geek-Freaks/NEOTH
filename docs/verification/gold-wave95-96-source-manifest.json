@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T18:14:42.0657532Z",
-  "validationStatus": "Exact135 identity ordering corrected; hosted static/runtime pending",
+  "capturedUtc": "2026-11-05T18:17:23.7830713Z",
+  "validationStatus": "Prior latest fast gates passed; future dependency step bounded; hosted runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 62533,
-      "sha256": "930497DB3203FA007D08788194E9AB987252F510BE03D5BEE7B1AB86BA5F1846"
+      "bytes": 62561,
+      "sha256": "3F68FB59096D0142FA243FE02051CCA54AC1D401403A19F978CCC88329392ED0"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4953,8 +4953,8 @@
     },
     {
       "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
-      "bytes": 4424,
-      "sha256": "9DA6A63C5416CCCAF6DFBA5C71AF874129E2725C4DE46B6AFDBE5FE739C9E09B"
+      "bytes": 4876,
+      "sha256": "5F31FF121A7C81F0CC3AB62A8C56886ED72108834C1B914D08C2674D451F6737"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5968,8 +5968,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 90740,
-      "sha256": "673FD80E4A8DCCA2156BDEEE7A98E48D7D12285A2C0299E0C3739F86724A436F"
+      "bytes": 91080,
+      "sha256": "3D83688E9BADA491491353D3C5AA4A671E0AEE234B30FDB7FED3A18553FB7B8B"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",

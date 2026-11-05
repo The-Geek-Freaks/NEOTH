@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact135 identity ordering corrected; hosted static/runtime pending",
+  "status": "Prior latest fast gates passed; future dependency step bounded; hosted runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474704,
-    "sha256": "A9115E859587393A361C7D247515A947EA27F4AD49455E75515E36173B8CE7AD"
+    "bytes": 474723,
+    "sha256": "55985880DC4DD9BDDD6AAA071F50ADC785C307868E91364707ABBA2DCBDD0B83"
   },
   "sourceInputs": 2590,
   "requiredNativeTests": [
@@ -94816,6 +94816,32 @@
       }
     ],
     "note": "Preflight42082092627 passed formatting; exact case-order contract caught culture sort. Same135 cases now ordinal, matching hosted validator.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2697DependencyPreparation": {
+    "base": "b6a3563d981a9444c1b59fa4f383627c3760517f",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 62561,
+        "sha256": "3F68FB59096D0142FA243FE02051CCA54AC1D401403A19F978CCC88329392ED0",
+        "blob": "943bfe04d6161609ec77d19c67f4995e79b330a1"
+      },
+      {
+        "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
+        "bytes": 4876,
+        "sha256": "5F31FF121A7C81F0CC3AB62A8C56886ED72108834C1B914D08C2674D451F6737",
+        "blob": "85c40e28fc6c0d66751ff786b9ea8f7c3cd8aa2d"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 91080,
+        "sha256": "3D83688E9BADA491491353D3C5AA4A671E0AEE234B30FDB7FED3A18553FB7B8B",
+        "blob": "7d37f51df649aa1186fbd85ab1b89ff46aad5eea"
+      }
+    ],
+    "note": "Active Council11 run remained in apt preparation over23minutes; future prerequisite step10minutes, existing apt commands/tests unchanged, no cancellation or second heavy run.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

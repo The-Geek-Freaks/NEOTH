@@ -263,6 +263,11 @@ class CiCadenceContractTests(unittest.TestCase):
     def test_cli_checkpoint_retains_successful_compile_without_accepting_failed_gates(self) -> None:
         workflow = (WORKFLOWS / "cli-reference.yml").read_text(encoding="utf-8")
         steps = workflow_steps(workflow_jobs(workflow)["generate"])
+        dependencies = steps["Install Linux workspace-Clippy build deps"]
+        self.assertIn("timeout-minutes: 10", dependencies)
+        self.assertNotIn("continue-on-error:", dependencies)
+        self.assertIn("sudo apt-get update", dependencies)
+        self.assertIn("sudo apt-get install -y --no-install-recommends", dependencies)
         core = steps["Type-check core test targets before native validation"]
         self.assertIn("id: check-core-tests", core)
         self.assertNotIn("continue-on-error:", core)
