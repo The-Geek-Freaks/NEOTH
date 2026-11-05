@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "council-formatted-clippy-repaired-runtime-pending",
+  "status": "published candidate; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 473210,
-    "sha256": "4F90EB80D08FC5B7BE8C61B224B5BDEE9AABE422D71DDCAF298927DF205186A3"
+    "bytes": 473395,
+    "sha256": "47F4974A9B0AE3B6C6F9A08E913CE22C5165D3ECE659064C30FDEF43DC341D16"
   },
-  "sourceInputs": 2582,
+  "sourceInputs": 2583,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -94157,6 +94157,38 @@
       }
     ],
     "note": "Observed Linux19814/19815 and Windows19671/19672, sole docgen test failure. Minimal existing Ollama lint correction and admitted C5 hosted formatting. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2693CouncilCi": {
+    "base": "949a5757477d45a60f13a957fc5c2b3f6afe3c4b",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 60017,
+        "sha256": "51457A9D68123477F14E27684F9DD6186DF4C28DDC772717C2155BCA7EFAFDCA",
+        "blob": "899908f0283116df9ea143b12b9f5c5c57c18645"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 61322,
+        "sha256": "93C05BA847971FB6C08B413E01A53BDBCC858E1159A0F4C1FFA94218BC4ECF31",
+        "blob": "7a85d162381ae4c0d7a8c6926fb9d69239ea6d2d"
+      },
+      {
+        "path": "docs/verification/gold-wave2693-council-ci-and-macos-budget.json",
+        "bytes": 1565,
+        "sha256": "FE9270C85265FA6AF824D0B0058069638B0F5B70C4739FB09D5262E73871AA61",
+        "blob": "ba2527510aa7ca6ac5d7a2b7bfafe0feb25d3c74"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2802778,
+        "sha256": "8E2260CFF9FBD8A3C4395473CDBD46F1E010D4917076D0689C167C225D1CDFB7",
+        "blob": "56a4afb550b082088e42c58bdb66367b2ca08bae"
+      }
+    ],
+    "note": "Seven exact Council and CI repair cases; one same-coverage macOS time-budget retry; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

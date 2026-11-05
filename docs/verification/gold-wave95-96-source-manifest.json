@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T16:47:36.7252879Z",
-  "validationStatus": "council-formatted-clippy-repaired-runtime-pending",
+  "capturedUtc": "2026-11-05T17:03:49.8132768Z",
+  "validationStatus": "published candidate; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 59798,
-      "sha256": "90F10640F5B6EFB0A780AD4B459A7CF12486D8A8E0AA05A940907F95C11D63A6"
+      "bytes": 60017,
+      "sha256": "51457A9D68123477F14E27684F9DD6186DF4C28DDC772717C2155BCA7EFAFDCA"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 54758,
-      "sha256": "7C9AD356E41F5EEBE3FCC50F8265B76F5D25CD7923FD0977FE2668B1C0915C82"
+      "bytes": 61322,
+      "sha256": "93C05BA847971FB6C08B413E01A53BDBCC858E1159A0F4C1FFA94218BC4ECF31"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4942,6 +4942,11 @@
       "sha256": "5CC0D03A22DC0252955AE42C288FA4BD246BF303E91765EE064292E279EB53F9"
     },
     {
+      "path": "docs/verification/gold-wave2693-council-ci-and-macos-budget.json",
+      "bytes": 1565,
+      "sha256": "FE9270C85265FA6AF824D0B0058069638B0F5B70C4739FB09D5262E73871AA61"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6203,8 +6208,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2801552,
-      "sha256": "00901592AA507A9970DBB64905A95481FC97F0B2441127866D6318F111ED7CBB"
+      "bytes": 2802778,
+      "sha256": "8E2260CFF9FBD8A3C4395473CDBD46F1E010D4917076D0689C167C225D1CDFB7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

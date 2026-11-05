@@ -1,0 +1,39 @@
+{
+  "schema": "neoth.wave2693.targeted-council-and-native-budget.v1",
+  "producerBase": "949a5757477d45a60f13a957fc5c2b3f6afe3c4b",
+  "observedFullRun": 42044284023,
+  "observedProducer": "056bcde7ea225290299153af37d784a4876660b9",
+  "fullConclusion": "failure",
+  "macos": {
+    "job": 127302922321,
+    "compileMinutesObserved": 150,
+    "rustcStillActive": true,
+    "compileErrorEstablished": false,
+    "compileRetryMinutes": 190,
+    "jobRetryMinutes": 300,
+    "buildJobs": 1,
+    "coverageChanged": false,
+    "performanceImprovementClaimed": false,
+    "archiveId": 13433514431,
+    "archiveSha256": "06685ae52e111046215ffb471e64d9ef9be3ae3f48bf9493dbb4ada2726c635e",
+    "nextIfTimeout": "Investigate actual compiler phases and memory pressure before concurrency or structural changes"
+  },
+  "focused": {
+    "workflow": "cli-reference.yml",
+    "input": "self_edit_regressions",
+    "requiredCount": 7,
+    "councilCount": 5,
+    "otherTests": [
+      "cli::docgen::tests::cli_commands_md_is_up_to_date",
+      "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success"
+    ],
+    "workspaceClippyRequiredForPlannedRun": true,
+    "selectionSourceBound": true,
+    "exactDiscoveryAndPassRequired": true,
+    "hostedAccepted": false,
+    "nativeAccepted": false
+  },
+  "validation": "Root bounded text/diff review and GPT-6.1 Terra high prompt-only review; execution pending. Optional focused input does not replace required full native suite.",
+  "localExecutableValidationRan": false,
+  "rawRoadmapRowsClosed": 0
+}

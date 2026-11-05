@@ -27,6 +27,10 @@ on:
         description: 'Also run 130 exact invocation provenance, acquisition reader, budget acquisition, authorization-price, prompt component, usage and provider recovery regressions'
         type: boolean
         default: false
+      self_edit_regressions:
+        description: 'Also run five exact Council self-edit cases plus CLI reference and Ollama completion regressions'
+        type: boolean
+        default: false
       macos_provider_regression:
         description: 'Run the exact native macOS Buddy provider GUI callback regression'
         type: boolean
@@ -57,7 +61,7 @@ jobs:
     name: Export exact-source CLI reference
     if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.core_audio_regressions || inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions || inputs.document_regressions || inputs.cost_replay_regressions) && 75 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.core_audio_regressions || inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions || inputs.document_regressions || inputs.cost_replay_regressions || inputs.self_edit_regressions) && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -143,6 +147,118 @@ jobs:
         timeout-minutes: 15
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
+
+      - name: Run exact self-edit Council and CI repair regressions
+        if: ${{ inputs.self_edit_regressions }}
+        timeout-minutes: 45
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          proof_dir="$RUNNER_TEMP/neoth-self-edit-regressions"
+          mkdir -p "$proof_dir"
+          python3 - <<'PY' 2>&1 | tee "$proof_dir/selection-validation.log"
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "neoth-self-edit-regressions"
+          report_path = "docs/verification/gold-wave2691-self-edit-council.json"
+          matrix_path = "docs/verification/gold-wave95-96-test-matrix.json"
+          report = json.loads((root / report_path).read_bytes())
+          matrix = json.loads((root / matrix_path).read_bytes())
+          council = report["tests"]
+          if len(council) != 5 or len(set(council)) != 5:
+              raise SystemExit("expected five unique report-bound Council tests")
+          names = sorted(council + [
+              "cli::docgen::tests::cli_commands_md_is_up_to_date",
+              "providers::ollama_api::tests::native_tool_or_unfinished_http_completion_cannot_report_success",
+          ])
+          if len(set(names)) != 7 or not all(re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in names):
+              raise SystemExit("invalid exact seven-test selection")
+          allowed = {
+              "SRC/neothd/src/coding/self_source_council_tests.rs",
+              "SRC/neothd/src/cli/docgen.rs",
+              "SRC/neothd/src/providers/ollama_api.rs",
+          }
+          inputs = {}
+          for relative in (report_path, matrix_path, ".github/workflows/cli-reference.yml", "docs/cli-commands.md", "SRC/Cargo.lock", "SRC/Cargo.toml", "SRC/neothd/Cargo.toml"):
+              inputs[relative] = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+          for source in report["sources"]:
+              relative = source["path"]
+              if relative not in {
+                  "SRC/neothd/src/cli/self_edit.rs", "SRC/neothd/src/coding/self_source_council_tests.rs",
+                  "SRC/neothd/src/coding/self_source_council.rs", "SRC/neothd/src/coding/self_source_gate.rs",
+                  "SRC/neothd/src/config/ops.rs", "SRC/neothd/src/wal/events.rs",
+              }:
+                  raise SystemExit("unexpected Council source")
+              actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+              if actual != source["sha256"].lower():
+                  raise SystemExit(f"Council source binding mismatch: {relative}")
+              inputs[relative] = actual
+          records = []
+          for name in names:
+              matches = [record for record in matrix["requiredNativeTests"] if record["test"] == name and record["junitClass"] == "neoth"]
+              if len(matches) != 1 or matches[0]["sourcePath"] not in allowed:
+                  raise SystemExit(f"missing unique allowed native registration: {name}")
+              record = matches[0]
+              actual = hashlib.sha256((root / record["sourcePath"]).read_bytes()).hexdigest()
+              if actual != record["sourceSha256"].lower():
+                  raise SystemExit(f"native source binding mismatch: {name}")
+              records.append({"test": name, "sourcePath": record["sourcePath"], "sourceSha256": actual})
+              inputs[record["sourcePath"]] = actual
+          receipt = {
+              "schema": "neoth.self-edit-regressions.v1", "producer": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "requiredCount": 7,
+              "fixtures": records, "inputs": inputs,
+          }
+          (proof / "selection.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          (proof / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+          PY
+          cargo test -p neoth --lib --locked --no-run 2>&1 | tee "$proof_dir/compile.log"
+          visited=0
+          failed_or_missing=0
+          while IFS= read -r identity; do
+            test -n "$identity"
+            visited=$((visited + 1))
+            if ! cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$proof_dir/$visited.discovery.log"; then
+              failed_or_missing=$((failed_or_missing + 1))
+              continue
+            fi
+            if ! test "$(grep -Fxc "$identity: test" "$proof_dir/$visited.discovery.log")" -eq 1; then
+              failed_or_missing=$((failed_or_missing + 1))
+              continue
+            fi
+            if cargo test -p neoth --lib --locked "$identity" -- --exact --test-threads=1 2>&1 | tee "$proof_dir/$visited.test.log"; then
+              if ! test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$visited.test.log")" -eq 1 ||
+                 ! test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$visited.test.log")" -eq 1; then
+                failed_or_missing=$((failed_or_missing + 1))
+              fi
+            else
+              failed_or_missing=$((failed_or_missing + 1))
+            fi
+          done < "$proof_dir/fixture-names.txt"
+          printf 'selected=7\nvisited=%s\nfailed_or_missing=%s\n' "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+          test "$visited" -eq 7
+          test "$failed_or_missing" -eq 0
+          (cd "$proof_dir" && sha256sum selection.json fixture-names.txt selection-validation.log compile.log final-counts.txt *.discovery.log *.test.log > SHA256SUMS)
+
+      - name: Upload self-edit Council regression evidence
+        if: ${{ always() && inputs.self_edit_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: self-edit-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-self-edit-regressions/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Run exact document and migration regressions
         if: ${{ inputs.document_regressions }}
