@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.wave2709.saved-card-naming.v1",
+  "producerBase": "146f03bb653f058c44689bb397f5a32767d09e7c",
+  "batch": "B08",
+  "roadmap": [
+    "ADOPT-20261012-A07"
+  ],
+  "finding": "Continued local sessions saved a per-turn Hindsight card but optional naming updated the older logical-session card instead.",
+  "changes": [
+    "Best-effort save returns only the path actually committed.",
+    "Naming uses the saved card identity while cost authorization and provider lifecycle retain the logical audit session identity.",
+    "Absent, foreign, missing or mismatched saved targets return before provider construction or authorization.",
+    "Per-turn cards, existing prompt redaction, consent/effect gates, naming timeout and current configuration remain unchanged."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "50260B108D4A10F87154765909543C874F725488FA932148512053DBC1B4F9B9"
+    },
+    {
+      "path": "SRC/neothd/src/memory/hindsight.rs",
+      "sha256": "2C6687F084472266C0B75B34FC8752629997CF008035545526BF46AB86317E9D"
+    }
+  ],
+  "tests": [
+    "cli::chat::tests::session_naming_targets_saved_card_and_preserves_logical_audit_identity",
+    "cli::chat::tests::session_naming_skips_failed_missing_foreign_or_mismatched_saved_cards"
+  ],
+  "newPortableCases": 2,
+  "totalPortableCases": 3342,
+  "validation": {
+    "static": "Root bounded call-site and audit-owner tracing, whitespace checks and GPT-6.1 Terra high prompt-only independent review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Current active full CI42104709764 is bound to c5c767e5 and excludes this batch.",
+    "Timestamp-and-prompt card generation and per-invocation storage semantics are unchanged; this batch does not claim concurrent card collision resolution.",
+    "No full A07, device, native or Gold acceptance."
+  ],
+  "rawRoadmapRowsClosed": 0
+}

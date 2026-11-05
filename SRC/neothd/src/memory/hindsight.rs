@@ -364,10 +364,20 @@ pub fn save_session_card(
 /// Same as [`save_session_card`] but swallows the error + logs a
 /// warning instead. Designed as the final call in the `neoth chat`
 /// happy-path exit: hindsight compression is a soft signal, never a
-/// hard correctness invariant.
-pub fn save_session_card_best_effort(home: &Path, ts_unix: i64, prompt: &str, reply: &str) {
-    if let Err(e) = save_session_card(home, ts_unix, prompt, reply) {
-        tracing::warn!(error = %e, "hindsight save_session_card failed (non-fatal)");
+/// hard correctness invariant. Return only the path that was actually saved,
+/// so optional naming cannot target an older logical-session card after failure.
+pub fn save_session_card_best_effort(
+    home: &Path,
+    ts_unix: i64,
+    prompt: &str,
+    reply: &str,
+) -> Option<PathBuf> {
+    match save_session_card(home, ts_unix, prompt, reply) {
+        Ok(path) => Some(path),
+        Err(error) => {
+            tracing::warn!(%error, "hindsight save_session_card failed (non-fatal)");
+            None
+        }
     }
 }
 
@@ -791,7 +801,7 @@ mod tests {
         // Use the file path AS the home dir — create_dir_all under
         // it returns AlreadyExists-as-file (Unix) / NotADirectory.
         // Either way the helper must not panic.
-        save_session_card_best_effort(&bogus_file, 100, "p", "r");
+        assert!(save_session_card_best_effort(&bogus_file, 100, "p", "r").is_none());
     }
 
     #[test]

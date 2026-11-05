@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T20:37:27.3592620Z",
-  "validationStatus": "Full CI active on c5c767e5; macOS14 scheduler rejected retired image; supported ARM64 macOS15 successor pending hosted",
+  "capturedUtc": "2026-11-05T20:46:09.5556545Z",
+  "validationStatus": "W2709 source complete; hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4977,6 +4977,11 @@
       "sha256": "E05F8C57B628DECEE27F7B791BCABFA1E532EEC016549A93EA6D37F065902365"
     },
     {
+      "path": "docs/verification/gold-wave2709-saved-card-naming.json",
+      "bytes": 1990,
+      "sha256": "15B3CF6DCCDDE6F2E11E94CD1BBE2A23163355E3B34120EC76E382C39C614AD5"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6238,8 +6243,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2818095,
-      "sha256": "9137CAB10CB91D69DCE4F2B6EB1079489DF5546AED47A565FF281DBF35D9FA37"
+      "bytes": 2819431,
+      "sha256": "663A623DDED47423C848FF8EFB31AA61C294A7C596C2E3658F5516E4F7DA2AF4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7208,8 +7213,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1264586,
-      "sha256": "4534381BEBCA74C8BE31A4026D047630B903297255C7AD0495ADFF6AEBFD4994"
+      "bytes": 1271971,
+      "sha256": "50260B108D4A10F87154765909543C874F725488FA932148512053DBC1B4F9B9"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -9275,6 +9280,11 @@
       "path": "SRC/neothd/src/memory/gc.rs",
       "bytes": 34200,
       "sha256": "35958608A2895D0B11F6AB87BA53E07BC3201797ECB7244854919088E725C3C0"
+    },
+    {
+      "path": "SRC/neothd/src/memory/hindsight.rs",
+      "bytes": 36452,
+      "sha256": "2C6687F084472266C0B75B34FC8752629997CF008035545526BF46AB86317E9D"
     },
     {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
