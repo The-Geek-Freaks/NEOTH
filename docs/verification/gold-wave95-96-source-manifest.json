@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T21:48:14.5334005Z",
-  "validationStatus": "W2712 static prepared; hosted terminal regressions pending; local BSOD hold active",
+  "capturedUtc": "2026-11-05T22:09:33.2761931Z",
+  "validationStatus": "W2712 hosted formatting imported; focused and native runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4993,8 +4993,8 @@
     },
     {
       "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
-      "bytes": 2179,
-      "sha256": "1309E88AEA79AFE6F65ED7D6E381D8C3DB1BD41D39E748E2346F4256F8D715CF"
+      "bytes": 2484,
+      "sha256": "D95CD7859B6C3B35DE9C7B22EA4C7E969B1435A6BC2E5771DB64898791375977"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6258,8 +6258,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2825438,
-      "sha256": "A1C35D1FD301E68CF2CC55C115FE21905A11CACA9A8242FBE5C504FA3F43002D"
+      "bytes": 2825723,
+      "sha256": "67C191D94282492D7941DEA23E66ECA0132EAD3B0C4C2ABCF26275FFAA3D335A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9653,8 +9653,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 53202,
-      "sha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B"
+      "bytes": 53297,
+      "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",

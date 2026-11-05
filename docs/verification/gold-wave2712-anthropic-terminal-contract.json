@@ -19,7 +19,7 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B"
+      "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD"
     }
   ],
   "tests": [
@@ -42,5 +42,13 @@
     "Tests use the production HTTP adapter against Wiremock, including the buffered default stream; hosted execution is pending.",
     "Unknown future reasons fail closed until explicitly supported; no new provider retry or effect-replay policy."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42115991214,
+    "artifact": 13456691068,
+    "producer": "ab32a6e1782edab21ffedc282e2a2b3d2c361dc3",
+    "apiZipMemberAndPrePostImagesVerified": true,
+    "localFormatterExecuted": false,
+    "proof": "work/gold-20260906/wave2712-hosted-format/FORMAT_IMPORT.json"
+  }
 }

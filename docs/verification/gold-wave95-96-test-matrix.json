@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2712 static prepared; hosted terminal regressions pending; local BSOD hold active",
+  "status": "W2712 hosted formatting imported; focused and native runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477355,
-    "sha256": "EB48964D3C0C043854676861F7B9CB21F168B0F70BEC499872F715E6DC6F99AB"
+    "bytes": 477341,
+    "sha256": "73E51D359E9F5978FFD2389C3BE7C8A6199CDA4270CF8EB515F784D98FDA850A"
   },
   "sourceInputs": 2604,
   "requiredNativeTests": [
@@ -6042,7 +6042,7 @@
     {
       "test": "providers::anthropic_api::tests::mock_401_auth_fail_names_status_and_provider",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     },
     {
@@ -19627,19 +19627,19 @@
     {
       "test": "providers::anthropic_api::tests::native_tool_blocks_and_paused_turns_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::ordinary_text_thinking_and_refusal_remain_tool_free",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     },
     {
@@ -20125,13 +20125,13 @@
     {
       "test": "providers::anthropic_api::tests::unconfirmed_terminals_and_empty_text_fail_without_exposing_response_fields",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::supported_terminals_preserve_text_usage_and_native_refusal",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "775C8BF0FB3DFB012F9C180E60A4FD9BD5F098C958965B8DF6C00C10D26D409B",
+      "sourceSha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
       "junitClass": "neoth"
     }
   ],
@@ -96118,6 +96118,32 @@
       }
     ],
     "note": "Two new exact production HTTP adapter tests; current full CI is predecessor-only and remains active.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2712AnthropicFormat": {
+    "base": "ab32a6e1782edab21ffedc282e2a2b3d2c361dc3",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
+        "bytes": 2484,
+        "sha256": "D95CD7859B6C3B35DE9C7B22EA4C7E969B1435A6BC2E5771DB64898791375977",
+        "blob": "14fbbb9d1af9c4177d63a34a0fbb7e8bfef6bf18"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2825723,
+        "sha256": "67C191D94282492D7941DEA23E66ECA0132EAD3B0C4C2ABCF26275FFAA3D335A",
+        "blob": "2b1da48111ac8d5d240ffeaff9c40c8745d6b62e"
+      },
+      {
+        "path": "SRC/neothd/src/providers/anthropic_api.rs",
+        "bytes": 53297,
+        "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
+        "blob": "ce287dd8938284e22d8c56172907d6d6cad12edf"
+      }
+    ],
+    "note": "Exact original producer-matched hosted patch; no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

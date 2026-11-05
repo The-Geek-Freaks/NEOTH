@@ -249,11 +249,14 @@ impl Provider for AnthropicAdapter {
                 .json(&body);
             let response = send_with_effect(
                 permit,
-                ChatTurnEffectKind::Provider { call_scope: "anthropic_api.complete_raw", streaming: false },
+                ChatTurnEffectKind::Provider {
+                    call_scope: "anthropic_api.complete_raw",
+                    streaming: false,
+                },
                 request,
             )
-                .await
-                .with_context(|| format!("POST {url}"))?;
+            .await
+            .with_context(|| format!("POST {url}"))?;
 
             let status = response.status();
             if !status.is_success() {
@@ -943,7 +946,10 @@ mod tests {
             assert_eq!(completion.text, "observed provider text");
             assert_eq!(completion.input_tokens, Some(9));
             assert_eq!(completion.output_tokens, Some(4));
-            assert_eq!(completion.termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(
+                completion.termination.finish_reason.as_deref(),
+                Some(reason)
+            );
             assert_eq!(completion.termination.is_refusal(), reason == "refusal");
             assert_eq!(mock.received_requests().await.unwrap().len(), 1);
         }
