@@ -26446,49 +26446,105 @@ template = "[REDACTED]"
         let home = dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
         let policy = crate::config::CommunicationProfileConfig::default();
-        communication::set_explicit_preference(&home, &policy, "operator", "global-control",
-            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep), [1; 32], 20, false).unwrap();
-        communication::session::set(&home, &policy, "operator", "retained-session",
-            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact), [2; 32], 10, false).unwrap();
+        communication::set_explicit_preference(
+            &home,
+            &policy,
+            "operator",
+            "global-control",
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep),
+            [1; 32],
+            20,
+            false,
+        )
+        .unwrap();
+        communication::session::set(
+            &home,
+            &policy,
+            "operator",
+            "retained-session",
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact),
+            [2; 32],
+            10,
+            false,
+        )
+        .unwrap();
         for (index, (session_id, incognito, enabled)) in [
-            ("retained-session", false, true), ("different-session", false, true),
-            ("incognito-private", true, true), ("retained-session", false, false),
-        ].into_iter().enumerate() {
-            let args = ChatArgs { message: Some("hello".into()), incognito, ..test_chat_args_default() };
+            ("retained-session", false, true),
+            ("different-session", false, true),
+            ("incognito-private", true, true),
+            ("retained-session", false, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let args = ChatArgs {
+                message: Some("hello".into()),
+                incognito,
+                ..test_chat_args_default()
+            };
             let mut config = FreedomConfig::default();
             config.profile.communication.enabled = enabled;
-            let (writer, joined) = wal_spawn(home.join(format!("session-prompt-{index}.wal"))).unwrap();
-            let result = build_prompt_bundle(config, "hello".into(), home.clone(),
+            let (writer, joined) =
+                wal_spawn(home.join(format!("session-prompt-{index}.wal"))).unwrap();
+            let result = build_prompt_bundle(
+                config,
+                "hello".into(),
+                home.clone(),
                 PromptBuildContext {
-                    args: &args, session_id, prompt_bundle_hash: &"0".repeat(64), writer: &writer,
-                    current_path: dir.path(), attachment_contexts: None, output: &mut CliChatOutput,
-                    stream_control_token: None, session_recall: None,
+                    args: &args,
+                    session_id,
+                    prompt_bundle_hash: &"0".repeat(64),
+                    writer: &writer,
+                    current_path: dir.path(),
+                    attachment_contexts: None,
+                    output: &mut CliChatOutput,
+                    stream_control_token: None,
+                    session_recall: None,
                 },
-                PromptBuildOptions { slash_skill_name: None, persona_override_from_tweaks: None,
-                    retained_skill_admission: None, replay_skill_registry: None },
-            ).await;
+                PromptBuildOptions {
+                    slash_skill_name: None,
+                    persona_override_from_tweaks: None,
+                    retained_skill_admission: None,
+                    replay_skill_registry: None,
+                },
+            )
+            .await;
             drop(writer);
             joined.await.unwrap();
             let bundle = result.unwrap().0;
             let primary = bundle.combined_system.as_deref().unwrap_or_default();
-            let compact = "Keep the response compact while preserving required actions and caveats.";
+            let compact =
+                "Keep the response compact while preserving required actions and caveats.";
             let deep = "Provide a complete, deep answer and close the request end to end.";
             if incognito || !enabled {
                 assert!(!primary.contains("<communication_preferences"));
                 assert!(bundle.agent_raw_layers.communication_profile.is_none());
                 continue;
             }
-            let expected = if session_id == "retained-session" { compact } else { deep };
-            let excluded = if session_id == "retained-session" { deep } else { compact };
+            let expected = if session_id == "retained-session" {
+                compact
+            } else {
+                deep
+            };
+            let excluded = if session_id == "retained-session" {
+                deep
+            } else {
+                compact
+            };
             assert!(primary.contains(expected));
             assert!(!primary.contains(excluded));
             assert!(!primary.contains(session_id));
             let dispatch = crate::sub_agents::Dispatch {
-                agent_name: "presentation-test".into(), system: "agent-local policy".into(), model: None,
-                allowed_tools: Vec::new(), disallowed_tools: Vec::new(), prompt: "question".into(),
+                agent_name: "presentation-test".into(),
+                system: "agent-local policy".into(),
+                model: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                prompt: "question".into(),
                 omit_flags: crate::sub_agents::AgentOmitFlags::default(),
             };
-            let (agent, _, _) = build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
+            let (agent, _, _) =
+                build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
             let agent = agent.unwrap();
             assert!(agent.contains(expected));
             assert!(!agent.contains(excluded));

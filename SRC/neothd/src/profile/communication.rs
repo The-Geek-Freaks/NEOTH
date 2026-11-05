@@ -1286,7 +1286,9 @@ fn prune_evidence(items: &mut Vec<EvidenceRef>, max: usize) -> Result<()> {
                 )
             })
             .map(|(index, _)| index)
-            .context("communication evidence capacity cannot discard an active explicit preference")?;
+            .context(
+                "communication evidence capacity cannot discard an active explicit preference",
+            )?;
         items.remove(remove_index);
     }
     Ok(())
@@ -1375,10 +1377,17 @@ pub(crate) fn record_evidence_batch(
             // second writers cannot resurrect an earlier choice. event_hash is
             // the stable caller action identity, not a digest of these fields.
             let observed_at_unix = if matches!(&input.scope, CommunicationScope::Session(_)) {
-                match evidence.iter().filter(|item| item.scope == input.scope)
-                    .map(|item| item.observed_at_unix).max() {
-                    Some(previous) => input.observed_at_unix.max(previous.checked_add(1)
-                        .context("session preference logical order exhausted")?),
+                match evidence
+                    .iter()
+                    .filter(|item| item.scope == input.scope)
+                    .map(|item| item.observed_at_unix)
+                    .max()
+                {
+                    Some(previous) => input.observed_at_unix.max(
+                        previous
+                            .checked_add(1)
+                            .context("session preference logical order exhausted")?,
+                    ),
                     None => input.observed_at_unix,
                 }
             } else {
@@ -2341,7 +2350,15 @@ fn compile_prompt_at(
     incognito: bool,
     now_unix: i64,
 ) -> Result<Option<CompiledCommunicationPrompt>> {
-    compile_prompt_context_at(home, subject_id, policy, target_scope, None, incognito, now_unix)
+    compile_prompt_context_at(
+        home,
+        subject_id,
+        policy,
+        target_scope,
+        None,
+        incognito,
+        now_unix,
+    )
 }
 
 /// The session is supplied by the prepared chat turn, never inferred from text.
@@ -2354,7 +2371,12 @@ pub(crate) fn compile_prompt_for_session(
     incognito: bool,
 ) -> Result<Option<CompiledCommunicationPrompt>> {
     compile_prompt_context_at(
-        home, subject_id, policy, target_scope, Some(session_id), incognito,
+        home,
+        subject_id,
+        policy,
+        target_scope,
+        Some(session_id),
+        incognito,
         crate::time::now_unix_secs() as i64,
     )
 }

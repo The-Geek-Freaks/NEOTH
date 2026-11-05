@@ -16,15 +16,15 @@
   "sources": [
     {
       "path": "SRC/neothd/src/profile/communication.rs",
-      "sha256": "D753C87E0A1FE7C5356FECF4CF2EEB2D09B07B6CCA5E5B2BBE228EFAE46326B7"
+      "sha256": "EA9946B0257962DDDF23D965FD798A015A1DBDDC53068FC89532582CD5F0A5E0"
     },
     {
       "path": "SRC/neothd/src/profile/communication_session.rs",
-      "sha256": "0B91E02FBF9295C2393ADA2AC93B03571A32A96FC41FD7DB1BDD9B9EF00C9160"
+      "sha256": "B97E2012AB01FAE220A8AFE2E8D5FC22DC55ACD5B002F75C257CD722FBFC1A24"
     },
     {
       "path": "SRC/neothd/src/profile/communication_session_tests.rs",
-      "sha256": "C251F39C690287D86003F54600EF1659721A0724BDA854FAB42EFA3AF7981BB2"
+      "sha256": "36A5F3329085070A90EDC0008F02317E5E2BF98413AA202AFDB8D4B7958E4B78"
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
@@ -32,15 +32,15 @@
     },
     {
       "path": "SRC/neothd/src/cli/profile_communication_session.rs",
-      "sha256": "20162916BEB0454F46830EB60B75FB2CC98C997C0D05D0D28E4642F9E9A6F31B"
+      "sha256": "C0DEF933667D2D308A5966FCA78811247F0B54E9D8E2C47963758863254E54B9"
     },
     {
       "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
-      "sha256": "7AA1E93BC92607AE6AD92280975B342C7BAA4400DCF184FB00972E398CED16AA"
+      "sha256": "FA23092F9FCBCBD930DCF6E86B9A78A2083F7990D726425FE03B3EDB9A2C9189"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "7AE9932F0A223EA00724203EF0E82EC08E980BE997F2C43A88F3E6ECB2C677CD"
+      "sha256": "B89B4D4DC98D97AA61B7E45E6C1C584A626A6E2B5170AA44BF1D3CB86AE32D76"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -75,5 +75,11 @@
     "Existing all-surface controls and whole A07/GOLD-R4-11 completion remain open; raw roadmap unchanged.",
     "Generated CLI reference refresh remains pending current-producer hosted artifact."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42040884816,
+    "artifact": 13420916476,
+    "patch": "verified exact pre/postimages, original API/ZIP/member hashes",
+    "runtimeAccepted": false
+  }
 }
