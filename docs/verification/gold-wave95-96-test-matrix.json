@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2712 hosted formatting imported; focused and native runtime pending",
+  "status": "W2713 exact39-case combined hosted selection prepared; runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477341,
-    "sha256": "73E51D359E9F5978FFD2389C3BE7C8A6199CDA4270CF8EB515F784D98FDA850A"
+    "bytes": 477542,
+    "sha256": "72E382BC09151C3333A6C474BC113E214BCF8ADF2714B0354E84ACA85675FC3A"
   },
-  "sourceInputs": 2604,
+  "sourceInputs": 2605,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -96144,6 +96144,62 @@
       }
     ],
     "note": "Exact original producer-matched hosted patch; no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2713ProviderContractBatch": {
+    "base": "b5e125aa799e981051870dcc5318d6f8ab2982e2",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 76932,
+        "sha256": "91FA5C24B748A9E2D75C098C29434744ED11D1D7CCF4EAB24F3CF0DFD12160E1",
+        "blob": "bb313167aaaed06c0079ec1148883c10f671b7c3"
+      },
+      {
+        "path": "docs/verification/gold-wave2710-device-presentation.json",
+        "bytes": 9333,
+        "sha256": "F9E16625AFF388C1465F1FAD2436177E031DFF85D4049C6ACA92212FD2B9AD40",
+        "blob": "859bef2d82f491293ac03ee548bd77961154f72e"
+      },
+      {
+        "path": "docs/verification/gold-wave2713-provider-contract-selection.json",
+        "bytes": 2955,
+        "sha256": "BA52E5A7324B74A11CF1C0CAA3D4C6AD6D610BBA4C4EF686114BA38966DD634C",
+        "blob": "1cb0f43cadd20e31b959453ea0479c5aa64ebcfc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2826756,
+        "sha256": "20A19FD1A86DB4409B3E900F24AFD7D47F6007EA8E81AE1C9179E998184B852B",
+        "blob": "0f4c07ce646747b6639c79ef7a67482f430c75d1"
+      },
+      {
+        "path": "SRC/neothd/src/providers/anthropic_api.rs",
+        "bytes": 53297,
+        "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD",
+        "blob": "ce287dd8938284e22d8c56172907d6d6cad12edf"
+      },
+      {
+        "path": "SRC/neothd/src/providers/aws_bedrock.rs",
+        "bytes": 43704,
+        "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977",
+        "blob": "16a9f46507294f1a0e4fde3764313a2956e7c6b1"
+      },
+      {
+        "path": "SRC/neothd/src/providers/cohere_api.rs",
+        "bytes": 34048,
+        "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
+        "blob": "edeb3fee4deb836398427d14d900b73bc0d2591e"
+      },
+      {
+        "path": "SRC/neothd/src/providers/mod.rs",
+        "bytes": 319931,
+        "sha256": "34A75A8892EAB90053F670D744C9590C8BCEC5ABBBBE7DFF395389FCC3C1A87F",
+        "blob": "ab4f363798cae0e993de61a1e15220b7b465c106"
+      }
+    ],
+    "note": "Existing CLI-reference stream, separate29+10 receipts; current full run still active.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

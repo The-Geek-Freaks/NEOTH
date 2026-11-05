@@ -20120,3 +20120,9 @@ Zwei neue portable HTTP-Regressionen pruefen sechs negative Varianten ueber comp
 W2707-Linux-Diagnose: Job127516370214 endete am2026-11-05T21:40:25Z nach erfolgreichem Workspace-Clippy und Doctests waehrend der GUI-Voraussetzungskompilierung mit Runner-Shutdown-Signal/Exit143. Schrittzeit32:40 bei60-Minuten-Grenze; letzter Sample zeigt hohen Speicherdruck, beweist aber keinen OOM-Ausloeser. Kein Root-Abbruch und kein Compilerfehler aus diesem Terminal belegt; Windows-Volljob laeuft weiter. Joblog/Metadaten im bestehenden wave2707-full-integration-Verzeichnis gesichert. Keine unbegruendete Produkt- oder Ressourcenregel-Aenderung.
 
 W2712-Format: Preflight42115991214 aufab32a6e1 meldete ausschliesslich Formatierung. Originalartefakt13456691068 wurde gegen API-/ZIP-/Memberhashes und exakte Git-Vor-/Nachbilder verifiziert und importiert. Kein lokaler Formatter; beide neuen HTTP-Regressionen bleiben runtime-offen.
+
+### W2713: Provider-Vertraege im vorhandenen Build mitpruefen
+
+Die bestehende CLI-Referenz-Pipeline erhaelt einen standardmaessig deaktivierten Provider-Modus fuer exakt zehn Faelle: acht native-Tool-Vertragsfaelle ausW2676 und zwei Abschlussgrundfaelle ausW2712. Identitaeten muessen mit beiden Berichten und der eindeutigen aktuellen Matrixregistrierung uebereinstimmen; drei Adapter, gemeinsamer Providervertrag und Workflow sind vollstaendig gehasht. Discovery, Einzel-Pass, Zusammenfassung und final10/10 werden pro Fall gefordert und in einem eigenen Originalartefakt behalten.
+
+Der naechste freie Root-Lauf kann29 Darstellungsfaelle plus10 Providerfaelle mit demselben Cargo-Cache/Testbinary, CLI-Export und Workspace-Clippy pruefen. Kein zweiter Dispatch-Loop, keine lokale Runtime und keine Erhoehung des90-Minuten-Joblimits. Terra-high-Review prompt-only; Quellvorbereitung, noch kein Ausfuehrungsnachweis und keine rohe Roadmap-Zeile geschlossen. Bericht docs/verification/gold-wave2713-provider-contract-selection.json.

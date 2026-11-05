@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T22:09:33.2761931Z",
-  "validationStatus": "W2712 hosted formatting imported; focused and native runtime pending",
+  "capturedUtc": "2026-11-05T22:12:55.7361488Z",
+  "validationStatus": "W2713 exact39-case combined hosted selection prepared; runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 69755,
-      "sha256": "FEB0801F89805D5FB5FA199A4E96247B21AC673AFDA39C730396FA72DDD44599"
+      "bytes": 76932,
+      "sha256": "91FA5C24B748A9E2D75C098C29434744ED11D1D7CCF4EAB24F3CF0DFD12160E1"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -4984,7 +4984,7 @@
     {
       "path": "docs/verification/gold-wave2710-device-presentation.json",
       "bytes": 9333,
-      "sha256": "75D1B282DE20F514452B8EA4F368170C00C7163DD3CD9F2C008AFFA2B8988542"
+      "sha256": "F9E16625AFF388C1465F1FAD2436177E031DFF85D4049C6ACA92212FD2B9AD40"
     },
     {
       "path": "docs/verification/gold-wave2711-mixed-email-recovery.json",
@@ -4995,6 +4995,11 @@
       "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
       "bytes": 2484,
       "sha256": "D95CD7859B6C3B35DE9C7B22EA4C7E969B1435A6BC2E5771DB64898791375977"
+    },
+    {
+      "path": "docs/verification/gold-wave2713-provider-contract-selection.json",
+      "bytes": 2955,
+      "sha256": "BA52E5A7324B74A11CF1C0CAA3D4C6AD6D610BBA4C4EF686114BA38966DD634C"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6258,8 +6263,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2825723,
-      "sha256": "67C191D94282492D7941DEA23E66ECA0132EAD3B0C4C2ABCF26275FFAA3D335A"
+      "bytes": 2826756,
+      "sha256": "20A19FD1A86DB4409B3E900F24AFD7D47F6007EA8E81AE1C9179E998184B852B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

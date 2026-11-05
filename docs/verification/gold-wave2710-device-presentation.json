@@ -82,7 +82,7 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "sha256": "FEB0801F89805D5FB5FA199A4E96247B21AC673AFDA39C730396FA72DDD44599"
+      "sha256": "91FA5C24B748A9E2D75C098C29434744ED11D1D7CCF4EAB24F3CF0DFD12160E1"
     },
     {
       "path": "docs/profile.md",

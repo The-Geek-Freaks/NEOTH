@@ -1,0 +1,59 @@
+{
+  "schema": "neoth.wave2713.provider-contract-selection.v1",
+  "producerBase": "b5e125aa799e981051870dcc5318d6f8ab2982e2",
+  "batch": "B03",
+  "roadmap": [
+    "ADOPT-20261012-A08",
+    "GOLD-R4-14"
+  ],
+  "purpose": "Reuse the existing CLI-reference build for ten exact provider regressions alongside the independent29-case presentation selection; no new dispatch stream.",
+  "tests": [
+    "providers::anthropic_api::tests::native_tool_blocks_and_paused_turns_cannot_become_text_success",
+    "providers::anthropic_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
+    "providers::anthropic_api::tests::ordinary_text_thinking_and_refusal_remain_tool_free",
+    "providers::anthropic_api::tests::supported_terminals_preserve_text_usage_and_native_refusal",
+    "providers::anthropic_api::tests::unconfirmed_terminals_and_empty_text_fail_without_exposing_response_fields",
+    "providers::aws_bedrock::tests::native_tool_blocks_and_stop_reason_cannot_become_text_success",
+    "providers::aws_bedrock::tests::tool_free_converse_projection_preserves_text_and_guardrail_refusal",
+    "providers::cohere_api::tests::absent_null_and_empty_tool_fields_preserve_text_completion",
+    "providers::cohere_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
+    "providers::cohere_api::tests::native_tool_payload_and_finish_reason_cannot_become_text_success"
+  ],
+  "sources": [
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "91FA5C24B748A9E2D75C098C29434744ED11D1D7CCF4EAB24F3CF0DFD12160E1"
+    },
+    {
+      "path": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD"
+    },
+    {
+      "path": "SRC/neothd/src/providers/aws_bedrock.rs",
+      "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cohere_api.rs",
+      "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105"
+    },
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "sha256": "34A75A8892EAB90053F670D744C9590C8BCEC5ABBBBE7DFF395389FCC3C1A87F"
+    }
+  ],
+  "requiredCount": 10,
+  "newPortableCases": 0,
+  "totalPortableCases": 3351,
+  "review": "GPT-6.1 Terra high prompt-only review; Root text comparison to the existing exact presentation workflow.",
+  "validation": {
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Default disabled. Exact run/head/source/discovery/pass/summary evidence required per suite.",
+    "Native tools, queue/pause transport and full provider parity remain outside this proof.",
+    "The existing90-minute combined job budget is unchanged; step maxima are bounds, not reserved time.",
+    "Historical W2676/W2712 reports supply exact case identities; current matrix and five explicit sources supply producer-bound hashes."
+  ]
+}
