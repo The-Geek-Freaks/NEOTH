@@ -92,6 +92,13 @@ Identical duplicate snapshots are allowed, but a corrupt matching snapshot
 cannot be hidden by a newer valid one. Resume still requires the checkpoint's
 recorded MCP scope and does not restore removed or disabled servers.
 
+New local checkpoints record the admitted session identity. Explicit resume
+retains that identity and its session presentation preferences through the
+primary prompt and agent rebuild. Older checkpoints without this marker retain
+context-only resume in a fresh session; the notice makes that limitation explicit.
+Current provider settings and permissions still govern the new turn. Resume
+does not replay prior tool calls.
+
 | Command | Purpose |
 | :-- | :-- |
 | `neoth chat <prompt>` | Ask NEOTH from the terminal; `--skill <id>` pins one authority-admitted Skill for the turn. |

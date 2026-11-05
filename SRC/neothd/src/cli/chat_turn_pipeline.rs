@@ -621,6 +621,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         let mut cp = ModeCheckpoint {
             checkpoint_hash: String::new(),
             session_id: current_session_id.clone(),
+            local_session_identity_recorded: true,
             mode: "chat".to_string(),
             provider_target: provider.name().to_string(),
             council_mode: council_mode_str,

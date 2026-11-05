@@ -6548,6 +6548,13 @@ pub(super) async fn dispatch_provider(
     // This opaque capability was attached by the admitted turn pipeline. It
     // is copied to local audit leaves and is never selected from request data.
     let wal_session = provider_audit_context.wal_session;
+    // This dispatcher is reached through the admitted local chat pipeline.
+    // Journal turn ids remain per invocation; checkpoints retain the session.
+    let checkpoint_session_id = provider_audit_context
+        .session_id
+        .as_ref()
+        .filter(|id| crate::profile::communication::session::validate_control_id(id).is_ok())
+        .cloned();
     let thinking_budget = match requested_thinking_budget {
         Some(budget) if provider.request_controls().supports_thinking_budget() => Some(budget),
         Some(budget) => {
@@ -7460,7 +7467,7 @@ pub(super) async fn dispatch_provider(
                     // crash inside the dispatch loop lands at the pre-compact
                     // boundary rather than at the session-start boundary. Best-
                     // effort: never blocks the dispatch loop.
-                    {
+                    if let Some(session_id) = checkpoint_session_id.as_ref() {
                         use crate::recall::reconstruct::ModeCheckpoint;
                         use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
                         // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
@@ -7473,7 +7480,8 @@ pub(super) async fn dispatch_provider(
                         };
                         let mut cp = ModeCheckpoint {
                             checkpoint_hash: String::new(),
-                            session_id: turn_id.to_string(),
+                            session_id: session_id.clone(),
+                            local_session_identity_recorded: true,
                             mode: "chat".to_string(),
                             provider_target: provider.name().to_string(),
                             council_mode: council_mode_str,
@@ -10463,6 +10471,7 @@ async fn prepare_chat_turn_input(
     // a bad/missing checkpoint or an unrecorded legacy MCP scope fails closed
     // instead of silently running a normal turn with a different tool surface.
     let mut resumed_mcp_scope: Option<Vec<String>> = None;
+    let mut resumed_session_id = None;
     if !args.incognito
         && let Some(hash_prefix) = args.resume_from.clone()
     {
@@ -10486,6 +10495,7 @@ async fn prepare_chat_turn_input(
         }
         args.system = Some(hydration.combined_system);
         resumed_mcp_scope = Some(hydration.scoped_mcp_servers);
+        resumed_session_id = hydration.admitted_session_id;
     }
 
     let ResolvedTurnInput {
@@ -10554,7 +10564,7 @@ async fn prepare_chat_turn_input(
         first_tour_home,
         selected_config_path,
         prompt,
-        admitted_session_id: None,
+        admitted_session_id: resumed_session_id,
         has_attachments,
         mcp_servers,
         scoped_mcp_servers,
@@ -16204,6 +16214,7 @@ fn maybe_skill_catalog_block<S: crate::skills::schema::RuntimeSkillView>(
 /// caller aborts the requested resume before provider/tool dispatch.
 /// PWF-02: authoritative resume state reconstructed from one checkpoint.
 struct ResumeHydration {
+    admitted_session_id: Option<String>,
     banner: String,
     pub(super) combined_system: String,
     catchup: crate::recall::reconstruct::CatchupSummary,
@@ -16229,6 +16240,18 @@ fn hydrate_resume_context(
                 .to_string(),
         );
     }
+    let admitted_session_id = if cp.local_session_identity_recorded {
+        if cp.mode != "chat"
+            || !matches!(cp.phase.as_str(), "chat:session-start" | "chat:pre-compact")
+        {
+            return Err("checkpoint local session identity has an invalid producer scope".to_string());
+        }
+        crate::profile::communication::session::validate_control_id(&cp.session_id)
+            .map_err(|_| "checkpoint local session identity is invalid".to_string())?;
+        Some(cp.session_id.clone())
+    } else {
+        None
+    };
     // PWF-02: count activity since the checkpoint timestamp.
     let catchup = crate::recall::reconstruct::catchup_summary(&conn, cp.ts_unix);
     let mcp_scope = if cp.scoped_mcp_servers.is_empty() {
@@ -16236,10 +16259,13 @@ fn hydrate_resume_context(
     } else {
         cp.scoped_mcp_servers.join(", ")
     };
-    let banner = format!(
+    let mut banner = format!(
         "[neoth] resuming session={} phase={} provider={} council={} hash={}",
         cp.session_id, cp.phase, cp.provider_target, cp.council_mode, cp.checkpoint_hash,
     );
+    if admitted_session_id.is_none() {
+        banner.push_str("; legacy context-only resume: session preferences are not restored");
+    }
     let resume_block = format!(
         "RESUME-CONTEXT\n\
          Prior session id: {session_id}\n\
@@ -16262,6 +16288,7 @@ fn hydrate_resume_context(
         _ => resume_block,
     };
     Ok(ResumeHydration {
+        admitted_session_id,
         banner,
         combined_system: combined,
         catchup,
@@ -26449,6 +26476,274 @@ template = "[REDACTED]"
         assert_eq!(payload["reason"], "stale_snapshot");
     }
 
+    fn store_resume_identity_checkpoint(
+        home: &std::path::Path,
+        session_id: &str,
+        phase: &str,
+        recorded: bool,
+    ) -> crate::recall::reconstruct::ModeCheckpoint {
+        let mut cp = crate::recall::reconstruct::ModeCheckpoint {
+            checkpoint_hash: String::new(),
+            session_id: session_id.to_string(),
+            local_session_identity_recorded: recorded,
+            mode: "chat".to_string(),
+            provider_target: "old-provider".to_string(),
+            council_mode: "off".to_string(),
+            scoped_mcp_servers: Vec::new(),
+            mcp_scope_recorded: true,
+            phase: phase.to_string(),
+            ts_unix: 1_700_000_000,
+        };
+        cp.stamp_hash();
+        let conn = crate::memory::store::open(&home.join("views.db")).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                1_i64,
+                crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT as i64,
+                cp.ts_unix,
+                serde_json::to_string(&cp).unwrap(),
+                "resume-identity-fixture",
+            ],
+        )
+        .unwrap();
+        cp
+    }
+
+    #[tokio::test]
+    async fn explicit_resume_preserves_recorded_session_in_preparation_and_prompt_rebuild() {
+        use crate::profile::communication::{self, PreferenceValue, ProcessingLoadPreference};
+        let dir = tempdir().unwrap();
+        let home = dir.path();
+        let config = FreedomConfig::default();
+        communication::session::set(
+            home,
+            &config.profile.communication,
+            "operator",
+            "retained-resume-session",
+            PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact),
+            [91; 32],
+            10,
+            false,
+        )
+        .unwrap();
+        let provider = NeverCalledProvider::default();
+        for (index, phase) in ["chat:session-start", "chat:pre-compact"].into_iter().enumerate() {
+            let cp = store_resume_identity_checkpoint(home, "retained-resume-session", phase, true);
+            let args = ChatArgs {
+                message: Some("hello".to_string()),
+                config: Some(home.join("freedom.yaml")),
+                resume_from: Some(cp.checkpoint_hash),
+                ..test_chat_args_default()
+            };
+            let outcome = prepare_cli_chat_turn(
+                args,
+                config.clone(),
+                &provider,
+                crate::consent::EphemeralConsent::default(),
+                None,
+                None,
+                crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+                &mut CliChatOutput,
+            )
+            .await
+            .unwrap();
+            let chat_turn_pipeline::ChatPreparationOutcome::Ready(prepared) = outcome else {
+                panic!("explicit resume must prepare a fresh turn");
+            };
+            assert_eq!(prepared.preparation.current_session_id, "retained-resume-session");
+            assert!(prepared.preparation.scoped_mcp_servers.is_empty());
+            assert_eq!(
+                serde_json::to_value(&prepared.preparation.config).unwrap(),
+                serde_json::to_value(&config).unwrap()
+            );
+            let (writer, joined) = wal_spawn(home.join(format!("resume-prompt-{index}.wal"))).unwrap();
+            let prompt_args = ChatArgs {
+                system: prepared.input.system.clone(),
+                ..test_chat_args_default()
+            };
+            let result = build_prompt_bundle(
+                config.clone(),
+                "hello".into(),
+                home.to_path_buf(),
+                PromptBuildContext {
+                    args: &prompt_args,
+                    session_id: &prepared.preparation.current_session_id,
+                    prompt_bundle_hash: &"0".repeat(64),
+                    writer: &writer,
+                    current_path: home,
+                    attachment_contexts: None,
+                    output: &mut CliChatOutput,
+                    stream_control_token: None,
+                    session_recall: None,
+                },
+                PromptBuildOptions {
+                    slash_skill_name: None,
+                    persona_override_from_tweaks: None,
+                    retained_skill_admission: None,
+                    replay_skill_registry: None,
+                },
+            )
+            .await;
+            drop(writer);
+            joined.await.unwrap();
+            let bundle = result.unwrap().0;
+            let expected = "Keep the response compact while preserving required actions and caveats.";
+            assert!(bundle.combined_system.as_deref().unwrap().contains(expected));
+            let dispatch = crate::sub_agents::Dispatch {
+                agent_name: "resume-presentation".into(),
+                system: "agent-local policy".into(),
+                model: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                prompt: "question".into(),
+                omit_flags: crate::sub_agents::AgentOmitFlags::default(),
+            };
+            let (agent, _, _) = build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
+            assert!(agent.unwrap().contains(expected));
+        }
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn legacy_resume_keeps_context_but_cannot_reuse_a_turn_identity() {
+        let dir = tempdir().unwrap();
+        let old_turn_id = "0123456789abcdef";
+        let cp = store_resume_identity_checkpoint(dir.path(), old_turn_id, "chat:pre-compact", false);
+        let hydration = hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None).unwrap();
+        assert!(hydration.admitted_session_id.is_none());
+        assert!(hydration.banner.contains("context-only"));
+        assert!(hydration.combined_system.contains(old_turn_id));
+        let provider = NeverCalledProvider::default();
+        let outcome = prepare_cli_chat_turn(
+            ChatArgs {
+                message: Some("hello".into()),
+                config: Some(dir.path().join("freedom.yaml")),
+                resume_from: Some(cp.checkpoint_hash),
+                ..test_chat_args_default()
+            },
+            FreedomConfig::default(),
+            &provider,
+            crate::consent::EphemeralConsent::default(),
+            None,
+            None,
+            crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut CliChatOutput,
+        )
+        .await
+        .unwrap();
+        let chat_turn_pipeline::ChatPreparationOutcome::Ready(prepared) = outcome else {
+            panic!("legacy resume retains its context-only behavior");
+        };
+        assert_ne!(prepared.preparation.current_session_id, old_turn_id);
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn precompact_checkpoint_records_admitted_session_without_turn_id_fallback() {
+        for session_id in [Some("actual-local-session"), None, Some("incognito-private")] {
+            let dir = tempdir().unwrap();
+            let segment = dir.path().join("precompact-session.wal");
+            let (writer, joined) = wal_spawn(segment.clone()).unwrap();
+            let provider = ModelCapturingProvider {
+                seen_model: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            };
+            let mut config = FreedomConfig::default();
+            config.autonomy = crate::permissions::AutonomyLevel::Full;
+            config.compaction.enabled = true;
+            let canary = std::sync::Arc::new(
+                crate::security::injection_tracker::CanaryToken::generate().unwrap(),
+            );
+            let result = Box::pin(dispatch_provider(
+                "hello".to_string(),
+                None,
+                &test_chat_args_default(),
+                &provider,
+                &config,
+                dir.path(),
+                writer,
+                dir.path().join("quota.json"),
+                None,
+                config.tokens.max_per_request,
+                &crate::mcp::McpServers::default(),
+                crate::mcp::McpToolScope::default(),
+                "0000000000000001",
+                None,
+                None,
+                "provider_default",
+                crate::providers::cost_authorization::ProviderCallAuditContext {
+                    session_id: session_id.map(str::to_string),
+                    ..Default::default()
+                },
+                &crate::consent::EphemeralConsent::default(),
+                TurnDispatchRoute::RefineLoop {
+                    loop_trigger: LoopRouteTrigger::default(),
+                },
+                None,
+                None,
+                false,
+                false,
+                false,
+                &canary,
+                &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+                &[],
+                &crate::hooks::SessionOnceGuard::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &mut CliChatOutput,
+            ))
+            .await;
+            let DispatchOutput { writer, .. } = result.unwrap();
+            drop(writer);
+            joined.await.unwrap();
+            let bytes = std::fs::read(&segment).unwrap();
+            let mut rest = &bytes[SEGMENT_HEADER_LEN..];
+            let mut checkpoints = Vec::new();
+            while !rest.is_empty() {
+                let frame = decode_frame(rest).unwrap();
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT {
+                    checkpoints.push(
+                        serde_json::from_slice::<crate::recall::reconstruct::ModeCheckpoint>(
+                            frame.payload,
+                        )
+                        .unwrap(),
+                    );
+                }
+                rest = &rest[frame.header.total_len as usize..];
+            }
+            if session_id == Some("actual-local-session") {
+                assert_eq!(checkpoints.len(), 1);
+                let cp = &checkpoints[0];
+                assert_eq!(cp.session_id, "actual-local-session");
+                assert_ne!(cp.session_id, "0000000000000001");
+                assert!(cp.local_session_identity_recorded);
+                assert_eq!(cp.phase, "chat:pre-compact");
+                assert_eq!(cp.compute_hash(), cp.checkpoint_hash);
+            } else {
+                assert!(checkpoints.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn recorded_resume_rejects_invalid_identity_and_foreign_checkpoint_scope() {
+        let dir = tempdir().unwrap();
+        for id in ["", " spaced", "incognito-private", "line\nbreak", &"x".repeat(257)] {
+            let cp = store_resume_identity_checkpoint(dir.path(), id, "chat:session-start", true);
+            assert!(matches!(
+                hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None),
+                Err(reason) if reason == "checkpoint local session identity is invalid"
+            ));
+        }
+        let cp = store_resume_identity_checkpoint(dir.path(), "valid-session", "channel:session-start", true);
+        assert!(matches!(
+            hydrate_resume_context(dir.path(), &cp.checkpoint_hash, None),
+            Err(reason) if reason.contains("invalid producer scope")
+        ));
+    }
     #[tokio::test]
     async fn session_presentation_uses_prepared_identity_in_primary_and_agent_prompts() {
         use crate::profile::communication::{self, PreferenceValue, ProcessingLoadPreference};

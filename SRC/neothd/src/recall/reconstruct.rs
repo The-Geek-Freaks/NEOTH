@@ -52,9 +52,13 @@ pub struct ModeCheckpoint {
     /// identifier the operator pastes into `neoth chat resume from
     /// <hash>`.
     pub checkpoint_hash: String,
-    /// Stable session identifier — UUID v7 string so the resume can
-    /// link the new session to the original's WAL prefix.
+    /// Session identity, or a legacy turn identity when the discriminator
+    /// below is absent. Only explicitly recorded local identities may be reused.
     pub session_id: String,
+    /// The local chat producer recorded its admitted session, not a turn id.
+    /// Omit false to preserve the exact hashes of historical checkpoints.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local_session_identity_recorded: bool,
     /// Which conversational mode was active when the checkpoint was
     /// emitted (chat / code / council / etc.).
     pub mode: String,
@@ -294,6 +298,7 @@ mod tests {
         let mut cp = ModeCheckpoint {
             checkpoint_hash: String::new(),
             session_id: "01892bda-1234-7890-abcd-ef1234567890".into(),
+            local_session_identity_recorded: false,
             mode: "chat".into(),
             provider_target: "claude_cli".into(),
             council_mode: "off".into(),
@@ -321,6 +326,25 @@ mod tests {
         assert_eq!(decoded.compute_hash(), decoded.checkpoint_hash);
     }
 
+    #[test]
+    fn local_session_discriminator_preserves_legacy_hash_and_binds_new_identity() {
+        let mut cp = sample_checkpoint();
+        let legacy_hash = cp.checkpoint_hash.clone();
+        let legacy_json = serde_json::to_string(&cp).unwrap();
+        assert!(!legacy_json.contains("local_session_identity_recorded"));
+        let decoded: ModeCheckpoint = serde_json::from_str(&legacy_json).unwrap();
+        assert!(!decoded.local_session_identity_recorded);
+        assert_eq!(decoded.compute_hash(), legacy_hash);
+        cp.local_session_identity_recorded = true;
+        assert_ne!(cp.compute_hash(), legacy_hash);
+        cp.stamp_hash();
+        let current_hash = cp.checkpoint_hash.clone();
+        let roundtrip: ModeCheckpoint = serde_json::from_str(&serde_json::to_string(&cp).unwrap()).unwrap();
+        assert!(roundtrip.local_session_identity_recorded);
+        assert_eq!(roundtrip.compute_hash(), current_hash);
+        cp.session_id = "another-session".into();
+        assert_ne!(cp.compute_hash(), current_hash);
+    }
     fn build_in_memory_db() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(

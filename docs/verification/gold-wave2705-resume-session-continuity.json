@@ -1,0 +1,60 @@
+{
+  "schema": "neoth.wave2705.resume-session-continuity.v1",
+  "producerBase": "3d71bb426f1c61a68fb43dc4c472624a1f66cd49",
+  "batch": "B08",
+  "roadmap": [
+    "ADOPT-20261012-A07"
+  ],
+  "finding": "Explicit CLI resume discarded the checkpoint session identity; precompact checkpoints wrote the separate per-turn WAL event id instead of the admitted session.",
+  "changes": [
+    "Mark new local admitted session identities explicitly; absent/false discriminator stays omitted so historical checkpoint hashes remain stable.",
+    "Precompact uses the canonical admitted audit session id and never falls back to journal turn id; absent/invalid identity omits this best-effort checkpoint.",
+    "Exact validated local chat start/precompact checkpoints restore their session id through existing preparation, WAL attribution, presentation owner and agent rebuild.",
+    "Legacy and channel checkpoints retain context-only resume with a fresh session and explicit limitation; no invented turn-to-session mapping.",
+    "Current provider configuration, MCP scope restriction, incognito prohibition and per-turn authorization remain independent; no historical tool replay."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "E77567154EF951CAD2313E414A9E47074A2E81C1BB6B8C3374614BE9D54DF7C0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "D91F0216053D5D7D007089B192BC12D0444E5A57927D34EE57C6AD4B40ACAB62"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sha256": "D3C99A1599D4D252387CEB5796FE7A7FE243E0994BACA39C0BC6FE75C5D10DF0"
+    },
+    {
+      "path": "SRC/neothd/src/recall/reconstruct.rs",
+      "sha256": "F1405D4EF335B81FD6AB91ED0AAC94013B3125666CA8D342D6CE7228FE495DA4"
+    },
+    {
+      "path": "docs/cli-reference.md",
+      "sha256": "07197768CB64BA43CC924B4C554AC352CC7F1C45FF078F13E73A53F9E33179F7"
+    }
+  ],
+  "tests": [
+    "cli::chat::tests::explicit_resume_preserves_recorded_session_in_preparation_and_prompt_rebuild",
+    "cli::chat::tests::legacy_resume_keeps_context_but_cannot_reuse_a_turn_identity",
+    "cli::chat::tests::recorded_resume_rejects_invalid_identity_and_foreign_checkpoint_scope",
+    "cli::chat::tests::precompact_checkpoint_records_admitted_session_without_turn_id_fallback",
+    "recall::reconstruct::tests::local_session_discriminator_preserves_legacy_hash_and_binds_new_identity"
+  ],
+  "newPortableCases": 5,
+  "totalPortableCases": 3340,
+  "validation": {
+    "static": "Root bounded text, actual caller/identity owner tracing and GPT-6.1 Terra high prompt-only review",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Older checkpoints cannot reconstruct an unrecorded local session identity.",
+    "No device override, native GUI change, live device, full A07 or Gold acceptance.",
+    "Current active42092106950 uses predecessor fd5c0b37 and does not execute these cases."
+  ],
+  "rawRoadmapRowsClosed": 0
+}
