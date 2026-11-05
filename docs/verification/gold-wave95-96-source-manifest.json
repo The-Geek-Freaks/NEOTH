@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T14:03:19.1987341Z",
-  "validationStatus": "session-presentation-hosted-format-runtime-pending",
+  "capturedUtc": "2026-11-05T14:19:26.9646906Z",
+  "validationStatus": "email101-hosted-accepted-session-native-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4918,8 +4918,8 @@
     },
     {
       "path": "docs/verification/gold-wave2687-email-fixture-slice.json",
-      "bytes": 854,
-      "sha256": "4A36643E425158919D4C5F272CF6F7C325AD34A99DC4F361B89852D16B138AC8"
+      "bytes": 1481,
+      "sha256": "1C43DF42B56EAA7C5651F786FF1823289D0D5512E1C8771B300A3E7B932C1341"
     },
     {
       "path": "docs/verification/gold-wave2688-session-presentation.json",
@@ -6157,6 +6157,16 @@
       "sha256": "93BFCEACDB211824F4CFD4364531CD520AB9E2428C51CBEB674366019F85ECFB"
     },
     {
+      "path": "PLAN/ADOPT31_C3_EARNED_RIGHTS_DESIGN.md",
+      "bytes": 5962,
+      "sha256": "4FA292760A6390EDBD2E32E447570A26C89F4C104421511064904E3398FE216B"
+    },
+    {
+      "path": "PLAN/ADOPT31_C5_SELF_EDIT_COUNCIL_DESIGN.md",
+      "bytes": 4813,
+      "sha256": "319031C0BC59C71840DA48B0604301D2C5100EE1BEC99973D649FEC4BEA33531"
+    },
+    {
       "path": "PLAN/ADR/001-slint-gui-framework.md",
       "bytes": 6189,
       "sha256": "C3F2F52DFD50B975D54E33A2BDBBE4B37645AAEE9E626711203088197D801303"
@@ -6178,8 +6188,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2797534,
-      "sha256": "B67E0A32016090E54FA1393EB4C13A45585E1332F1034BE03366C10C9B0FDD2D"
+      "bytes": 2799356,
+      "sha256": "A41FCD4218C19AFD9DC4B926898F404A4BAF5C1395F74BF0CFA479E908B94798"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

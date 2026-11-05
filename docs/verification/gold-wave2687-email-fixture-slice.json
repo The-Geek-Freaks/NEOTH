@@ -15,5 +15,20 @@
   "review": "GPT-6.1 Terra high Rust build resolver prompt-only review confirms minimal Rust1.91 coercion fix",
   "localExecutableValidationRan": false,
   "hostedAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "hostedAcceptance": {
+    "run": 42039574817,
+    "producer": "5003a482e54e0441ddcb339c3f534ce1f87d2cf2",
+    "exactCases": 101,
+    "productCanary": "passed",
+    "originalArchives": 2,
+    "verifiedArchiveMembers": 410,
+    "verifiedSourceBindings": 55,
+    "cleanupProven": true,
+    "rootAdmissionPath": "work/gold-20260906/wave2687-email101-retry/ROOT_ADMISSION.json",
+    "rootAdmissionSha256": "F26CA4CF961353343270620CD34F5F8A18017CCBFE0CEEE0CC1973C0F458440D",
+    "scope": "Focused Linux email/Paperless execution and actual compiled product canary only",
+    "fullCiAccepted": false,
+    "goldAccepted": false
+  }
 }
