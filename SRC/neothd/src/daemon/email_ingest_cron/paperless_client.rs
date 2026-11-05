@@ -92,20 +92,33 @@ impl PaperlessClient {
 
     pub(super) async fn authenticated_principal(&self) -> Result<u64> {
         let response = self
-            .request(reqwest::Method::GET, self.documents.join("../ui_settings/")?)
+            .request(
+                reqwest::Method::GET,
+                self.documents.join("../ui_settings/")?,
+            )
             .send()
             .await
             .context("Paperless principal lookup")?;
         ensure!(
             response.status() == reqwest::StatusCode::OK
-                && response.headers().get("X-Api-Version").and_then(|v| v.to_str().ok()) == Some("10")
-                && response.headers().get("X-Version").and_then(|v| v.to_str().ok()) == Some("3.2.1"),
+                && response
+                    .headers()
+                    .get("X-Api-Version")
+                    .and_then(|v| v.to_str().ok())
+                    == Some("10")
+                && response
+                    .headers()
+                    .get("X-Version")
+                    .and_then(|v| v.to_str().ok())
+                    == Some("3.2.1"),
             "Paperless principal lookup does not match the reviewed v3.2.1/API-v10 contract"
         );
         let bytes = bounded_response(response, MAX_PRINCIPAL_JSON_BYTES).await?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("invalid Paperless principal envelope"))?;
-        let user_id = value.get("user").and_then(|user| user.get("id"))
+        let user_id = value
+            .get("user")
+            .and_then(|user| user.get("id"))
             .and_then(serde_json::Value::as_u64)
             .filter(|id| *id > 0)
             .context("Paperless principal identity is unavailable")?;
@@ -313,7 +326,13 @@ mod tests {
         let server = MockServer::start().await;
         let endpoint = format!("{}/prefix/api/documents/post_document/", server.uri());
         let descriptor = PaperlessPostIntentDescriptor::from_mail(
-            "mail.example", 993, "fixture", "mail", "original bytes", "invoice", &endpoint,
+            "mail.example",
+            993,
+            "fixture",
+            "mail",
+            "original bytes",
+            "invoice",
+            &endpoint,
         );
         for token in ["original-token", "rotated-token"] {
             Mock::given(method("GET")).and(path("/prefix/api/ui_settings/"))
@@ -322,8 +341,14 @@ mod tests {
                 .respond_with(envelope(json!({"user":{"id":17,"username":"private-name"},"auth_token":"private-response-secret"})))
                 .expect(1).mount(&server).await;
             let client = PaperlessClient::new(&endpoint, token).unwrap();
-            let bound = client.bind_authenticated_principal(descriptor.clone()).await.unwrap();
-            assert_eq!(bound, descriptor.clone().with_authenticated_principal(17).unwrap());
+            let bound = client
+                .bind_authenticated_principal(descriptor.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                bound,
+                descriptor.clone().with_authenticated_principal(17).unwrap()
+            );
             let payload = String::from_utf8(bound.payload().unwrap()).unwrap();
             for secret in [token, "private-name", "private-response-secret"] {
                 assert!(!payload.contains(secret));
@@ -336,8 +361,10 @@ mod tests {
     async fn principal_lookup_rejects_unproven_identity_without_document_requests() {
         let server = MockServer::start().await;
         let client = PaperlessClient::new(
-            &format!("{}/api/documents/post_document/", server.uri()), "fixture-token",
-        ).unwrap();
+            &format!("{}/api/documents/post_document/", server.uri()),
+            "fixture-token",
+        )
+        .unwrap();
         let responses = [
             ResponseTemplate::new(403).set_body_string("private-denial"),
             ResponseTemplate::new(302).insert_header("Location", "/elsewhere"),
@@ -348,24 +375,44 @@ mod tests {
             envelope(json!({"user":null})),
             envelope(json!({"id":17})),
             envelope(json!({"user":{"id":17},"padding":"x".repeat(MAX_PRINCIPAL_JSON_BYTES)})),
-            ResponseTemplate::new(200).insert_header("X-Version", "3.2.1")
-                .insert_header("X-Api-Version", "10").set_body_string("{private-invalid-json"),
+            ResponseTemplate::new(200)
+                .insert_header("X-Version", "3.2.1")
+                .insert_header("X-Api-Version", "10")
+                .set_body_string("{private-invalid-json"),
         ];
         for response in responses {
             server.reset().await;
-            Mock::given(method("GET")).and(path("/api/ui_settings/"))
-                .respond_with(response).expect(1).mount(&server).await;
-            let error = client.bind_authenticated_principal(descriptor(&server)).await.unwrap_err();
+            Mock::given(method("GET"))
+                .and(path("/api/ui_settings/"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let error = client
+                .bind_authenticated_principal(descriptor(&server))
+                .await
+                .unwrap_err();
             assert!(!format!("{error:#}").contains("private-"));
             assert_eq!(server.received_requests().await.unwrap().len(), 1);
         }
         server.reset().await;
-        Mock::given(method("GET")).and(path("/api/ui_settings/"))
+        Mock::given(method("GET"))
+            .and(path("/api/ui_settings/"))
             .respond_with(envelope(json!({"user":{"id":29}})))
-            .expect(1).mount(&server).await;
-        let bound = descriptor(&server).with_authenticated_principal(17).unwrap();
-        let error = client.bind_authenticated_principal(bound).await.unwrap_err();
-        assert_eq!(error.to_string(), "Paperless authenticated principal differs from intent");
+            .expect(1)
+            .mount(&server)
+            .await;
+        let bound = descriptor(&server)
+            .with_authenticated_principal(17)
+            .unwrap();
+        let error = client
+            .bind_authenticated_principal(bound)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Paperless authenticated principal differs from intent"
+        );
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 

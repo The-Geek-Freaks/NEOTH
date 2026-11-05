@@ -273,23 +273,35 @@ mod paperless_client;
 async fn bind_paperless_delivery_context(
     destination: &mut PaperlessDestination<'_>,
     context: crate::email::seen_store::scoped::DeliveryContext,
-) -> (crate::email::seen_store::scoped::DeliveryContext, Option<u64>) {
+) -> (
+    crate::email::seen_store::scoped::DeliveryContext,
+    Option<u64>,
+) {
     let PaperlessDestination::Ready { url, token } = destination else {
         return (context, None);
     };
     let verified: Result<_> = async {
         let (endpoint, _) = paperless_request_binding(url, "")?;
         let principal = paperless_client::PaperlessClient::new(&endpoint, token)?
-            .authenticated_principal().await?;
-        Ok((context.clone().with_authenticated_paperless_principal(&endpoint, principal)?, Some(principal)))
-    }.await;
+            .authenticated_principal()
+            .await?;
+        Ok((
+            context
+                .clone()
+                .with_authenticated_paperless_principal(&endpoint, principal)?,
+            Some(principal),
+        ))
+    }
+    .await;
     match verified {
         Ok(binding) => binding,
         Err(_) => {
             // Keep triage/quarantine and the independent vault path available.
             // This destination cannot record delivery while its principal is unknown.
             *destination = PaperlessDestination::Unavailable;
-            warn!("email_ingest_cron: Paperless principal unavailable; Paperless delivery remains pending");
+            warn!(
+                "email_ingest_cron: Paperless principal unavailable; Paperless delivery remains pending"
+            );
             (context.with_unavailable_paperless_principal(), None)
         }
     }
@@ -760,7 +772,8 @@ pub async fn run_email_ingest_tick(
                         &endpoint,
                     )
                     .with_authenticated_principal(
-                        paperless_principal.context("Paperless delivery principal is unavailable")?,
+                        paperless_principal
+                            .context("Paperless delivery principal is unavailable")?,
                     )?;
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(30),
@@ -1218,17 +1231,25 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_principal_is_bound_before_cron_seen_state() {
-        use crate::email::seen_store::scoped::{self, Completion, DeliveryContext, Identity, Purpose, SeenState};
+        use crate::email::seen_store::scoped::{
+            self, Completion, DeliveryContext, Identity, Purpose, SeenState,
+        };
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         for (token, user_id) in [("alice-token", 17), ("bob-token", 29)] {
-            Mock::given(method("GET")).and(path("/api/ui_settings/"))
+            Mock::given(method("GET"))
+                .and(path("/api/ui_settings/"))
                 .and(header("authorization", format!("Token {token}")))
-                .respond_with(ResponseTemplate::new(200)
-                    .insert_header("X-Version", "3.2.1").insert_header("X-Api-Version", "10")
-                    .set_body_json(serde_json::json!({"user":{"id":user_id}})))
-                .expect(1).mount(&server).await;
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("X-Version", "3.2.1")
+                        .insert_header("X-Api-Version", "10")
+                        .set_body_json(serde_json::json!({"user":{"id":user_id}})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
         }
         let endpoint = server.uri();
         let base = || DeliveryContext::new(None, "NEOTH", Some(&endpoint), true, true).unwrap();
@@ -1243,25 +1264,60 @@ mod tests {
         let mut bob = PaperlessDestination::from_parts(Some(&endpoint), Some("bob-token"));
         let (bob_context, bob_id) = bind_paperless_delivery_context(&mut bob, base()).await;
         assert_eq!(bob_id, Some(29));
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&bob_context)).unwrap(), SeenState::ContextConflict);
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&alice_context)).unwrap(), SeenState::Seen);
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&bob_context)).unwrap(),
+            SeenState::ContextConflict
+        );
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&alice_context)).unwrap(),
+            SeenState::Seen
+        );
         let mut disabled = PaperlessDestination::from_parts(None, None);
-        assert!(bind_paperless_delivery_context(&mut disabled, base()).await.1.is_none());
+        assert!(
+            bind_paperless_delivery_context(&mut disabled, base())
+                .await
+                .1
+                .is_none()
+        );
         assert_eq!(server.received_requests().await.unwrap().len(), 2);
-        Mock::given(method("GET")).and(path("/api/ui_settings/"))
+        Mock::given(method("GET"))
+            .and(path("/api/ui_settings/"))
             .and(header("authorization", "Token denied-token"))
-            .respond_with(ResponseTemplate::new(403)).expect(1).mount(&server).await;
+            .respond_with(ResponseTemplate::new(403))
+            .expect(1)
+            .mount(&server)
+            .await;
         let mut denied = PaperlessDestination::from_parts(Some(&endpoint), Some("denied-token"));
         let (unavailable, principal) = bind_paperless_delivery_context(&mut denied, base()).await;
         assert!(principal.is_none());
         assert!(matches!(denied, PaperlessDestination::Unavailable));
-        assert_eq!(scoped::state(&conn, &identity, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::ContextConflict);
+        assert_eq!(
+            scoped::state(&conn, &identity, Purpose::Ingest, Some(&unavailable)).unwrap(),
+            SeenState::ContextConflict
+        );
         let fresh = vault_identity_email("2", Some("<quarantine@example.com>"));
         let fresh = Identity::inbox("imap.example", 993, "fixture", &fresh, 1).unwrap();
-        assert!(!denied.record_delivery(&conn, &fresh, &unavailable, 101, (true, true), Some(PaperlessReconcileOutcome::Completed)).unwrap());
-        assert_eq!(scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::Unseen);
+        assert!(
+            !denied
+                .record_delivery(
+                    &conn,
+                    &fresh,
+                    &unavailable,
+                    101,
+                    (true, true),
+                    Some(PaperlessReconcileOutcome::Completed)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(),
+            SeenState::Unseen
+        );
         scoped::mark(&conn, &fresh, Completion::Quarantine, 102).unwrap();
-        assert_eq!(scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(), SeenState::Seen);
+        assert_eq!(
+            scoped::state(&conn, &fresh, Purpose::Ingest, Some(&unavailable)).unwrap(),
+            SeenState::Seen
+        );
         assert_eq!(server.received_requests().await.unwrap().len(), 3);
     }
 

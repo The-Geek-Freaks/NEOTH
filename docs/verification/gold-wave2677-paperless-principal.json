@@ -15,27 +15,27 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/wal/paperless_post_receipts.rs",
-      "sha256": "7F3974E210EBB56C3119CCFA71AA6C47BC0A19F2445C5B79D02722C0194314DF"
+      "sha256": "5544867AA0E2F8DA8C6BF90801A32928402060B66AD1E15D90F651B35A1355FC"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
-      "sha256": "00DA90B51952E3720734A2F641EF44FC00835B21C7032DC51CAD88032FEA6FC0"
+      "sha256": "D73CEB29732A60C387E566DC4408045559A0F4B8A5D5E500BE977CE38010DA92"
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "sha256": "9DF2321BD609F2022F64794A0FFB107A4E090B2C8C27218CEE80CD80A4FA7AAA"
+      "sha256": "47F52F710B6EFB26068A80AC553F35547525B59CBFF14989918B68E0207A37B1"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sha256": "C5EFD9804BFEA3B8547DD2074FF2B049AADAE710D05330C4C001B08AACAD0CB9"
+      "sha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
     },
     {
       "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
-      "sha256": "528EFD3D5841F4312F3945EC5EC23DEDD9786E0303018BE8BF02ABCC004716AD"
+      "sha256": "C95E7A00C0D65D502381AED873047D17596BF666D2EA70287E86D063A0C7C94B"
     },
     {
       "path": "SRC/neothd/src/email/seen_store/scoped.rs",
-      "sha256": "EA8840BFEC5C90E1365BABEB40743578D8309DB5DE234588ABEE6CFD5AC55E2E"
+      "sha256": "C0FBE0A1200E3555EF506F4208CB4832937B14433953D6F3F992DAA4FCC87A92"
     }
   ],
   "upstream": {
@@ -90,5 +90,47 @@
     "UI-settings permission is required; unavailable/malformed/unsupported account proof keeps Paperless delivery pending.",
     "No automatic legacy-effect adoption, approved rendition changes or cross-attempt vault identity. Whole A04 remains open.",
     "No live service, new current-producer native or release acceptance."
-  ]
+  ],
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42013916049,
+    "artifact": 13409040118,
+    "producer": "667b973b58995ffef0e80c13aa1d9078473d7e9b",
+    "zipSha256": "C98CAFFDEE126A6A0C05B0E510A290D909F3C358C4F0BAA85DE9E0EB54F1CE35",
+    "exactImages": [
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+        "post": "08eb5a3ac4c8d4160f3c4f9e8711e7f140a71b2b",
+        "pre": "aabc7b4ac5be5c3c669e2d7228bb17b5857d6766"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",
+        "post": "381d23e871e5700fe6bd1d672f4647d6111f3f40",
+        "pre": "3b09dfb8271f7d9e3a0b2bff58ea937fff6be216"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped.rs",
+        "post": "eafbf5adaa2dbeedf86daa9407cdff95f967bb53",
+        "pre": "1b19111e0ef975ab56555e979eec4caa7cb6ad4e"
+      },
+      {
+        "path": "SRC/neothd/src/email/seen_store/scoped/tests.rs",
+        "post": "6d2e8dfb8cbd09a99a86affeb738ca0ea960e541",
+        "pre": "11063b63cfd3cbabc2d5bd60e52385932b73f092"
+      },
+      {
+        "path": "SRC/neothd/src/wal/paperless_post_receipts.rs",
+        "post": "dc73c0ff0dc81386b9fd4d4c8e85fc785b722a10",
+        "pre": "415c20d5aae48f91518d2e52af79f7903390b1c9"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "post": "3e9e161224e0806102aa77a1900670f7847b1e96",
+        "pre": "d80b8871b6220c26e4ceb21d149351396fbeb814"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
+  }
 }
