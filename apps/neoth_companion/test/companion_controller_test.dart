@@ -385,6 +385,7 @@ class _MemoryStore implements CompanionStore {
   _MemoryStore({this.enrollment});
   EnrollmentAccepted? enrollment;
   Future<EnrollmentAccepted?>? loadFuture;
+  int enrollmentLoads = 0;
   Future<Uint8List>? secretFuture;
   int secretLoads = 0;
   Uint8List secret = Uint8List.fromList(List<int>.filled(32, 9));
@@ -393,6 +394,7 @@ class _MemoryStore implements CompanionStore {
   Future<void> clearEnrollment() async => enrollment = null;
   @override
   Future<EnrollmentAccepted?> loadEnrollment() async {
+    enrollmentLoads++;
     if (loadFuture != null) return loadFuture!;
     return enrollment;
   }
@@ -539,9 +541,12 @@ class _ConversationStore extends _MemoryStore implements CompanionConversationSt
   ConversationCheckpoint? checkpoint;
   bool failSave = false;
   Future<void>? clearGate;
+  Future<ConversationCheckpoint?>? checkpointLoad;
   @override
-  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async =>
-      checkpoint?.deviceId == enrollment.deviceId && checkpoint?.revision == enrollment.revision ? checkpoint : null;
+  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async {
+    if (checkpointLoad != null) return checkpointLoad!;
+    return checkpoint?.deviceId == enrollment.deviceId && checkpoint?.revision == enrollment.revision ? checkpoint : null;
+  }
   @override
   Future<void> saveConversationCheckpoint(ConversationCheckpoint value) async {
     if (failSave) throw StateError('save failure');
@@ -596,6 +601,161 @@ Future<CompanionController> _conversationController(_ConversationStore store, _C
 }
 
 void conversationRegressionCases() {
+  test('JM05 completed enrollment initialization cannot reopen a stale load before pairing', () async {
+    final store = _MemoryStore();
+    final paired = Completer<NativeBridgeResult>();
+    final bridge = _FakeBridge(pairFuture: paired.future);
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    await controller.restore();
+    expect(store.enrollmentLoads, 1);
+    final obsolete = Completer<EnrollmentAccepted?>();
+    store.loadFuture = obsolete.future;
+    final again = controller.restore();
+    final pairing = controller.pair(_invite, 'Pixel');
+    await again;
+    await Future<void>.delayed(Duration.zero);
+    expect(store.enrollmentLoads, 1);
+    expect(bridge.pairCalls, 1);
+    obsolete.complete(_chatAccepted());
+    paired.complete(_acceptedResult());
+    await pairing;
+    expect(controller.grantedScope, _accepted().grantedScope);
+    expect(controller.state, CompanionViewState.offline);
+    controller.dispose();
+  });
+
+  test('JM05 enrollment and pending conversation publish together after restoration', () async {
+    final loaded = Completer<ConversationCheckpoint?>();
+    final store = _ConversationStore()..checkpointLoad = loaded.future;
+    final bridge = _ConversationBridge();
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    final restoring = controller.restore();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.canSendChat, isFalse);
+    expect(controller.grantedScope, isNull);
+    await controller.sendChat('must wait for saved pending send');
+    await controller.refresh();
+    expect(bridge.chatCalls, 0);
+    expect(bridge.commands, isEmpty);
+    expect(bridge.reconnectCalls, 0);
+    loaded.complete(ConversationCheckpoint(deviceId: _deviceId, revision: 2,
+      pendingRequestId: '00000000-0000-4000-8000-000000000020'));
+    await restoring;
+    expect(controller.canSendChat, isTrue);
+    expect(controller.conversationNeedsRecovery, isTrue);
+    await controller.sendChat('must still recover first');
+    expect(bridge.commands, isEmpty);
+    expect(controller.chatLocalMessage, contains('Recover'));
+    controller.dispose();
+  });
+
+  test('JM05 pairing waits for retained enrollment and never replaces it during startup', () async {
+    final retained = _accepted();
+    final loaded = Completer<EnrollmentAccepted?>();
+    final store = _MemoryStore(enrollment: retained)..loadFuture = loaded.future;
+    final bridge = _FakeBridge(pairResult: _chatPairedResult());
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    final restoring = controller.restore();
+    final pairing = controller.pair(_chatInvite, 'Pixel');
+    expect(store.enrollmentLoads, 1);
+    expect(bridge.pairCalls, 0);
+    loaded.complete(retained);
+    await restoring;
+    await pairing;
+    expect(bridge.pairCalls, 0);
+    expect(identical(store.enrollment, retained), isTrue);
+    expect(controller.grantedScope, retained.grantedScope);
+    expect(controller.state, CompanionViewState.failed);
+    controller.dispose();
+  });
+
+  test('JM05 concurrent startup and pairing share one load and one native operation', () async {
+    final loaded = Completer<EnrollmentAccepted?>();
+    final paired = Completer<NativeBridgeResult>();
+    final store = _MemoryStore()..loadFuture = loaded.future;
+    final bridge = _FakeBridge(pairFuture: paired.future);
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    final restoring = controller.restore();
+    final first = controller.pair(_invite, 'first');
+    final second = controller.pair(_invite, 'second');
+    expect(store.enrollmentLoads, 1);
+    expect(bridge.pairCalls, 0);
+    loaded.complete(null);
+    await restoring;
+    await Future<void>.delayed(Duration.zero);
+    expect(bridge.pairCalls, 1);
+    await controller.restore();
+    expect(store.enrollmentLoads, 1, reason: 'restore cannot replace an active pairing');
+    paired.complete(_acceptedResult());
+    await first;
+    await second;
+    expect(controller.state, CompanionViewState.offline);
+    expect(store.enrollment?.deviceId, _deviceId);
+    expect(bridge.pairCalls, 1);
+    controller.dispose();
+  });
+
+  test('JM05 failed enrollment read blocks pairing and a later explicit attempt can retry', () async {
+    final loaded = Completer<EnrollmentAccepted?>();
+    final store = _MemoryStore()..loadFuture = loaded.future;
+    final bridge = _FakeBridge(pairResult: _acceptedResult());
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge();
+    final first = controller.pair(_invite, 'Pixel');
+    loaded.completeError(StateError('protected storage unavailable'));
+    await first;
+    expect(bridge.pairCalls, 0);
+    expect(store.enrollment, isNull);
+    expect(controller.state, CompanionViewState.failed);
+    store.loadFuture = null;
+    await controller.pair(_invite, 'Pixel');
+    expect(store.enrollmentLoads, 2);
+    expect(bridge.pairCalls, 1);
+    expect(controller.state, CompanionViewState.offline);
+    controller.dispose();
+  });
+
+  test('JM05 forgotten startup load cannot authorize pairing or clear a newer restoration', () async {
+    for (final oldFinishesFirst in [true, false]) {
+      final oldLoad = Completer<EnrollmentAccepted?>();
+      final newLoad = Completer<EnrollmentAccepted?>();
+      final store = _MemoryStore()..loadFuture = oldLoad.future;
+      final bridge = _FakeBridge(pairResult: _acceptedResult());
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+      await controller.prepareBridge();
+      final oldRestore = controller.restore();
+      final oldPair = controller.pair(_invite, 'obsolete');
+      await controller.forgetLocalEnrollment();
+      store.loadFuture = newLoad.future;
+      final newPair = controller.pair(_invite, 'current');
+      expect(store.enrollmentLoads, 2);
+      if (oldFinishesFirst) {
+        oldLoad.complete(_chatAccepted());
+        await oldRestore;
+        await oldPair;
+        expect(bridge.pairCalls, 0);
+      }
+      final joinedRestore = controller.restore();
+      expect(store.enrollmentLoads, 2, reason: 'stale cleanup cannot remove the new flight');
+      newLoad.complete(null);
+      await joinedRestore;
+      await newPair;
+      if (!oldFinishesFirst) {
+        oldLoad.complete(_chatAccepted());
+        await oldRestore;
+        await oldPair;
+      }
+      expect(bridge.pairCalls, 1);
+      expect(controller.grantedScope, _accepted().grantedScope);
+      expect(controller.state, CompanionViewState.offline);
+      controller.dispose();
+    }
+  });
+
   test('JM05 bridge preparation shares one seed read and cannot allocate after disposal', () async {
     final loaded = Completer<Uint8List>();
     final seed = Uint8List.fromList(List.filled(32, 7));

@@ -22,6 +22,9 @@ class CompanionController extends ChangeNotifier {
   final NativeBridgeFactory _bridgeFactory;
   NativeBridge? _bridge;
   Future<void>? _bridgePreparation;
+  Future<bool>? _enrollmentRestoration;
+  int? _enrollmentRestorationEpoch;
+  int? _restoredEnrollmentEpoch;
   EnrollmentAccepted? _enrollment;
   CompanionStatus? status;
   CompanionCapabilityInventory? capabilityInventory;
@@ -67,27 +70,55 @@ class CompanionController extends ChangeNotifier {
 
   Future<void> _restoreConversation(EnrollmentAccepted enrollment) async {
     final epoch = _authorityEpoch;
-    if (_store case final CompanionConversationStore store) {
-      final value = await store.loadConversationCheckpoint(enrollment);
-      if (_ownsAuthority(epoch) && _enrollment?.deviceId == enrollment.deviceId && _enrollment?.revision == enrollment.revision) {
-        _conversation = value ?? ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision);
-        if (conversationNeedsRecovery) chatLocalMessage = 'A previous send has an unconfirmed outcome. Recover saved history before continuing.';
-      }
+    final value = await _loadConversation(enrollment);
+    if (_ownsAuthority(epoch) && _enrollment?.deviceId == enrollment.deviceId && _enrollment?.revision == enrollment.revision) {
+      _conversation = value;
+      if (conversationNeedsRecovery) chatLocalMessage = 'A previous send has an unconfirmed outcome. Recover saved history before continuing.';
     }
   }
 
-  Future<void> restore() async {
-    if (_disposed || _forgetting) return;
-    final epoch = _authorityEpoch;
-    final enrollment = await _store.loadEnrollment();
-    if (!_ownsAuthority(epoch)) return;
-    _enrollment = enrollment;
-    if (_enrollment == null) {
-      _set(CompanionViewState.unpaired);
-      return;
+  Future<ConversationCheckpoint?> _loadConversation(EnrollmentAccepted enrollment) async {
+    if (_store case final CompanionConversationStore store) {
+      final value = await store.loadConversationCheckpoint(enrollment);
+      return value ?? ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision);
     }
-    await _restoreConversation(_enrollment!);
-    if (_ownsAuthority(epoch)) _set(CompanionViewState.offline);
+    return null;
+  }
+
+  Future<void> restore() async {
+    if (_disposed || _forgetting || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    await _restoreEnrollmentForEpoch(_authorityEpoch);
+  }
+
+  Future<bool> _restoreEnrollmentForEpoch(int epoch) {
+    if (!_ownsAuthority(epoch)) return Future<bool>.value(false);
+    if (_restoredEnrollmentEpoch == epoch) return Future<bool>.value(true);
+    if (_enrollmentRestorationEpoch == epoch && _enrollmentRestoration != null) return _enrollmentRestoration!;
+    late final Future<bool> operation;
+    operation = _restoreEnrollment(epoch).whenComplete(() {
+      if (_enrollmentRestorationEpoch == epoch && identical(_enrollmentRestoration, operation)) {
+        _enrollmentRestoration = null;
+        _enrollmentRestorationEpoch = null;
+      }
+    });
+    _enrollmentRestorationEpoch = epoch;
+    _enrollmentRestoration = operation;
+    return operation;
+  }
+
+  Future<bool> _restoreEnrollment(int epoch) async {
+    final enrollment = await _store.loadEnrollment();
+    if (!_ownsAuthority(epoch)) return false;
+    final conversation = enrollment == null ? null : await _loadConversation(enrollment);
+    if (!_ownsAuthority(epoch)) return false;
+    // Publish the enrollment and its pending-send checkpoint together. Until
+    // then, another operation must not see a partially restored identity.
+    _enrollment = enrollment;
+    _conversation = conversation;
+    if (conversationNeedsRecovery) chatLocalMessage = 'A previous send has an unconfirmed outcome. Recover saved history before continuing.';
+    _restoredEnrollmentEpoch = epoch;
+    _set(enrollment == null ? CompanionViewState.unpaired : CompanionViewState.offline);
+    return true;
   }
 
   Future<void> pair(String rawInvite, String label) async {
@@ -99,6 +130,20 @@ class CompanionController extends ChangeNotifier {
       return;
     }
     final epoch = _authorityEpoch;
+    // The startup screen may already be interactive while protected storage
+    // is loading. Unknown enrollment must never authorize a replacement pair.
+    bool restored;
+    try {
+      restored = await _restoreEnrollmentForEpoch(epoch);
+    } on Object {
+      if (_ownsAuthority(epoch)) _set(CompanionViewState.failed);
+      return;
+    }
+    if (!restored || !_ownsAuthority(epoch) || capabilityInventoryPending || chatPending || state == CompanionViewState.pairing) return;
+    if (_enrollment != null) {
+      _set(CompanionViewState.failed);
+      return;
+    }
     _set(CompanionViewState.pairing);
     try {
       final result = await _ensureBridge().pair(rawInvite.trim(), label.trim());

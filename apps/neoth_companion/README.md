@@ -21,6 +21,13 @@ are short-lived and single-use. A status grant cannot send chat; changing the
 scope requires deliberate new pairing. An ambiguous pairing is never retried
 automatically.
 
+Pairing first waits for protected enrollment and pending-conversation storage
+to finish loading. Concurrent startup and pairing requests share that read;
+an existing enrollment cannot be replaced by tapping Pair early. A storage
+read failure blocks pairing until a later explicit attempt succeeds. Forget
+invalidates any old startup result and requires a fresh read before another
+pairing. This does not cancel a native request that was already sent.
+
 The daemon owns device grants. These commands use its same-user control path:
 
 ```text
