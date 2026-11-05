@@ -23,10 +23,10 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
 
-#[path = "profile_communication_session.rs"]
-mod communication_session;
 #[path = "profile_communication_device.rs"]
 mod communication_device;
+#[path = "profile_communication_session.rs"]
+mod communication_session;
 
 /// Opaque capability minted only by the local profile-control CLI boundary.
 pub(crate) struct LocalProfileCommunicationOperator(());
@@ -1596,9 +1596,11 @@ async fn run_communication_sub_at(
     output: &OutputFormat,
 ) -> Result<()> {
     match sub {
-        CommunicationSub::Device { device_id, revision, sub } => {
-            communication_device::run(home, &device_id, revision, sub, output).await
-        }
+        CommunicationSub::Device {
+            device_id,
+            revision,
+            sub,
+        } => communication_device::run(home, &device_id, revision, sub, output).await,
         CommunicationSub::Session { session_id, sub } => {
             communication_session::run(home, &session_id, sub, output).await
         }

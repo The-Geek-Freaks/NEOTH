@@ -16,10 +16,10 @@ use sha2::{Digest, Sha256};
 
 use crate::config::{CommunicationProfileConfig, CommunicationPromptExport};
 
-#[path = "communication_session.rs"]
-pub(crate) mod session;
 #[path = "communication_device.rs"]
 pub(crate) mod device;
+#[path = "communication_session.rs"]
+pub(crate) mod session;
 
 pub const STATE_RELATIVE_PATH: &str = "profile/communication.json";
 /// The one explicitly supported operator-global profile subject. All other
@@ -217,7 +217,8 @@ pub enum CommunicationScope {
 
 impl CommunicationScope {
     fn applies_to(&self, target: Option<&Self>) -> bool {
-        !matches!(self, Self::Session(_) | Self::Device(_)) && (matches!(self, Self::Global) || target == Some(self))
+        !matches!(self, Self::Session(_) | Self::Device(_))
+            && (matches!(self, Self::Global) || target == Some(self))
     }
 
     fn audit_code(&self) -> &'static str {
@@ -933,7 +934,10 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
             }
             validate_scope(&estimate.scope_provenance)?;
             anyhow::ensure!(
-                !matches!(&estimate.scope_provenance, CommunicationScope::Session(_) | CommunicationScope::Device(_)),
+                !matches!(
+                    &estimate.scope_provenance,
+                    CommunicationScope::Session(_) | CommunicationScope::Device(_)
+                ),
                 "session/device pins cannot become global cached estimates"
             );
             if estimate.durable_by_full_auto
@@ -1395,7 +1399,10 @@ pub(crate) fn record_evidence_batch(
             // logical order under the state lock, so clock rollback or same-
             // second writers cannot resurrect an earlier choice. event_hash is
             // the stable caller action identity, not a digest of these fields.
-            let observed_at_unix = if matches!(&input.scope, CommunicationScope::Session(_) | CommunicationScope::Device(_)) {
+            let observed_at_unix = if matches!(
+                &input.scope,
+                CommunicationScope::Session(_) | CommunicationScope::Device(_)
+            ) {
                 match evidence
                     .iter()
                     .filter(|item| item.scope == input.scope)

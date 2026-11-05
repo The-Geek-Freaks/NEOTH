@@ -8,12 +8,17 @@ pub(crate) fn validate_control_id(id: &str) -> Result<()> {
 
 /// Exact pairing epoch; reconnect preserves it and revocation/re-pair changes it.
 pub(crate) fn scope_id(id: uuid::Uuid, revision: u64) -> Result<String> {
-    anyhow::ensure!(!id.is_nil() && revision > 0, "invalid device presentation epoch");
+    anyhow::ensure!(
+        !id.is_nil() && revision > 0,
+        "invalid device presentation epoch"
+    );
     Ok(format!("{id}@{revision}"))
 }
 
 pub(super) fn validate_id(id: &str) -> Result<()> {
-    let (device, revision) = id.split_once('@').context("invalid device presentation epoch")?;
+    let (device, revision) = id
+        .split_once('@')
+        .context("invalid device presentation epoch")?;
     let canonical = scope_id(uuid::Uuid::parse_str(device)?, revision.parse()?)?;
     anyhow::ensure!(canonical == id, "noncanonical device presentation epoch");
     Ok(())

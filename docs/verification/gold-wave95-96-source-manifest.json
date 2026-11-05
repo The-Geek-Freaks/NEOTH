@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T21:09:53.1568448Z",
-  "validationStatus": "W2710 source prepared; exact29 hosted and generated CLI reference pending; no local executable validation",
+  "capturedUtc": "2026-11-05T21:12:39.5357999Z",
+  "validationStatus": "W2710 hosted formatting imported; exact29 and generated reference pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4983,8 +4983,8 @@
     },
     {
       "path": "docs/verification/gold-wave2710-device-presentation.json",
-      "bytes": 9028,
-      "sha256": "B2A95EF3B2488E612F9C09DB4BD5F59D7349406E9984AAABF7E59884F4A14B48"
+      "bytes": 9333,
+      "sha256": "75D1B282DE20F514452B8EA4F368170C00C7163DD3CD9F2C008AFFA2B8988542"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6248,8 +6248,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2821514,
-      "sha256": "594FF089E3C15D8B7846395A0E4843189AC8BD3F647C278CF2AC9A1ECFE6E25B"
+      "bytes": 2821818,
+      "sha256": "FA7B33C00848A0F664B4D76366F350DCF392E1B744587941E1AB779A2078DB1E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7218,8 +7218,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1277391,
-      "sha256": "9B33B3FA4254D05DC3A4655B4145C098BC00CA9B7CB8AFF657838B4429FB4AB9"
+      "bytes": 1277440,
+      "sha256": "04344E36554F17509BD9975C9F0B126CDEFC79B9DBE18733082FE036CB6F4322"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -7543,13 +7543,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/profile_communication_device_tests.rs",
-      "bytes": 3797,
-      "sha256": "D35A200A41C75BA6E5A16B19104410D78457349240F8B6AF3E6050E5B96AF654"
+      "bytes": 4465,
+      "sha256": "5EB4BC1BE6D7D62A40250BEF6E5C027538EB4D7C4B7454B3E4C54D66AA4CD001"
     },
     {
       "path": "SRC/neothd/src/cli/profile_communication_device.rs",
-      "bytes": 7959,
-      "sha256": "744954A1BDE1067A3C8CF42634B7DC8286F3BED0B081221061F05E54106A7C83"
+      "bytes": 8055,
+      "sha256": "E8DB743BC6C101678EF2B2B30A75538E019057F455CBD6502140FAF2411982B7"
     },
     {
       "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
@@ -7563,8 +7563,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
-      "bytes": 234771,
-      "sha256": "BB90D09FD9150FBFC6A12E1427874698DB6E9B8C1B91D900C563D592BA0535A9"
+      "bytes": 234793,
+      "sha256": "D537758CBAD240B3EC127A4777EBBCA911A2AFF48E65254C4260BC1C6FC6A006"
     },
     {
       "path": "SRC/neothd/src/cli/providers.rs",
@@ -8313,8 +8313,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_authority.rs",
-      "bytes": 87928,
-      "sha256": "AEAAB9DE7932FE9E51EF75F494E202C986EDF80A7ADF0506295A08AB650B7DBB"
+      "bytes": 88111,
+      "sha256": "C1C5F32703D5890F55823DC732B021F57CCD1DAE325B7E769597385BE82DA8CA"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
@@ -9603,13 +9603,13 @@
     },
     {
       "path": "SRC/neothd/src/profile/communication_device_tests.rs",
-      "bytes": 7128,
-      "sha256": "AD212493025310B1DDD0428B10A6BD15EC546C59CD46F2E04FE6906B1A884F28"
+      "bytes": 8951,
+      "sha256": "79033D5818A2E8DEC35D0CC02AD89D9F7790FE8EFF68C5F0F199A4B715765336"
     },
     {
       "path": "SRC/neothd/src/profile/communication_device.rs",
-      "bytes": 5835,
-      "sha256": "685D451A0E736B30C8FBAA88F05F4D6B3C064D65523BBD6579710C46B4EF62C3"
+      "bytes": 5875,
+      "sha256": "EFC13845E01FA2FA89D0DADD574D9D25C07C078DAD824D0910D4EDF0D6ED00E6"
     },
     {
       "path": "SRC/neothd/src/profile/communication_session_tests.rs",
@@ -9623,8 +9623,8 @@
     },
     {
       "path": "SRC/neothd/src/profile/communication.rs",
-      "bytes": 120195,
-      "sha256": "739326848A2383AFAA8229A7A0D7DF3E5A2C71A91E4E7852C56A8398B7567A3E"
+      "bytes": 120311,
+      "sha256": "6D1AB519E3D0E5AF39709A63CBD79FB6ABDFB25A44507115B2D249A0094F779B"
     },
     {
       "path": "SRC/neothd/src/profile/extract.rs",

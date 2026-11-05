@@ -1307,7 +1307,10 @@ fn resolve_conversation(
     Ok(Some(AdmittedCompanionConversation {
         conversation_id: Some(binding.conversation_id),
         session_id: Some(binding.private_session_id.to_string()),
-        device_presentation_scope: Some(crate::profile::communication::device::scope_id(binding.device_id, binding.revision)?),
+        device_presentation_scope: Some(crate::profile::communication::device::scope_id(
+            binding.device_id,
+            binding.revision,
+        )?),
         incognito: false,
     }))
 }
@@ -1838,8 +1841,13 @@ mod conversation_tests {
         let admitted = lease.admitted_conversation().unwrap();
         let public = admitted.conversation_id().unwrap();
         let private = admitted.session_id().unwrap().to_owned();
-        let device_epoch = crate::profile::communication::device::scope_id(first.device_id.0, first.revision).unwrap();
-        assert_eq!(admitted.device_presentation_scope(), Some(device_epoch.as_str()));
+        let device_epoch =
+            crate::profile::communication::device::scope_id(first.device_id.0, first.revision)
+                .unwrap();
+        assert_eq!(
+            admitted.device_presentation_scope(),
+            Some(device_epoch.as_str())
+        );
         assert!(!admitted.is_incognito());
         assert_ne!(public.to_string(), private);
         assert!(
@@ -1866,7 +1874,13 @@ mod conversation_tests {
             lease.admitted_conversation().unwrap().session_id(),
             Some(private.as_str())
         );
-        assert_eq!(lease.admitted_conversation().unwrap().device_presentation_scope(), Some(device_epoch.as_str()));
+        assert_eq!(
+            lease
+                .admitted_conversation()
+                .unwrap()
+                .device_presentation_scope(),
+            Some(device_epoch.as_str())
+        );
         assert_eq!(
             lease.admitted_conversation().unwrap().conversation_id(),
             Some(public)

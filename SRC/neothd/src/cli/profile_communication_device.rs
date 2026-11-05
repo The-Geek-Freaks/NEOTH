@@ -70,10 +70,15 @@ fn active_device_scope(
     devices: &[crate::daemon::companion_runtime::CompanionV3DeviceView],
     requested: uuid::Uuid,
 ) -> Result<String> {
-    let mut matching = devices.iter().filter(|device| device.device_id.0 == requested);
+    let mut matching = devices
+        .iter()
+        .filter(|device| device.device_id.0 == requested);
     let device = matching.next().context("companion device not found")?;
     anyhow::ensure!(matching.next().is_none(), "ambiguous companion device");
-    anyhow::ensure!(device.grant_state == "active", "companion device is not active");
+    anyhow::ensure!(
+        device.grant_state == "active",
+        "companion device is not active"
+    );
     communication::device::scope_id(requested, device.revision)
 }
 pub(super) async fn run(
@@ -84,9 +89,15 @@ pub(super) async fn run(
     output: &OutputFormat,
 ) -> Result<()> {
     let requested = uuid::Uuid::parse_str(device_id).context("invalid companion device id")?;
-    anyhow::ensure!(!requested.is_nil() && requested.to_string() == device_id, "noncanonical companion device id");
+    anyhow::ensure!(
+        !requested.is_nil() && requested.to_string() == device_id,
+        "noncanonical companion device id"
+    );
     let epoch = if let Some(revision) = revision {
-        anyhow::ensure!(!matches!(&sub, CommunicationSessionSub::Set { .. }), "an explicit revision permits only show or reset");
+        anyhow::ensure!(
+            !matches!(&sub, CommunicationSessionSub::Set { .. }),
+            "an explicit revision permits only show or reset"
+        );
         communication::device::scope_id(requested, revision)?
     } else {
         let devices = crate::daemon::audit_rpc::companion_v3_list_devices(home)

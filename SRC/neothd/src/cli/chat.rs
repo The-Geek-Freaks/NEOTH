@@ -10175,7 +10175,11 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         output,
     )
     .await?;
-    input.admitted_device_scope = if incognito { None } else { admitted_device_scope };
+    input.admitted_device_scope = if incognito {
+        None
+    } else {
+        admitted_device_scope
+    };
     // The daemon runtime passes this only from the session sealed into its
     // admitted GUI turn. Bind it before banner and WAL/transcript preparation;
     // incognito retains its generated private identity and no history join.
@@ -27177,7 +27181,8 @@ template = "[REDACTED]"
                 "hello".into(),
                 home.clone(),
                 PromptBuildContext {
-                    admitted_device_scope: (session_id == "retained-session").then_some(device_epoch.as_str()),
+                    admitted_device_scope: (session_id == "retained-session")
+                        .then_some(device_epoch.as_str()),
                     args: &args,
                     session_id,
                     prompt_bundle_hash: &"0".repeat(64),
