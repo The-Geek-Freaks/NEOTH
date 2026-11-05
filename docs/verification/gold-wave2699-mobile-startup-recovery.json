@@ -25,7 +25,7 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "sha256": "C976693A83CA71BD01571E0D4EA48A72657CA98B8D71D5DAADB96432869DB667"
+      "sha256": "C21A1D95344204618F659ABCED5A02D4D4D53445B480770BC62B32A177F45942"
     },
     {
       "path": "apps/neoth_companion/README.md",
@@ -62,6 +62,18 @@
     "diagnostic": "unnecessary_import for dart:typed_data already exported by flutter/services.dart",
     "repair": "Remove only redundant test import",
     "testsExecuted": false,
+    "hostedRevalidation": "pending"
+  },
+  "hostedViewportCorrection": {
+    "run": 42090743701,
+    "producer": "fedcd879fa660c9021bd054ce3f60b8c859f3cd9",
+    "analysisPassed": true,
+    "packageCasesPassed": 92,
+    "packageCasesFailed": 1,
+    "diagnostic": "Widget lookup ran before lazy ListView built the offscreen Pair button",
+    "repair": "Scroll the actual outer list to Pair, back to Retry, then to restored permission; retain disabled-state, private-error absence, enrollment and exception assertions",
+    "productionChanged": false,
+    "review": "GPT-6.1 Terra high prompt-only review",
     "hostedRevalidation": "pending"
   }
 }

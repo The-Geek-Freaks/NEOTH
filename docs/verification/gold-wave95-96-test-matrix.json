@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Council11 focused accepted; cost134of135 diagnosed; corrected fixture/mobile analysis awaiting hosted execution",
+  "status": "Flutter analysis and92of93 passed; lazy viewport test corrected, hosted retry pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474943,
-    "sha256": "0A8091C6917D9E41ABD0E4B6094DF2C110F803C155A36401820C019434A2C5CC"
+    "bytes": 474917,
+    "sha256": "7933D788B314D966B008E797D2D40B6637B91FA2B488E8903949914B71CF267E"
   },
   "sourceInputs": 2591,
   "requiredNativeTests": [
@@ -95012,6 +95012,32 @@
       }
     ],
     "note": "Real mixed-success MCP fixture preserves production termination and attribution assertions; remove redundant Dart test import. Local BSOD hold.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2701MobileViewport": {
+    "base": "fedcd879fa660c9021bd054ce3f60b8c859f3cd9",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 64073,
+        "sha256": "C21A1D95344204618F659ABCED5A02D4D4D53445B480770BC62B32A177F45942",
+        "blob": "f60a73bb8c3549b677833e2fa4bdd65cf2a01c3d"
+      },
+      {
+        "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
+        "bytes": 4217,
+        "sha256": "F671FC23722071163FE787175EC6C618A8F6DF806AFBC974085C8BA5F1240B75",
+        "blob": "91f278d8fec8c7a0ef029122279d951a3d3a7178"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2811038,
+        "sha256": "4F49D712286E5D0DC120AE68F6F2A372621AEAC9B7590DB8179E6E44C14C786F",
+        "blob": "fedb516eb6272938aee5349bf6d0827d5649a61a"
+      }
+    ],
+    "note": "Test-only real scroll before button/permission lookup; production startup authority unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
