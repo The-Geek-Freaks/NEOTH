@@ -127,7 +127,7 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         self.assertIs(russh["default-features"], False)
         self.assertSetEqual(set(russh["features"]), {"ring"})
 
-        for os in ("ubuntu-24.04", "windows-2022", "macos-14"):
+        for os in ("ubuntu-24.04", "windows-2022", "macos-15"):
             with self.subTest(os=os):
                 self.assertIn(
                     f"- {{ os: {os}, feature: ssh-tunnel }}", self.ci_workflow

@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           case "$REQUESTED_PLATFORM" in
             all)
-              matrix='{"include":[{"platform":"linux","label":"Linux","os":"ubuntu-24.04","timeout":90},{"platform":"windows","label":"Windows","os":"windows-2022","timeout":120},{"platform":"macos","label":"macOS","os":"macos-14","timeout":90}]}'
+              matrix='{"include":[{"platform":"linux","label":"Linux","os":"ubuntu-24.04","timeout":90},{"platform":"windows","label":"Windows","os":"windows-2022","timeout":120},{"platform":"macos","label":"macOS","os":"macos-15","timeout":90}]}'
               ;;
             linux)
               matrix='{"include":[{"platform":"linux","label":"Linux","os":"ubuntu-24.04","timeout":90}]}'
@@ -50,7 +50,7 @@ jobs:
               matrix='{"include":[{"platform":"windows","label":"Windows","os":"windows-2022","timeout":120}]}'
               ;;
             macos)
-              matrix='{"include":[{"platform":"macos","label":"macOS","os":"macos-14","timeout":90}]}'
+              matrix='{"include":[{"platform":"macos","label":"macOS","os":"macos-15","timeout":90}]}'
               ;;
             *)
               echo "::error::unsupported live-audio platform selector: $REQUESTED_PLATFORM"

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T20:32:02.9237402Z",
-  "validationStatus": "Council11/Cost135/Workspace Clippy accepted on fd5c0b37; resume session and identity-boundary regressions pending hosted",
+  "capturedUtc": "2026-11-05T20:37:27.3592620Z",
+  "validationStatus": "Full CI active on c5c767e5; macOS14 scheduler rejected retired image; supported ARM64 macOS15 successor pending hosted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -149,7 +149,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "bytes": 60017,
-      "sha256": "51457A9D68123477F14E27684F9DD6186DF4C28DDC772717C2155BCA7EFAFDCA"
+      "sha256": "3DEAD0686451C9F3F375826834216661386BB452DBFA23A0995C6F5299BA894E"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -159,7 +159,7 @@
     {
       "path": ".github/workflows/cli-reference.yml",
       "bytes": 62561,
-      "sha256": "3F68FB59096D0142FA243FE02051CCA54AC1D401403A19F978CCC88329392ED0"
+      "sha256": "F27CF42E517CFE3191B3C020E672627F81F476F08A7B71F35B97059F5E89926C"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -189,12 +189,12 @@
     {
       "path": ".github/workflows/live-audio.yml",
       "bytes": 9945,
-      "sha256": "9DCCE6D5819B08C1E3142E127CF9848C92623B0BDB59970842F472E633259180"
+      "sha256": "D7C50B2104B91B361CCC2A110A42B871D901A09A4BB602D981704FD32B8896A3"
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
       "bytes": 24254,
-      "sha256": "95C368C89B008D37A3E0D2100EDE86C9A0F42527BDE38D759E8911DAC31B319B"
+      "sha256": "194899EDEBDAA1EEC566D38266B7674BD10C23B9A62E597818DB88A93515E344"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -4972,6 +4972,11 @@
       "sha256": "AAF4E4088C2C2430E67683249FCA805DD6560D73DC634EE240F4666914587C77"
     },
     {
+      "path": "docs/verification/gold-wave2708-macos-runner-retirement.json",
+      "bytes": 3757,
+      "sha256": "E05F8C57B628DECEE27F7B791BCABFA1E532EEC016549A93EA6D37F065902365"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5984,7 +5989,7 @@
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
       "bytes": 91080,
-      "sha256": "3D83688E9BADA491491353D3C5AA4A671E0AEE234B30FDB7FED3A18553FB7B8B"
+      "sha256": "F1E3DC346C3EC6B43FAC88B3B16D24CB65C7DF3565C00EB9B5AD11A18E1BA769"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -6074,7 +6079,7 @@
     {
       "path": "packaging/tests/test_release_capability_contract.py",
       "bytes": 21733,
-      "sha256": "C5F0352AEC781C43766A009715B35F985B03E89F1350B88747C0A3006CF2FBDB"
+      "sha256": "006D0F1F8F6FD4ED97EAE20F0DC16604612EDC00FCE7596935D925AD9318D582"
     },
     {
       "path": "packaging/tests/test_roadmap_release_gate.py",
@@ -6233,8 +6238,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2816920,
-      "sha256": "52687A9F8056D4C4034219C2EC46D8905827C7C0497C96AFBB9C664AB4816CAE"
+      "bytes": 2818095,
+      "sha256": "9137CAB10CB91D69DCE4F2B6EB1079489DF5546AED47A565FF281DBF35D9FA37"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

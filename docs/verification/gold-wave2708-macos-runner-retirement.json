@@ -1,0 +1,105 @@
+{
+  "schema": "neoth.wave2708.macos-runner-retirement.v1",
+  "producerBase": "c5c767e538fd07af28e7f04ee5d88d860b79c095",
+  "batch": "B01",
+  "observedRun": 42104709764,
+  "observedProducer": "c5c767e538fd07af28e7f04ee5d88d860b79c095",
+  "schedulerDiagnostic": "The configuration 'macos-14-arm64-us-default' is not supported",
+  "rejectedJobs": [
+    127516370196,
+    127516370405,
+    127516370453,
+    127516419534
+  ],
+  "observedBeforeAnyJobStep": true,
+  "runnerId": 0,
+  "primarySources": [
+    "https://github.com/actions/runner-images/issues/13518",
+    "https://github.com/actions/runner-images",
+    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+  ],
+  "retirementDate": "2026-11-02",
+  "oldRunner": "macos-14",
+  "newRunner": "macos-15",
+  "architecture": "arm64",
+  "changes": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "replacements": 3,
+      "oldBlob": "899908f0283116df9ea143b12b9f5c5c57c18645"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "replacements": 1,
+      "oldBlob": "943bfe04d6161609ec77d19c67f4995e79b330a1"
+    },
+    {
+      "path": ".github/workflows/live-audio.yml",
+      "replacements": 2,
+      "oldBlob": "8812a15508492f67abfdfa6589bce2b0ad8d2769"
+    },
+    {
+      "path": ".github/workflows/macos-contract-regressions.yml",
+      "replacements": 1,
+      "oldBlob": "f6a1c4ec143d2a3da0c2aef69c7ec091bf310602"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "replacements": 3,
+      "oldBlob": "7d37f51df649aa1186fbd85ab1b89ff46aad5eea"
+    },
+    {
+      "path": "packaging/tests/test_release_capability_contract.py",
+      "replacements": 1,
+      "oldBlob": "9a2703b62d98e0791b60d5d47c3f8f2453a6aa65"
+    }
+  ],
+  "preserved": [
+    "All existing targets, features, tests and macOS test registrations",
+    "Single compile job and190-minute compile/300-minute job bounds",
+    "Separate existing macos-15-intel release configuration",
+    "Historical reports and past macOS14 evidence"
+  ],
+  "sources": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "3DEAD0686451C9F3F375826834216661386BB452DBFA23A0995C6F5299BA894E"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "F27CF42E517CFE3191B3C020E672627F81F476F08A7B71F35B97059F5E89926C"
+    },
+    {
+      "path": ".github/workflows/live-audio.yml",
+      "sha256": "D7C50B2104B91B361CCC2A110A42B871D901A09A4BB602D981704FD32B8896A3"
+    },
+    {
+      "path": ".github/workflows/macos-contract-regressions.yml",
+      "sha256": "194899EDEBDAA1EEC566D38266B7674BD10C23B9A62E597818DB88A93515E344"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "sha256": "F1E3DC346C3EC6B43FAC88B3B16D24CB65C7DF3565C00EB9B5AD11A18E1BA769"
+    },
+    {
+      "path": "packaging/tests/test_release_capability_contract.py",
+      "sha256": "006D0F1F8F6FD4ED97EAE20F0DC16604612EDC00FCE7596935D925AD9318D582"
+    }
+  ],
+  "validation": {
+    "static": "Root exact replacement count review and GPT-6.1 Terra high prompt-only platform/acceptance review",
+    "localRuntimeExecuted": false,
+    "hostedContractAccepted": false,
+    "macos15RuntimeAccepted": false,
+    "macos14CompatibilityEstablished": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Current run continues on its original commit; its cancelled macOS jobs cannot validate this later change.",
+    "Wait for the sole active heavy run before dispatching another full validation.",
+    "A successful macOS15 runner does not establish macOS14 runtime compatibility.",
+    "No native release or signing action performed."
+  ],
+  "proof": "work/gold-20260906/wave2707-full-integration/macos-annotations.json",
+  "rawRoadmapRowsClosed": 0
+}

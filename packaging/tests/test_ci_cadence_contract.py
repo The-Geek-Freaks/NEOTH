@@ -582,7 +582,7 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn('CARGO_PROFILE_TEST_DEBUG: "0"', live_audio)
         self.assertIn('"os":"ubuntu-24.04","timeout":90', selector)
         self.assertIn('"os":"windows-2022","timeout":120', selector)
-        self.assertIn('"os":"macos-14","timeout":90', selector)
+        self.assertIn('"os":"macos-15","timeout":90', selector)
         self.assertIn("libasound2-dev pkg-config", live_audio)
         self.assertIn(
             "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
@@ -1317,7 +1317,7 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn(
             "\n".join(
                 [
-                    "          - os: macos-14",
+                    "          - os: macos-15",
                     "            # CI 35814256249 was still compiling at the 100-minute bound,",
                     "            # with no Rust diagnostic. Keep one job under paging pressure and",
                     "            # leave a separate 30-minute window for actual test execution.",
@@ -1748,7 +1748,7 @@ class CiCadenceContractTests(unittest.TestCase):
         feature_matrix = workflow_jobs(CI_TEXT)["feature-matrix"]
         self.assertIn("${{ runner.os }}-feature-${{ matrix.feature }}-", feature_matrix)
         self.assertIn("${{ runner.os }}-1.91-cargo-", feature_matrix)
-        for os in ("ubuntu-24.04", "windows-2022", "macos-14"):
+        for os in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertEqual(
                 feature_matrix.count(f"- {{ os: {os}, feature: ssh-tunnel }}"), 1
             )

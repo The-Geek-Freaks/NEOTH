@@ -923,7 +923,7 @@ jobs:
   macos-provider-regression:
     name: Exact macOS Buddy provider GUI regression
     if: ${{ inputs.macos_provider_regression && github.ref == 'refs/heads/main' }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: '1'

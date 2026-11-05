@@ -500,7 +500,7 @@ jobs:
           # the former combined 90m step was killed.  Keep compilation and
           # execution independently bounded so a cold compile cannot consume
           # the suite's runtime budget.
-          - os: macos-14
+          - os: macos-15
             # CI 35814256249 was still compiling at the 100-minute bound,
             # with no Rust diagnostic. Keep one job under paging pressure and
             # leave a separate 30-minute window for actual test execution.
@@ -921,7 +921,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-24.04, feature: qwen-cuda }
-          - { os: macos-14, feature: qwen-metal }
+          - { os: macos-15, feature: qwen-metal }
           # PC-01 clipboard — verify arboard (x11rb + wl-clipboard-rs) compiles on
           # a headless Linux runner (the pure-Rust backends need no display libs
           # at build time; default-OFF in source so this matrix entry is its check).
@@ -940,7 +940,7 @@ jobs:
           # feature set.
           - { os: ubuntu-24.04, feature: ssh-tunnel }
           - { os: windows-2022, feature: ssh-tunnel }
-          - { os: macos-14, feature: ssh-tunnel }
+          - { os: macos-15, feature: ssh-tunnel }
           # IRC and Nostr are both default-OFF connection adapters. Their
           # pure APIs compile in ordinary CI, but their live adapter modules
           # and dependency trees need one hermetic feature-enabled lane.

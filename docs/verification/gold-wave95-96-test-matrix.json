@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Council11/Cost135/Workspace Clippy accepted on fd5c0b37; resume session and identity-boundary regressions pending hosted",
+  "status": "Full CI active on c5c767e5; macOS14 scheduler rejected retired image; supported ARM64 macOS15 successor pending hosted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 475513,
-    "sha256": "6D92850FE7CA5BC630B2A57A391613C9966BBF7D269851031A8561F4078DB02C"
+    "bytes": 475706,
+    "sha256": "6460DFEBB9B89BB41DE3A64BE044812C152A5C264D25D481F14DC1A064630165"
   },
-  "sourceInputs": 2594,
+  "sourceInputs": 2595,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -95286,6 +95286,62 @@
       }
     ],
     "note": "Preserve legacy context-only resume; only new explicit local session reuse rejects path-like/reserved ids for its existing filesystem consumers.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2708MacosRunner": {
+    "base": "c5c767e538fd07af28e7f04ee5d88d860b79c095",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 60017,
+        "sha256": "3DEAD0686451C9F3F375826834216661386BB452DBFA23A0995C6F5299BA894E",
+        "blob": "52050939772089dba3909c4d135e36329a705218"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 62561,
+        "sha256": "F27CF42E517CFE3191B3C020E672627F81F476F08A7B71F35B97059F5E89926C",
+        "blob": "9aca6f0d7880cfb38dd82cc1483fb7db6b945da0"
+      },
+      {
+        "path": ".github/workflows/live-audio.yml",
+        "bytes": 9945,
+        "sha256": "D7C50B2104B91B361CCC2A110A42B871D901A09A4BB602D981704FD32B8896A3",
+        "blob": "4b0adb83dbc0289d32a9f4a9ae41a190a0e4e202"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 24254,
+        "sha256": "194899EDEBDAA1EEC566D38266B7674BD10C23B9A62E597818DB88A93515E344",
+        "blob": "db26cbefe323880ddf7115e69689427dfc21f98f"
+      },
+      {
+        "path": "docs/verification/gold-wave2708-macos-runner-retirement.json",
+        "bytes": 3757,
+        "sha256": "E05F8C57B628DECEE27F7B791BCABFA1E532EEC016549A93EA6D37F065902365",
+        "blob": "8465483914f1b31b0ff4a59eeeb623ad8f537b9a"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 91080,
+        "sha256": "F1E3DC346C3EC6B43FAC88B3B16D24CB65C7DF3565C00EB9B5AD11A18E1BA769",
+        "blob": "5f205e81bd4054c23aebf1aded31ae3cfe8beb58"
+      },
+      {
+        "path": "packaging/tests/test_release_capability_contract.py",
+        "bytes": 21733,
+        "sha256": "006D0F1F8F6FD4ED97EAE20F0DC16604612EDC00FCE7596935D925AD9318D582",
+        "blob": "bb911df94f5042c20d84d7bd32b0d5d63eaef5a0"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2818095,
+        "sha256": "9137CAB10CB91D69DCE4F2B6EB1079489DF5546AED47A565FF281DBF35D9FA37",
+        "blob": "f92e155606e07766b289ebd830f8db5a44194b28"
+      }
+    ],
+    "note": "Exact seven runner labels and four existing contract expectations updated; no test/target/feature removed or local runtime executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
