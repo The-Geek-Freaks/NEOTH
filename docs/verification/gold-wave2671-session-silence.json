@@ -10,7 +10,7 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/media/conversation_loop.rs",
-      "sha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "path": "SRC/neothd/src/daemon/conversation_owner.rs",
@@ -44,5 +44,15 @@
   "localExecutableValidationRan": false,
   "hostedAccepted": false,
   "nativeAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "hostedFormatting": {
+    "run": "42003814591",
+    "producer": "04fc024a1d599088d2a055fad844dca8235449c4",
+    "artifact": "13404495449",
+    "zipSha256": "35022B89FB6C7C6635E00D18ABBBBD306F3EE9AF05EBD4DD03647F7DB3564B93",
+    "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+    "preimage": "e84a102197a4d8295239c792878870a6dde043fe",
+    "postimage": "fcf306e00ac4629b2bcf3a46b329754948b2ea44",
+    "localFormatterRan": false
+  }
 }

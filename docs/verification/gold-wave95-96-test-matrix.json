@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_SESSION_SILENCE_HOSTED_PENDING",
+  "status": "HOSTED_FORMAT_IMPORTED_SESSION_SILENCE_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 467214,
-    "sha256": "13800A9D0833126B5128578A3FC980B7142763F4E41E3B895BD3791DE0DCA495"
+    "bytes": 467221,
+    "sha256": "925FAC83C6046BD7FA09AE399450FC19A3733B6664057626861FF0ED15932871"
   },
   "sourceInputs": 2550,
   "requiredNativeTests": [
@@ -92549,6 +92549,32 @@
       }
     ],
     "note": "Existing A2 owner: session-bound seven-second listening, explicit response pause/barge-in resume, accepted STT only; 76 live-audio cases, runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2671HostedFormat": {
+    "base": "04fc024a1d599088d2a055fad844dca8235449c4",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 21499,
+        "sha256": "1BACBCBEC656E79EEFD74DA48B73EDD3A6ABDA8AC933E9AF1D831421837B8348",
+        "blob": "013d71b35df62d511d402ac594fbc3e9ca28ebea"
+      },
+      {
+        "path": "docs/verification/gold-wave2671-session-silence.json",
+        "bytes": 4168,
+        "sha256": "FEAA3B6EA715D45F7A853717B8D8CAFB9507A29E224531E194D915989F16045B",
+        "blob": "4028914e5c517e53bb81e23958fe4efc2250b879"
+      },
+      {
+        "path": "SRC/neothd/src/media/conversation_loop.rs",
+        "bytes": 96277,
+        "sha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831",
+        "blob": "fcf306e00ac4629b2bcf3a46b329754948b2ea44"
+      }
+    ],
+    "note": "Original hosted format receipt verified, exact one-file pre/postimage; 76 live-audio cases preserved, execution pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T09:35:53.1252612Z",
-  "validationStatus": "STATIC_REVIEWED_SESSION_SILENCE_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T09:38:56.5067948Z",
+  "validationStatus": "HOSTED_FORMAT_IMPORTED_SESSION_SILENCE_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3379,7 +3379,7 @@
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 21499,
-      "sha256": "3073C81E59222BA8B6FF23D14E00DFE88C918439A01ECA77BFFC93783929BA26"
+      "sha256": "1BACBCBEC656E79EEFD74DA48B73EDD3A6ABDA8AC933E9AF1D831421837B8348"
     },
     {
       "path": "docs/verification/gold-wave186-silero-specialization.json",
@@ -4838,8 +4838,8 @@
     },
     {
       "path": "docs/verification/gold-wave2671-session-silence.json",
-      "bytes": 3722,
-      "sha256": "0BD56E316004E87C5835600750B5F5A44A7D271115D4F508968F61E7621EA66B"
+      "bytes": 4168,
+      "sha256": "FEAA3B6EA715D45F7A853717B8D8CAFB9507A29E224531E194D915989F16045B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -8858,8 +8858,8 @@
     },
     {
       "path": "SRC/neothd/src/media/conversation_loop.rs",
-      "bytes": 94660,
-      "sha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "bytes": 96277,
+      "sha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "path": "SRC/neothd/src/media/conversation_scope.rs",

@@ -101,47 +101,47 @@
     {
       "test": "media::conversation_loop::tests::cancelled_opening_fake_stage_is_detected_before_native_effect",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::response_scope_barge_in_is_independent_from_capture_scope",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::qualified_turn_is_once_and_zero_length_fragment_is_cancelled",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::one_vad_block_never_invalidates_an_active_response",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::pending_turn_cannot_start_before_the_old_generation_has_settled",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::stale_audio_completion_cannot_release_a_different_generation_owner",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::four_ordered_vad_blocks_qualify_once_without_a_later_reset",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::configured_250ms_does_not_qualify_at_128ms_and_noise_never_qualifies",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::transcript_preflight_gets_a_fresh_correlation_id_but_keeps_bound_route",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::lm_output_processor::tests::batches_three_sentences_and_flushes_final_fragment_once",
@@ -271,117 +271,117 @@
     {
       "test": "media::conversation_loop::tests::follow_up_stop_projection_preserves_cleanup_and_delivery_failures",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_stop_waits_for_terminal_queue_capacity",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_capture_tie_drains_admitted_frames_before_expiry",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_post_deadline_noise_cannot_extend_window",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_capture_terminal_and_disabled_window_preserve_events",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_queued_terminals_survive_late_noise_at_expiry",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_cancelled_wait_retains_later_capture_input",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_terminal_witness_survives_full_capture_queue_and_join",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_terminal_observed_after_timer_before_join_overrides_expiry",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_waits_for_complete_turn_and_final_audio_in_both_orders",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_never_arms_after_failed_turn_without_audio_or_when_disabled",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_stale_or_foreign_callbacks_cannot_close_a_later_generation",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_short_noise_and_repeated_idle_facts_do_not_extend_deadline",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_qualified_speech_invalidates_window_but_not_capture_scope",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_later_audio_cannot_expire_an_earlier_idle_window",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_deadline_requires_seven_seconds_and_expires_once",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_qualified_progress_resets_only_on_time_monotonic_frames",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_scope_and_response_generations_are_independent",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_waits_for_complete_response_and_idle_playback_before_rearming",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_capture_tie_preserves_admission_time_and_rejects_late_noise",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_and_follow_up_share_the_earliest_capture_deadline",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::silence_stop_projection_waits_and_preserves_cleanup_failure",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     },
     {
       "test": "media::conversation_loop::tests::transcript_acceptance_requires_current_nonempty_success",
       "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
-      "sourceSha256": "89FA3E4689A785BB3A3CC872E1F9EF090C47DC6021B68D42C5BD019AAB8CC485"
+      "sourceSha256": "E551C9D8AFBF5D0D6EA0A253B76057732AA021818A74A410E4950C02612AE831"
     }
   ],
   "metadata": {

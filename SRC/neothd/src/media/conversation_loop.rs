@@ -68,7 +68,10 @@ impl SilenceWindow {
     fn new(scope: &CancelScope, now: std::time::Instant) -> Result<Self, &'static str> {
         Ok(Self {
             session: scope.snapshot().map_err(|_| "capture_scope_exhausted")?,
-            deadline: Some(now.checked_add(Self::DURATION).ok_or("silence_deadline_overflow")?),
+            deadline: Some(
+                now.checked_add(Self::DURATION)
+                    .ok_or("silence_deadline_overflow")?,
+            ),
             last_observation: now,
             resumed_response: None,
             expired: false,
@@ -87,7 +90,10 @@ impl SilenceWindow {
         if self.expired || scope.is_stale(&self.session) || now < self.last_observation {
             return Ok(());
         }
-        self.deadline = Some(now.checked_add(Self::DURATION).ok_or("silence_deadline_overflow")?);
+        self.deadline = Some(
+            now.checked_add(Self::DURATION)
+                .ok_or("silence_deadline_overflow")?,
+        );
         self.last_observation = now;
         Ok(())
     }
@@ -124,7 +130,10 @@ impl SilenceWindow {
             return Ok(());
         };
         if audio_idle
-            && !self.resumed_response.as_ref().is_some_and(|prior| prior.same_generation(generation))
+            && !self
+                .resumed_response
+                .as_ref()
+                .is_some_and(|prior| prior.same_generation(generation))
         {
             self.listen(capture, now)?;
             self.resumed_response = Some(generation.clone());
@@ -309,10 +318,7 @@ async fn next_a2_capture(
     deadline: Option<std::time::Instant>,
 ) -> Option<A2CaptureInput> {
     let Some(limit) = deadline else {
-        return capture_rx
-            .recv()
-            .await
-            .map(A2CaptureInput::Event);
+        return capture_rx.recv().await.map(A2CaptureInput::Event);
     };
     let admitted = tokio::select! {
         biased;
@@ -1279,7 +1285,13 @@ pub(crate) async fn run_a2_session(
     // session dependency before projecting a successful automatic stop.
     drop(dependencies.permit);
     if silence_expired {
-        publish_automatic_stop(&event_tx, settled, capture_terminal_rx.try_recv().ok(), true).await
+        publish_automatic_stop(
+            &event_tx,
+            settled,
+            capture_terminal_rx.try_recv().ok(),
+            true,
+        )
+        .await
     } else if follow_up_expired || settled.is_err() {
         publish_follow_up_stop(&event_tx, settled, capture_terminal_rx.try_recv().ok()).await
     } else {
@@ -1487,11 +1499,16 @@ mod tests {
         let scope = CancelScope::new();
         let now = std::time::Instant::now();
         let mut silence = SilenceWindow::new(&scope, now).unwrap();
-        assert_eq!(silence.deadline(&scope), Some(now + Duration::from_millis(7000)));
+        assert_eq!(
+            silence.deadline(&scope),
+            Some(now + Duration::from_millis(7000))
+        );
         assert!(!silence.expire(&scope, now + Duration::from_millis(6999)));
         assert!(silence.expire(&scope, now + Duration::from_millis(7000)));
         assert!(!silence.expire(&scope, now + Duration::from_secs(60)));
-        silence.listen(&scope, now + Duration::from_secs(61)).unwrap();
+        silence
+            .listen(&scope, now + Duration::from_secs(61))
+            .unwrap();
         assert_eq!(silence.deadline(&scope), None);
     }
 
@@ -1507,10 +1524,17 @@ mod tests {
         let extended = speech + Duration::from_secs(7);
         assert_eq!(silence.deadline(&scope), Some(extended));
         silence.observe_speech(&scope, now, 2000, 1600).unwrap();
-        silence.observe_speech(&scope, extended + Duration::from_nanos(1), 3000, 1600).unwrap();
+        silence
+            .observe_speech(&scope, extended + Duration::from_nanos(1), 3000, 1600)
+            .unwrap();
         assert_eq!(silence.deadline(&scope), Some(extended));
-        silence.observe_speech(&scope, extended, 3500, 1600).unwrap();
-        assert_eq!(silence.deadline(&scope), Some(extended + Duration::from_secs(7)));
+        silence
+            .observe_speech(&scope, extended, 3500, 1600)
+            .unwrap();
+        assert_eq!(
+            silence.deadline(&scope),
+            Some(extended + Duration::from_secs(7))
+        );
     }
 
     #[test]
@@ -1522,9 +1546,14 @@ mod tests {
         let mut silence = SilenceWindow::new(&capture, now).unwrap();
         responses.invalidate().unwrap();
         assert!(silence.deadline(&capture).is_some());
-        silence.observe_speech(&replacement, now + Duration::from_secs(6), 2000, 1600).unwrap();
+        silence
+            .observe_speech(&replacement, now + Duration::from_secs(6), 2000, 1600)
+            .unwrap();
         assert!(!silence.expire(&replacement, now + Duration::from_secs(8)));
-        assert_eq!(silence.deadline(&capture), Some(now + Duration::from_secs(7)));
+        assert_eq!(
+            silence.deadline(&capture),
+            Some(now + Duration::from_secs(7))
+        );
         capture.invalidate().unwrap();
         assert!(!silence.expire(&capture, now + Duration::from_secs(8)));
         let mut current = SilenceWindow::new(&replacement, now + Duration::from_secs(8)).unwrap();
@@ -1541,25 +1570,55 @@ mod tests {
         let mut silence = SilenceWindow::new(&capture, now).unwrap();
         silence.pause_for_response();
         let later = now + Duration::from_secs(90);
-        silence.resume_completed_response(&capture, &responses, None, true, later).unwrap();
+        silence
+            .resume_completed_response(&capture, &responses, None, true, later)
+            .unwrap();
         silence.observe_speech(&capture, later, 2000, 1600).unwrap();
         assert!(!silence.expire(&capture, later));
         // A settled response may still have queued or actively playing audio.
-        silence.resume_completed_response(&capture, &responses, Some(&generation), false, later).unwrap();
+        silence
+            .resume_completed_response(&capture, &responses, Some(&generation), false, later)
+            .unwrap();
         assert_eq!(silence.deadline(&capture), None);
-        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later).unwrap();
-        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later + Duration::from_secs(6)).unwrap();
-        assert_eq!(silence.deadline(&capture), Some(later + Duration::from_secs(7)));
+        silence
+            .resume_completed_response(&capture, &responses, Some(&generation), true, later)
+            .unwrap();
+        silence
+            .resume_completed_response(
+                &capture,
+                &responses,
+                Some(&generation),
+                true,
+                later + Duration::from_secs(6),
+            )
+            .unwrap();
+        assert_eq!(
+            silence.deadline(&capture),
+            Some(later + Duration::from_secs(7))
+        );
         // Qualified barge-in also leaves the processing pause and keeps the
         // capture identity while invalidating only the previous response.
         silence.pause_for_response();
         responses.invalidate().unwrap();
         let barge_in = later + Duration::from_secs(5);
-        silence.observe_speech(&capture, barge_in, 2000, 1600).unwrap();
+        silence
+            .observe_speech(&capture, barge_in, 2000, 1600)
+            .unwrap();
         assert_eq!(silence.deadline(&capture), None);
         silence.listen(&capture, barge_in).unwrap();
-        silence.resume_completed_response(&capture, &responses, Some(&generation), true, later + Duration::from_secs(6)).unwrap();
-        assert_eq!(silence.deadline(&capture), Some(barge_in + Duration::from_secs(7)));
+        silence
+            .resume_completed_response(
+                &capture,
+                &responses,
+                Some(&generation),
+                true,
+                later + Duration::from_secs(6),
+            )
+            .unwrap();
+        assert_eq!(
+            silence.deadline(&capture),
+            Some(barge_in + Duration::from_secs(7))
+        );
     }
 
     #[tokio::test]
@@ -1569,15 +1628,26 @@ mod tests {
         let mut silence = SilenceWindow::new(&capture, due - Duration::from_secs(7)).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(2);
         tx.try_send(admitted_frame(due)).unwrap();
-        let Some(A2CaptureInput::Event(admitted)) = next_a2_capture(&mut rx, silence.deadline(&capture)).await else {
+        let Some(A2CaptureInput::Event(admitted)) =
+            next_a2_capture(&mut rx, silence.deadline(&capture)).await
+        else {
             panic!("admitted speech at deadline must be examined");
         };
         assert_eq!(admitted.admitted_at, due);
-        silence.observe_speech(&capture, admitted.admitted_at, 2000, 1600).unwrap();
+        silence
+            .observe_speech(&capture, admitted.admitted_at, 2000, 1600)
+            .unwrap();
         assert!(!silence.expire(&capture, due));
-        tx.try_send(admitted_frame(due + Duration::from_nanos(1))).unwrap();
-        assert!(matches!(next_a2_capture(&mut rx, Some(due)).await, Some(A2CaptureInput::DeadlineReached)));
-        assert_eq!(silence.deadline(&capture), Some(due + Duration::from_secs(7)));
+        tx.try_send(admitted_frame(due + Duration::from_nanos(1)))
+            .unwrap();
+        assert!(matches!(
+            next_a2_capture(&mut rx, Some(due)).await,
+            Some(A2CaptureInput::DeadlineReached)
+        ));
+        assert_eq!(
+            silence.deadline(&capture),
+            Some(due + Duration::from_secs(7))
+        );
     }
 
     #[test]
@@ -1586,11 +1656,23 @@ mod tests {
         let silence = now + Duration::from_secs(7);
         let earlier = now + Duration::from_secs(3);
         let later = now + Duration::from_secs(30);
-        assert_eq!(earliest_capture_deadline(Some(silence), Some(earlier)), Some(earlier));
-        assert_eq!(earliest_capture_deadline(Some(silence), Some(later)), Some(silence));
-        assert_eq!(earliest_capture_deadline(Some(silence), Some(silence)), Some(silence));
+        assert_eq!(
+            earliest_capture_deadline(Some(silence), Some(earlier)),
+            Some(earlier)
+        );
+        assert_eq!(
+            earliest_capture_deadline(Some(silence), Some(later)),
+            Some(silence)
+        );
+        assert_eq!(
+            earliest_capture_deadline(Some(silence), Some(silence)),
+            Some(silence)
+        );
         assert_eq!(earliest_capture_deadline(None, Some(later)), Some(later));
-        assert_eq!(earliest_capture_deadline(Some(silence), None), Some(silence));
+        assert_eq!(
+            earliest_capture_deadline(Some(silence), None),
+            Some(silence)
+        );
     }
 
     #[tokio::test]
@@ -1604,14 +1686,32 @@ mod tests {
             _ = &mut stopped => panic!("timeout must wait for terminal queue capacity"),
             _ = std::future::ready(()) => {}
         }
-        assert!(matches!(rx.recv().await, Some(ConversationEvent::Listening)));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ConversationEvent::Listening)
+        ));
         assert_eq!(stopped.await, Ok(()));
-        assert!(matches!(rx.recv().await, Some(ConversationEvent::SilenceTimeout)));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ConversationEvent::SilenceTimeout)
+        ));
         assert!(rx.try_recv().is_err());
-        assert_eq!(publish_automatic_stop(&tx, Err("cleanup_failed"), None, true).await, Err("cleanup_failed"));
-        assert!(matches!(rx.recv().await, Some(ConversationEvent::Failed("cleanup_failed"))));
-        assert_eq!(publish_automatic_stop(&tx, Ok(()), Some(CaptureTerminal::Failed), true).await, Err("capture_terminal_error"));
-        assert!(matches!(rx.recv().await, Some(ConversationEvent::Failed("capture_terminal_error"))));
+        assert_eq!(
+            publish_automatic_stop(&tx, Err("cleanup_failed"), None, true).await,
+            Err("cleanup_failed")
+        );
+        assert!(matches!(
+            rx.recv().await,
+            Some(ConversationEvent::Failed("cleanup_failed"))
+        ));
+        assert_eq!(
+            publish_automatic_stop(&tx, Ok(()), Some(CaptureTerminal::Failed), true).await,
+            Err("capture_terminal_error")
+        );
+        assert!(matches!(
+            rx.recv().await,
+            Some(ConversationEvent::Failed("capture_terminal_error"))
+        ));
     }
 
     #[test]
@@ -1619,13 +1719,28 @@ mod tests {
         let scope = CancelScope::new();
         let generation = scope.snapshot().unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-        assert_eq!(accept_current_transcript(&scope, &generation, 4, Err("stt_failed"), &tx), Err("stt_failed"));
-        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok(" \n\t".into()), &tx), Err("configured_stt_empty_transcript"));
+        assert_eq!(
+            accept_current_transcript(&scope, &generation, 4, Err("stt_failed"), &tx),
+            Err("stt_failed")
+        );
+        assert_eq!(
+            accept_current_transcript(&scope, &generation, 4, Ok(" \n\t".into()), &tx),
+            Err("configured_stt_empty_transcript")
+        );
         assert!(rx.try_recv().is_err());
-        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok("actual words".into()), &tx), Ok(Some("actual words".into())));
-        assert!(matches!(rx.try_recv(), Ok(ConversationEvent::TranscriptAccepted { turn_id: 4 })));
+        assert_eq!(
+            accept_current_transcript(&scope, &generation, 4, Ok("actual words".into()), &tx),
+            Ok(Some("actual words".into()))
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ConversationEvent::TranscriptAccepted { turn_id: 4 })
+        ));
         scope.invalidate().unwrap();
-        assert_eq!(accept_current_transcript(&scope, &generation, 4, Ok("late words".into()), &tx), Ok(None));
+        assert_eq!(
+            accept_current_transcript(&scope, &generation, 4, Ok("late words".into()), &tx),
+            Ok(None)
+        );
         assert!(rx.try_recv().is_err());
     }
     #[tokio::test]
@@ -1703,7 +1818,10 @@ mod tests {
         for _ in 0..32 {
             assert!(matches!(
                 next_a2_capture(&mut rx, Some(deadline)).await,
-                Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
+                Some(A2CaptureInput::Event(AdmittedCapture {
+                    event: LiveCaptureEvent::Frame(_),
+                    ..
+                }))
             ));
         }
         // No producer fact remains: timer expires without a wall-clock sleep.
@@ -1739,13 +1857,19 @@ mod tests {
         .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, Some(deadline)).await,
-            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Cancelled, .. }))
+            Some(A2CaptureInput::Event(AdmittedCapture {
+                event: LiveCaptureEvent::Cancelled,
+                ..
+            }))
         ));
         tx.try_send(admitted_frame(deadline + Duration::from_secs(1)))
             .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, None).await,
-            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
+            Some(A2CaptureInput::Event(AdmittedCapture {
+                event: LiveCaptureEvent::Frame(_),
+                ..
+            }))
         ));
         drop(tx);
         assert!(next_a2_capture(&mut rx, None).await.is_none());
@@ -1792,7 +1916,10 @@ mod tests {
             .unwrap();
         assert!(matches!(
             next_a2_capture(&mut rx, None).await,
-            Some(A2CaptureInput::Event(AdmittedCapture { event: LiveCaptureEvent::Frame(_), .. }))
+            Some(A2CaptureInput::Event(AdmittedCapture {
+                event: LiveCaptureEvent::Frame(_),
+                ..
+            }))
         ));
         drop(rx);
         assert!(
