@@ -1,0 +1,23 @@
+{
+  "schema": "neoth.wave2680.paperless-macro-repair.v1",
+  "producerBase": "57581d55d0e03560e621e4aaacdcd14743e3a91c",
+  "batch": "B02",
+  "finding": "Hosted live-audio lib-test compilation exposed a new principal-error warn macro gated only by imap_fetch, while the caller also compiles under cfg(test).",
+  "change": "Qualify this one new invocation as tracing::warn!; leave feature-gated production imports and behavior unchanged.",
+  "observedRun": 42019451049,
+  "observedJob": 127218316783,
+  "diagnostic": "cannot find macro warn in this scope at daemon/email_ingest_cron.rs:302",
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
+      "sha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
+    }
+  ],
+  "requiredPortableNativeTests": 3286,
+  "focusedEmailCases": 91,
+  "review": "GPT-6.1 Terra high prompt-only rust-build-resolver confirmed the cfg mismatch and one-call qualification.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "validation": "Bounded text and diff inspection only; current full CI remains on its original producer. No duplicate run dispatched."
+}

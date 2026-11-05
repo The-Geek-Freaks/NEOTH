@@ -90,14 +90,14 @@
     {
       "test": "daemon::email_ingest_cron::tests::paperless_request_title_and_endpoint_are_deterministic_before_claim",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::paperless_mail_identity_binds_uidvalidity_only_for_uid_fallback",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -188,14 +188,14 @@
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_identity_keeps_account_epoch_and_historical_wal_binding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::mail_vault_legacy_collisions_keep_distinct_notes_including_casefolding",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -316,28 +316,28 @@
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_legacy_ambiguity_blocks_only_its_unit_without_claiming_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_scoped_ledger_error_aborts_filter_and_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": true,
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
     },
     {
       "test": "daemon::email_ingest_cron::tests::cron_seen_filter_uses_durable_message_id_key",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
       "requiresImapFeature": true,
       "newCase": false,
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
     },
     {
       "test": "memory::migrations::tests::migrations_have_no_gaps_and_no_duplicates",
@@ -412,28 +412,28 @@
     {
       "test": "daemon::email_ingest_cron::tests::cron_quarantine_binds_accounts_and_blocks_conflicting_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": true
     },
     {
       "test": "daemon::email_ingest_cron::tests::incomplete_paperless_credentials_never_complete_vault_delivery",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::delivery_requires_every_configured_sink_and_authenticated_paperless_completion",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
     {
       "test": "daemon::email_ingest_cron::tests::persisted_vault_with_missing_paperless_token_leaves_ingest_pending",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },
@@ -475,7 +475,7 @@
     {
       "test": "daemon::email_ingest_cron::tests::cron_changed_input_conflicts_without_acknowledging_mixed_batch",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": true
     },
@@ -524,7 +524,7 @@
     {
       "test": "daemon::email_ingest_cron::tests::cron_target_drift_preserves_quarantine_and_only_processes_fresh_units",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": true
     },
@@ -629,7 +629,7 @@
     {
       "test": "daemon::email_ingest_cron::tests::authenticated_principal_is_bound_before_cron_seen_state",
       "sourcePath": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sourceSha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123",
+      "sourceSha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035",
       "newCase": true,
       "requiresImapFeature": false
     },

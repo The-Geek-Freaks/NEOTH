@@ -299,7 +299,7 @@ async fn bind_paperless_delivery_context(
             // Keep triage/quarantine and the independent vault path available.
             // This destination cannot record delivery while its principal is unknown.
             *destination = PaperlessDestination::Unavailable;
-            warn!(
+            tracing::warn!(
                 "email_ingest_cron: Paperless principal unavailable; Paperless delivery remains pending"
             );
             (context.with_unavailable_paperless_principal(), None)

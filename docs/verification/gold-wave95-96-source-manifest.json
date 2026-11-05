@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T11:10:59.8626088Z",
-  "validationStatus": "GEMINI_NATIVE_TOOL_HOSTED_FORMAT_APPLIED_NATIVE_PENDING",
+  "capturedUtc": "2026-11-05T11:43:30.4886479Z",
+  "validationStatus": "W2680_PAPERLESS_MACRO_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4379,7 +4379,7 @@
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
       "bytes": 32505,
-      "sha256": "D7A24F53432912CD2B0D5DC7607D8706A34896F09C82C02722CDC5A1C0C8F2E3"
+      "sha256": "FE4EFE924D38FA4CE191391914DB1D2C98481E3B6F4D8A2AFBF9F47E80B0B629"
     },
     {
       "path": "docs/verification/gold-wave2558-ci-continuity-and-linux-audio.json",
@@ -4875,6 +4875,11 @@
       "path": "docs/verification/gold-wave2678-gemini-native-tools.json",
       "bytes": 2981,
       "sha256": "A83E84EDD8EC470D00702EAEB6AABF50008CCC2F20B71F832FC69DBC2F04B302"
+    },
+    {
+      "path": "docs/verification/gold-wave2680-paperless-macro-repair.json",
+      "bytes": 1183,
+      "sha256": "9AB5FA4A86C583D2C40A137EAFA64E24B9BA801596F94DCDE161A5E5882E8B23"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6128,8 +6133,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2787178,
-      "sha256": "C380BBE4A9EB2C4098CCE6BC81615EB6A30639FDDAF6E50DB580C2254BA4EEEA"
+      "bytes": 2787693,
+      "sha256": "59B30ED478ECEBD4E36F25F0DE226D54BE1055583A5F03732FD29603B45E5E68"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8228,8 +8233,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "bytes": 72924,
-      "sha256": "09AC3EB1C8770FC5CF11780A0919FDD29C042637F1CE416EA82116883132E123"
+      "bytes": 72933,
+      "sha256": "3DEE85E88C0FC2E51F09AE31E3C2F2368067DB52BD5911DA9A04000030786035"
     },
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron/paperless_client.rs",

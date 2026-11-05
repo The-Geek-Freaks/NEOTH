@@ -19937,3 +19937,8 @@ Der weitere B03/A08-Abgleich findet bei Gemini zwei konkrete Restpfade: Toolfeld
 Das Request-Wireformat bleibt gleich. Eigenstaendige Tool-Parts ohne Pflichttext bleiben strukturelle Decoderfehler; es wird keine native Toolausfuehrung eingefuehrt. Drei neue portable Faelle pruefen sechs Feldnamen ueber vier Payloadformen, spaetere Parts und widerspruechliche Filtermetadaten, drei Tool-Endgruende mit/ohne Content, normale Text-/Usage-/Refusal-Semantik und beide echten Mock-HTTP-Einstiege mit exakt zwei Requests. Der Katalog steigt3283auf3286.
 
 Die offizielle Gemini-Referenz fuer Candidate/Part wurde abgeglichen. Terra6.1high hat die vorgelegten Kernsnippets und Tests promptbasiert ohne konkreten Restbefund geprueft. Gehostete Ausfuehrung, weitere A08-Transport-/Cancel-Vertraege und Gesamt-Gold bleiben offen. Paperless-Nachfolger b8b9ab14 hat Preflight42015837583 und CodeQuality42015837833 bestanden. macOS41993234910 testet noch; keine zweite schwere CI, lokale Runtime oder historische Checkboxaenderung. Bericht: docs/verification/gold-wave2678-gemini-native-tools.json.
+
+
+### W2680 — Paperless principal macro configuration repair (2026-11-05)
+
+Run 42019451049 exposed a cfg(test)-without-imap_fetch compile failure at the new principal-error warning. Qualify that single call as tracing::warn! and retain all production semantics. Source, focused catalog and inventories rebound; 3286 portable and 91 focused cases remain. Static review only; hosted acceptance pending. The active full run remains on 57581d55 and is neither duplicated nor cancelled. No roadmap checkbox is closed.
