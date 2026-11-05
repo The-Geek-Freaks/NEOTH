@@ -246,6 +246,19 @@ fn completion_from_response(
 ) -> Result<Completion> {
     let candidate = parsed.candidates.first();
     let finish_reason = candidate.and_then(|value| value.finish_reason.clone());
+    // Native tool execution has no consumer in this adapter. Do not project
+    // accompanying prose or filter metadata as a completed tool outcome.
+    let native_tool_part = candidate
+        .and_then(|value| value.content.as_ref())
+        .is_some_and(|content| content.parts.iter().any(GeminiResponsePart::has_native_tool));
+    if native_tool_part
+        || matches!(
+            finish_reason.as_deref(),
+            Some("MALFORMED_FUNCTION_CALL" | "UNEXPECTED_TOOL_CALL" | "TOO_MANY_TOOL_CALLS")
+        )
+    {
+        anyhow::bail!("gemini_api returned an unsupported native tool call");
+    }
     let prompt_block_reason = parsed
         .prompt_feedback
         .as_ref()
@@ -399,13 +412,13 @@ struct GeminiGenerationConfig {
     stop_sequences: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct GeminiContent {
     role: String,
     parts: Vec<GeminiPart>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct GeminiPart {
     text: String,
 }
@@ -421,9 +434,44 @@ struct GeminiResponse {
 }
 
 #[derive(Deserialize)]
+struct GeminiResponseContent {
+    #[serde(rename = "role")]
+    _role: String,
+    parts: Vec<GeminiResponsePart>,
+}
+
+#[derive(Deserialize)]
+struct GeminiResponsePart {
+    text: String,
+    #[serde(rename = "functionCall", default)]
+    function_call: Option<serde_json::Value>,
+    #[serde(rename = "functionResponse", default)]
+    function_response: Option<serde_json::Value>,
+    #[serde(rename = "executableCode", default)]
+    executable_code: Option<serde_json::Value>,
+    #[serde(rename = "codeExecutionResult", default)]
+    code_execution_result: Option<serde_json::Value>,
+    #[serde(rename = "toolCall", default)]
+    tool_call: Option<serde_json::Value>,
+    #[serde(rename = "toolResponse", default)]
+    tool_response: Option<serde_json::Value>,
+}
+
+impl GeminiResponsePart {
+    fn has_native_tool(&self) -> bool {
+        self.function_call.is_some()
+            || self.function_response.is_some()
+            || self.executable_code.is_some()
+            || self.code_execution_result.is_some()
+            || self.tool_call.is_some()
+            || self.tool_response.is_some()
+    }
+}
+
+#[derive(Deserialize)]
 struct GeminiCandidate {
     #[serde(default)]
-    content: Option<GeminiContent>,
+    content: Option<GeminiResponseContent>,
     #[serde(rename = "finishReason", default)]
     finish_reason: Option<String>,
     #[serde(rename = "safetyRatings", default)]
@@ -582,6 +630,162 @@ mod tests {
         assert_eq!(json["stopSequences"], serde_json::json!(["END"]));
     }
 
+    #[test]
+    fn native_tool_parts_and_error_markers_cannot_become_text_success() {
+        for field in [
+            "functionCall",
+            "functionResponse",
+            "executableCode",
+            "codeExecutionResult",
+            "toolCall",
+            "toolResponse",
+        ] {
+            for payload in [
+                serde_json::json!({}),
+                serde_json::json!({"name": "private-tool", "args": {"secret": "private-value"}}),
+                serde_json::json!([]),
+                serde_json::json!("private-payload"),
+            ] {
+                let mut part = serde_json::json!({"text": "private accompanying text"});
+                part[field] = payload.clone();
+                let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+                    "candidates": [{
+                        "content": {"role": "model", "parts": [{"text": "first text"}, part]},
+                        "finishReason": "SAFETY"
+                    }],
+                    "promptFeedback": {"blockReason": "SAFETY"}
+                }))
+                .unwrap();
+                let error = completion_from_response(parsed, "fixture".into(), Duration::ZERO)
+                    .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "gemini_api returned an unsupported native tool call",
+                    "{field}"
+                );
+                // A standalone tool part remains a structural decode error;
+                // this text-only adapter does not gain a native tool consumer.
+                let mut standalone = serde_json::json!({});
+                standalone[field] = payload;
+                assert!(
+                    serde_json::from_value::<GeminiResponse>(serde_json::json!({
+                        "candidates": [{
+                            "content": {"role": "model", "parts": [standalone]},
+                            "finishReason": "STOP"
+                        }]
+                    }))
+                    .is_err()
+                );
+            }
+        }
+        for reason in [
+            "MALFORMED_FUNCTION_CALL",
+            "UNEXPECTED_TOOL_CALL",
+            "TOO_MANY_TOOL_CALLS",
+        ] {
+            for content in [
+                serde_json::Value::Null,
+                serde_json::json!({"role": "model", "parts": [{"text": "private text"}]}),
+            ] {
+                let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+                    "candidates": [{"content": content, "finishReason": reason}],
+                    "promptFeedback": {"blockReason": "SAFETY"}
+                }))
+                .unwrap();
+                let error = completion_from_response(parsed, "fixture".into(), Duration::ZERO)
+                    .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "gemini_api returned an unsupported native tool call"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn null_tool_fields_preserve_text_usage_refusal_and_request_wire() {
+        for reason in ["STOP", "MAX_TOKENS", "SAFETY"] {
+            let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+                "candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "text": "ordinary text",
+                        "functionCall": null,
+                        "functionResponse": null,
+                        "executableCode": null,
+                        "codeExecutionResult": null,
+                        "toolCall": null,
+                        "toolResponse": null
+                    }]},
+                    "finishReason": reason
+                }],
+                "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 3}
+            }))
+            .unwrap();
+            let completion =
+                completion_from_response(parsed, "fixture".into(), Duration::ZERO).unwrap();
+            assert_eq!(completion.text, "ordinary text");
+            assert_eq!(completion.termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(completion.termination.is_refusal(), reason == "SAFETY");
+            assert_eq!(completion.input_tokens, Some(5));
+            assert_eq!(completion.output_tokens, Some(3));
+        }
+        let request = GeminiContent {
+            role: "user".into(),
+            parts: vec![GeminiPart {
+                text: "prompt".into(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({"role": "user", "parts": [{"text": "prompt"}]})
+        );
+    }
+
+    #[tokio::test]
+    async fn native_tool_http_response_fails_complete_and_buffered_stream() {
+        let mock = MockServer::start().await;
+        mount_generate(
+            &mock,
+            200,
+            serde_json::json!({
+                "candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "text": "private accompanying text",
+                        "functionCall": {"name": "unrequested", "args": {"secret": "private-value"}}
+                    }]},
+                    "finishReason": "STOP"
+                }]
+            })
+            .to_string(),
+        )
+        .await;
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "gemini_api returned an unsupported native tool call"
+        );
+        let error = match build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(_) => panic!("unexecuted native tool must not produce a stream"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            format!("{error:#}"),
+            "gemini_api returned an unsupported native tool call"
+        );
+        assert_eq!(mock.received_requests().await.unwrap().len(), 2);
+    }
     #[test]
     fn normal_fixture_retains_finish_reason_and_usage() {
         let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({

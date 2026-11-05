@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.wave2678.gemini-native-tool-rejection.v1",
+  "producerBase": "b8b9ab1457a66b320b78f8645d99129c83ada1bf",
+  "batch": "B03",
+  "roadmap": [
+    "ADOPT-20261012-A08"
+  ],
+  "finding": "Gemini discarded native tool fields accompanying text and projected tool-error finish reasons as successful text completions.",
+  "change": [
+    "Response-only wire types retain six native tool fields without changing request serialization or mandatory role/text decoding.",
+    "All parts of the selected candidate are checked before text/refusal projection. Non-null functionCall/functionResponse/executableCode/codeExecutionResult/toolCall/toolResponse and three documented native-tool error finish reasons return a fixed payload-free error.",
+    "Standalone tool parts remain decode failures; no native tool consumer or new streaming transport is introduced."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/providers/gemini_api.rs",
+      "sha256": "FAA16C9D7205B9FAEF13D0E853D3A04024C64292592FC3BBE55E81817967DB38"
+    }
+  ],
+  "newCases": [
+    "providers::gemini_api::tests::native_tool_parts_and_error_markers_cannot_become_text_success",
+    "providers::gemini_api::tests::null_tool_fields_preserve_text_usage_refusal_and_request_wire",
+    "providers::gemini_api::tests::native_tool_http_response_fails_complete_and_buffered_stream"
+  ],
+  "requiredPortableNativeTests": 3286,
+  "coverage": "Three cases cover six fields with four payload shapes each, later parts, conflicting filter metadata, three tool-error markers with/without content, unchanged text/usage/refusal/request bytes, and real mocked HTTP complete/buffered-stream rejection with exactly two requests.",
+  "references": [
+    "https://aistudio.google.com/api-reference/generate-content",
+    "https://aistudio.google.com/api-reference/caching"
+  ],
+  "review": "GPT-6.1 Terra high prompt-only review of supplied production snippets and test details; no concrete remaining finding. Root performed bounded text/diff inspection.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "No live Gemini calls, native tool execution or native SSE.",
+    "Other candidates and unrelated future protocol features retain existing semantics.",
+    "Whole A08 transport/cancellation parity and current-producer native/release acceptance remain open."
+  ]
+}
