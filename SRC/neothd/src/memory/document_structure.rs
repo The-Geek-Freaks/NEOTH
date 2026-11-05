@@ -137,6 +137,28 @@ impl SectionProperties {
             );
             ordered_range(range.source_range, [0, entry_bytes], &mut previous_end)?;
         }
+        if self
+            .omissions
+            .iter()
+            .any(|item| item.reason == "metadata_limit")
+        {
+            ensure!(
+                self.omissions.len() == 1
+                    && self.omissions[0].source_range == [0, entry_bytes]
+                    && self.ranges.is_empty()
+                    && self.omissions_limited,
+                "invalid section metadata summary"
+            );
+        } else {
+            ensure!(
+                if self.omissions_limited {
+                    self.omissions.len() == 64 && self.omitted_observed > 64
+                } else {
+                    self.omissions.len() == self.omitted_observed
+                },
+                "inconsistent section omission detail count"
+            );
+        }
         let mut omissions_end = 0;
         let mut detailed_omissions = 0;
         for omission in &self.omissions {
@@ -718,6 +740,96 @@ mod tests {
         assert!(DocumentStructure::from_value(&value).is_err());
     }
 
+    #[test]
+    fn section_omission_counts_preserve_exact_capped_and_metadata_summary_contracts() {
+        for base in [v2_structure(), numbering_structure_v3()] {
+            for (count, limited, metadata) in [
+                (1usize, false, false),
+                (64, false, false),
+                (65, true, false),
+                (0, true, true),
+                (100, true, true),
+            ] {
+                let mut value = base.clone();
+                value["complete"] = serde_json::json!(false);
+                let omissions = if metadata {
+                    serde_json::json!([{"reason":"metadata_limit","source_range":[0,100]}])
+                } else {
+                    serde_json::json!((0..count.min(64)).map(|index| {
+                        serde_json::json!({
+                            "reason":"unsupported_section_context",
+                            "source_range":[index,index + 1]
+                        })
+                    }).collect::<Vec<_>>())
+                };
+                value["section_properties"] = serde_json::json!({
+                    "complete":false, "omitted_observed":count,
+                    "omissions_limited":limited, "ranges":[], "omissions":omissions
+                });
+                let structure = DocumentStructure::from_value(&value).unwrap();
+                let restored =
+                    DocumentStructure::from_json_bytes(structure.to_json().unwrap().as_bytes())
+                        .unwrap();
+                assert_eq!(serde_json::to_value(restored).unwrap(), value);
+            }
+        }
+    }
+
+    #[test]
+    fn section_omission_count_and_summary_corruption_fail_closed() {
+        for base in [v2_structure(), numbering_structure_v3()] {
+            let mut value = base;
+            value["complete"] = serde_json::json!(false);
+            value["section_properties"] = serde_json::json!({
+                "complete":false, "omitted_observed":1, "omissions_limited":false,
+                "ranges":[],
+                "omissions":[{"reason":"unsupported_section_context","source_range":[91,99]}]
+            });
+            DocumentStructure::from_value(&value).unwrap();
+            for (field, replacement) in [
+                ("omitted_observed", serde_json::json!(0)),
+                ("omitted_observed", serde_json::json!(2)),
+                ("omissions_limited", serde_json::json!(true)),
+                ("omissions", serde_json::json!([])),
+                (
+                    "omissions",
+                    serde_json::json!([{"reason":"metadata_limit","source_range":[0,100]}]),
+                ),
+            ] {
+                let mut corrupt = value.clone();
+                corrupt["section_properties"][field] = replacement;
+                assert!(DocumentStructure::from_value(&corrupt).is_err(), "{field}");
+            }
+            value["section_properties"]["omissions_limited"] = serde_json::json!(true);
+            for details in [
+                serde_json::json!([
+                    {"reason":"metadata_limit","source_range":[0,100]},
+                    {"reason":"metadata_limit","source_range":[0,100]}
+                ]),
+                serde_json::json!([
+                    {"reason":"metadata_limit","source_range":[0,100]},
+                    {"reason":"unsupported_section_context","source_range":[91,99]}
+                ]),
+                serde_json::json!([{"reason":"metadata_limit","source_range":[1,100]}]),
+            ] {
+                let mut corrupt = value.clone();
+                corrupt["section_properties"]["omissions"] = details;
+                assert!(DocumentStructure::from_value(&corrupt).is_err());
+            }
+            for (details, count) in [(63, 65), (64, 64)] {
+                let mut corrupt = value.clone();
+                corrupt["section_properties"]["omitted_observed"] = serde_json::json!(count);
+                corrupt["section_properties"]["omissions"] =
+                    serde_json::json!((0..details).map(|index| {
+                        serde_json::json!({
+                            "reason":"unsupported_section_context",
+                            "source_range":[index,index + 1]
+                        })
+                    }).collect::<Vec<_>>());
+                assert!(DocumentStructure::from_value(&corrupt).is_err());
+            }
+        }
+    }
     fn numbering_structure_v3() -> serde_json::Value {
         let mut value = v2_structure();
         value["schema"] = serde_json::json!("neoth.document-structure.v3");

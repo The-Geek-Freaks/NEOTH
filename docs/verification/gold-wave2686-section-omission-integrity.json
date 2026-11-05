@@ -1,0 +1,41 @@
+{
+  "schema": "neoth.wave2686.section-omission-integrity.v1",
+  "producerBase": "1f1773fc29e0af58c21a0984749210d03847b2c7",
+  "batch": "B06",
+  "roadmap": "ADOPT-20261012-A03",
+  "finding": "Section metadata admitted missing omission detail without its limited marker, inconsistent count/cap state, and duplicate or unmarked whole-member metadata summaries.",
+  "change": [
+    "Match the current extractor contract: uncapped omission count equals detail count; capped detail retains exactly64 records and an observed count above64.",
+    "Metadata-limit fallback is exactly one whole-member record with no projected ranges and omissions_limited=true; zero observed sections remains valid.",
+    "Existing physical source coordinates, completeness, bounded persistence and schema versions remain unchanged."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/memory/document_structure.rs",
+      "sha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48"
+    },
+    {
+      "path": "SRC/neothd/src/media/docx_sections.rs",
+      "sha256": "4B281BBAD628A143D57F5820B658029602DD08437F90DC8E32795585B38B559E",
+      "change": "none"
+    }
+  ],
+  "tests": [
+    "memory::document_structure::tests::section_omission_counts_preserve_exact_capped_and_metadata_summary_contracts",
+    "memory::document_structure::tests::section_omission_count_and_summary_corruption_fail_closed"
+  ],
+  "newPortableCases": 2,
+  "totalPortableCases": 3307,
+  "validation": {
+    "static": "Root source/diff review and GPT-6.1 Terra high prompt-only contract review",
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "localExecutableValidationRan": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "Compatibility is with the inspected current extractor contract. Previously admitted inconsistent persisted or external metadata now fails closed; it is not rewritten or silently dropped.",
+    "Whole A03 structure, lineage and deletion acceptance is not established by this narrow repair."
+  ],
+  "rawRoadmapRowsClosed": 0
+}
