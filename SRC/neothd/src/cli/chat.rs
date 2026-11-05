@@ -16019,9 +16019,7 @@ pub(crate) async fn run_mcp_dispatch_loop_with_activity(
             req.prompt = prompt.to_string();
             let attribution =
                 crate::providers::cost_authorization::PromptContinuationBinding::for_origin(
-                    &self.base,
-                    &req,
-                    evidence,
+                    &self.base, &req, evidence,
                 );
             let provider = self.provider;
             // QM-10 Phase 2.5: streaming MCP-loop also consults the

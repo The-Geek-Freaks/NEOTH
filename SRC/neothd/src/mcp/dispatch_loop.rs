@@ -362,15 +362,25 @@ pub struct ToolOriginEvidence {
 
 impl ToolOriginEvidence {
     pub(crate) fn initial(bytes: u32) -> Self {
-        Self { bytes, compacted: false }
+        Self {
+            bytes,
+            compacted: false,
+        }
     }
 
     pub(crate) fn after_compaction(bytes: u32) -> Self {
-        Self { bytes, compacted: true }
+        Self {
+            bytes,
+            compacted: true,
+        }
     }
 
-    pub(crate) fn bytes(self) -> u32 { self.bytes }
-    pub(crate) fn compacted(self) -> bool { self.compacted }
+    pub(crate) fn bytes(self) -> u32 {
+        self.bytes
+    }
+    pub(crate) fn compacted(self) -> bool {
+        self.compacted
+    }
 }
 
 pub trait CompletionDriver {
@@ -810,7 +820,16 @@ where
             }
         }
         current_text = driver
-            .complete_with_tool_origin(&prompt, retained_tool_result_bytes.map(|bytes| if tool_origin_compacted { ToolOriginEvidence::after_compaction(bytes) } else { ToolOriginEvidence::initial(bytes) }))
+            .complete_with_tool_origin(
+                &prompt,
+                retained_tool_result_bytes.map(|bytes| {
+                    if tool_origin_compacted {
+                        ToolOriginEvidence::after_compaction(bytes)
+                    } else {
+                        ToolOriginEvidence::initial(bytes)
+                    }
+                }),
+            )
             .await?;
         let mut extraction = extract_tool_calls(&current_text);
         // GOLD-ADAPT-HARNESS-01 — leaked tool-call retry: if the model returned
@@ -835,7 +854,16 @@ where
                 crate::mcp::harness::LEAKED_CALL_NUDGE
             );
             current_text = driver
-                .complete_with_tool_origin(&nudge_prompt, retained_tool_result_bytes.map(|bytes| if tool_origin_compacted { ToolOriginEvidence::after_compaction(bytes) } else { ToolOriginEvidence::initial(bytes) }))
+                .complete_with_tool_origin(
+                    &nudge_prompt,
+                    retained_tool_result_bytes.map(|bytes| {
+                        if tool_origin_compacted {
+                            ToolOriginEvidence::after_compaction(bytes)
+                        } else {
+                            ToolOriginEvidence::initial(bytes)
+                        }
+                    }),
+                )
                 .await?;
             extraction = extract_tool_calls(&current_text);
             response_was_harness_replay = true;
@@ -4981,8 +5009,14 @@ mod tests {
             prompt: &'a str,
             evidence: Option<ToolOriginEvidence>,
         ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-            self.seen_partial.lock().unwrap().push(evidence.filter(|e| e.compacted).map(|e| e.bytes));
-            self.complete_with_tool_attribution(prompt, evidence.filter(|e| !e.compacted).map(|e| e.bytes))
+            self.seen_partial
+                .lock()
+                .unwrap()
+                .push(evidence.filter(|e| e.compacted).map(|e| e.bytes));
+            self.complete_with_tool_attribution(
+                prompt,
+                evidence.filter(|e| !e.compacted).map(|e| e.bytes),
+            )
         }
 
         fn complete_with_tool_attribution<'a>(
@@ -5823,20 +5857,39 @@ mod tests {
     #[tokio::test]
     async fn compacted_loop_counts_only_new_rendered_tool_blocks() {
         let home = test_instance_home();
-        let tool = "```mcp-tool-call\n{\"server\":\"missing\",\"tool\":\"read\",\"arguments\":{}}\n```";
+        let tool =
+            "```mcp-tool-call\n{\"server\":\"missing\",\"tool\":\"read\",\"arguments\":{}}\n```";
         let mut driver = ScriptedDriver::new(vec!["done", "compact summary", tool, "done"]);
         let outcome = run_tool_loop_with_cap(
-            &mut driver, "x".repeat(10_001), &McpServers::default(),
-            AutonomyLevel::Standard, None, None, &McpToolScope::default(), 3,
-            &crate::config::SecurityPolicy::default(), None,
-            crate::mcp::goal_tracker::GoalContext { goal: None, grind: Some("continue".into()) },
+            &mut driver,
+            "x".repeat(10_001),
+            &McpServers::default(),
+            AutonomyLevel::Standard,
+            None,
+            None,
+            &McpToolScope::default(),
+            3,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            crate::mcp::goal_tracker::GoalContext {
+                goal: None,
+                grind: Some("continue".into()),
+            },
             false,
             crate::context::compaction::CompactionPolicy {
-                enabled: true, threshold_tokens: 10_000, prompt_capacity_tokens: 30_000, progressive: false,
+                enabled: true,
+                threshold_tokens: 10_000,
+                prompt_capacity_tokens: 30_000,
+                progressive: false,
             },
-            None, None, &crate::cli::elicitation::ElicitationHandler::Disabled,
-            &crate::config::tools::McpHarnessConfig::default(), home.path(),
-        ).await.unwrap();
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
+            home.path(),
+        )
+        .await
+        .unwrap();
         assert_eq!(outcome.iterations, 3);
         let partial = driver.seen_partial.lock().unwrap();
         assert_eq!(partial.len(), 3);
@@ -5844,7 +5897,10 @@ mod tests {
         assert_eq!(partial[1], Some(0));
         let bytes = partial[2].unwrap();
         assert!(bytes > 0);
-        assert_eq!(*driver.seen_attribution.lock().unwrap(), vec![Some(0), None, None]);
+        assert_eq!(
+            *driver.seen_attribution.lock().unwrap(),
+            vec![Some(0), None, None]
+        );
         let seen = driver.seen_prompts.lock().unwrap();
         let final_prompt = seen.last().unwrap();
         assert!(final_prompt.starts_with(crate::context::compaction::SUMMARY_MARKER));
@@ -5903,8 +5959,11 @@ mod tests {
                 vec![Some(0), if compact { None } else { Some(0) }],
                 "a summary must never relabel old prompt components",
             );
-            assert_eq!(*driver.seen_partial.lock().unwrap(), vec![None, compact.then_some(0)],
-                "zero counts only post-compaction appends, not tool content in the summary");
+            assert_eq!(
+                *driver.seen_partial.lock().unwrap(),
+                vec![None, compact.then_some(0)],
+                "zero counts only post-compaction appends, not tool content in the summary"
+            );
             assert_eq!(
                 driver.cursor.load(Ordering::SeqCst),
                 if compact { 3 } else { 2 }

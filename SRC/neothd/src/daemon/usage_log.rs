@@ -414,7 +414,9 @@ pub fn append(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
 
 fn append_unlocked(home: &Path, event: &UsageEvent) -> std::io::Result<()> {
     if event.partial_prompt_origin.is_some() && event.prompt_tax.is_some() {
-        return Err(std::io::Error::other("partial origin cannot coexist with historical prompt tax"));
+        return Err(std::io::Error::other(
+            "partial origin cannot coexist with historical prompt tax",
+        ));
     }
     fs::create_dir_all(usage_dir(home))?;
     let path = jsonl_file_for_ts(home, event.ts_unix);
@@ -734,8 +736,10 @@ pub(crate) fn terminal_usage_snapshot_v3(event: &UsageEvent) -> anyhow::Result<s
 
 pub(crate) fn terminal_usage_snapshot_v4(event: &UsageEvent) -> anyhow::Result<serde_json::Value> {
     validate_snapshot_pricing(event)?;
-    anyhow::ensure!(event.partial_prompt_origin.is_some() && event.prompt_tax.is_none(),
-        "partial snapshot requires exclusive post-compaction evidence");
+    anyhow::ensure!(
+        event.partial_prompt_origin.is_some() && event.prompt_tax.is_none(),
+        "partial snapshot requires exclusive post-compaction evidence"
+    );
     encode_usage_snapshot(event, true, false, true)
 }
 
@@ -757,8 +761,10 @@ fn encode_usage_snapshot(
     with_components: bool,
     with_partial: bool,
 ) -> anyhow::Result<serde_json::Value> {
-    anyhow::ensure!(with_partial == event.partial_prompt_origin.is_some(),
-        "partial origin evidence does not match snapshot version");
+    anyhow::ensure!(
+        with_partial == event.partial_prompt_origin.is_some(),
+        "partial origin evidence does not match snapshot version"
+    );
     if event
         .cost_usd
         .is_some_and(|cost| !cost.is_finite() || cost.is_sign_negative())
@@ -819,7 +825,8 @@ fn usage_event_from_snapshot(snapshot: &serde_json::Value) -> anyhow::Result<Usa
         anyhow::bail!("terminal usage snapshot contains competing amount representations");
     }
     anyhow::ensure!(
-        (snapshot.get("schema").and_then(serde_json::Value::as_str) == Some("neoth.provider-usage-snapshot.v4"))
+        (snapshot.get("schema").and_then(serde_json::Value::as_str)
+            == Some("neoth.provider-usage-snapshot.v4"))
             == metadata.get("partial_prompt_origin").is_some(),
         "partial origin field does not match snapshot version"
     );
@@ -912,8 +919,10 @@ fn usage_event_from_terminal_payload_with_legacy(
         .and_then(serde_json::Value::as_str);
     let with_components = schema == Some("neoth.provider-usage.v5");
     let with_partial = schema == Some("neoth.provider-usage.v6");
-    anyhow::ensure!(with_partial == value.get("partial_prompt_origin").is_some(),
-        "partial origin field does not match terminal version");
+    anyhow::ensure!(
+        with_partial == value.get("partial_prompt_origin").is_some(),
+        "partial origin field does not match terminal version"
+    );
     let with_pricing = matches!(
         schema,
         Some("neoth.provider-usage.v4" | "neoth.provider-usage.v5" | "neoth.provider-usage.v6")
@@ -935,7 +944,10 @@ fn usage_event_from_terminal_payload_with_legacy(
         Some(serde_json::Value::String(schema))
             if matches!(
                 schema.as_str(),
-                "neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5" | "neoth.provider-usage.v6"
+                "neoth.provider-usage.v3"
+                    | "neoth.provider-usage.v4"
+                    | "neoth.provider-usage.v5"
+                    | "neoth.provider-usage.v6"
             ) =>
         {
             let snapshot = value
@@ -1024,8 +1036,12 @@ fn usage_event_from_terminal_payload_with_legacy(
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `streaming` is missing"))?,
         prompt_tax: terminal_prompt_tax(&value)?,
         partial_prompt_origin: if with_partial {
-            Some(serde_json::from_value(value["partial_prompt_origin"].clone())?)
-        } else { None },
+            Some(serde_json::from_value(
+                value["partial_prompt_origin"].clone(),
+            )?)
+        } else {
+            None
+        },
         pricing_basis: if with_pricing {
             serde_json::from_value(value["pricing_basis"].clone())?
         } else {
@@ -1195,8 +1211,11 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 }
             }
             if let Some(partial) = ev.partial_prompt_origin
-                && roll.partial_prompt_origin.get_or_insert_with(Default::default)
-                    .try_absorb(partial).is_none()
+                && roll
+                    .partial_prompt_origin
+                    .get_or_insert_with(Default::default)
+                    .try_absorb(partial)
+                    .is_none()
             {
                 roll.partial_prompt_origin_overflowed = true;
             }
@@ -2499,21 +2518,33 @@ mod tests {
     fn terminal_v6_partial_origin_replays_unknown_history_and_rejects_mixed_evidence() {
         use crate::tokens::partial_prompt_origin::PartialPromptOrigin;
         for bytes in [0, 4] {
-            let mut event = priced_terminal_event("openai_api", "gpt-4o", Some(99), Some(3), None, None);
+            let mut event =
+                priced_terminal_event("openai_api", "gpt-4o", Some(99), Some(3), None, None);
             let mut payload = priced_terminal_payload(&event);
             for inner in [false, true] {
                 let mut legacy_null = payload.clone();
-                if inner { legacy_null["usage_snapshot"]["event_metadata"]["partial_prompt_origin"] = serde_json::Value::Null; }
-                else { legacy_null["partial_prompt_origin"] = serde_json::Value::Null; }
-                assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&legacy_null).unwrap()).is_err());
+                if inner {
+                    legacy_null["usage_snapshot"]["event_metadata"]["partial_prompt_origin"] =
+                        serde_json::Value::Null;
+                } else {
+                    legacy_null["partial_prompt_origin"] = serde_json::Value::Null;
+                }
+                assert!(
+                    usage_event_from_terminal_payload(&serde_json::to_vec(&legacy_null).unwrap())
+                        .is_err()
+                );
             }
             event.partial_prompt_origin = Some(PartialPromptOrigin::new(bytes, 520).unwrap());
             payload["usage_projection_schema"] = "neoth.provider-usage.v6".into();
-            payload["partial_prompt_origin"] = serde_json::to_value(event.partial_prompt_origin).unwrap();
+            payload["partial_prompt_origin"] =
+                serde_json::to_value(event.partial_prompt_origin).unwrap();
             payload["usage_snapshot"] = terminal_usage_snapshot_v4(&event).unwrap();
             let restored = usage_event_from_terminal_payload_with_legacy(
-                &serde_json::to_vec(&payload).unwrap(), |_| panic!("v6 must not reprice"),
-            ).unwrap().unwrap();
+                &serde_json::to_vec(&payload).unwrap(),
+                |_| panic!("v6 must not reprice"),
+            )
+            .unwrap()
+            .unwrap();
             assert_eq!(restored, event);
             assert!(restored.prompt_tax.is_none());
             let home = tempfile::tempdir().unwrap();
@@ -2532,22 +2563,39 @@ mod tests {
                 let mut changed = payload.clone();
                 match mutation {
                     0 => changed["usage_projection_schema"] = "neoth.provider-usage.v5".into(),
-                    1 => changed["usage_snapshot"]["schema"] = "neoth.provider-usage-snapshot.v3".into(),
-                    2 => changed["partial_prompt_origin"]["known_tool_result_bytes"] = (bytes + 1).into(),
+                    1 => {
+                        changed["usage_snapshot"]["schema"] =
+                            "neoth.provider-usage-snapshot.v3".into()
+                    }
+                    2 => {
+                        changed["partial_prompt_origin"]["known_tool_result_bytes"] =
+                            (bytes + 1).into()
+                    }
                     3 => {
-                        changed["usage_snapshot"]["event_metadata"].as_object_mut().unwrap().remove("partial_prompt_origin").unwrap();
+                        changed["usage_snapshot"]["event_metadata"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("partial_prompt_origin")
+                            .unwrap();
                     }
                     _ => {
                         changed["prompt_tax"] = serde_json::json!({"skill_tokens":0,"memory_tokens":0,"repo_context_tokens":0,"council_tokens":0,"unattributed_tokens":0});
-                        changed["usage_snapshot"]["event_metadata"]["prompt_tax"] = changed["prompt_tax"].clone();
+                        changed["usage_snapshot"]["event_metadata"]["prompt_tax"] =
+                            changed["prompt_tax"].clone();
                     }
                 }
-                assert!(usage_event_from_terminal_payload(&serde_json::to_vec(&changed).unwrap()).is_err());
+                assert!(
+                    usage_event_from_terminal_payload(&serde_json::to_vec(&changed).unwrap())
+                        .is_err()
+                );
             }
             let mut mixed = event.clone();
             mixed.prompt_tax = Some(Default::default());
             assert!(append(home.path(), &mixed).is_err());
-            for snapshot in [terminal_usage_snapshot_v2(&event), terminal_usage_snapshot_v3(&event)] {
+            for snapshot in [
+                terminal_usage_snapshot_v2(&event),
+                terminal_usage_snapshot_v3(&event),
+            ] {
                 assert!(snapshot.is_err());
             }
         }

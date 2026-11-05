@@ -266,11 +266,15 @@ pub(crate) fn render_partial_prompt_origin_section(roll: &UsageRollup) -> String
     if roll.partial_prompt_origin_overflowed {
         return "  post-compaction tool origin: unavailable (rollup overflow)\n".into();
     }
-    let Some(partial) = &roll.partial_prompt_origin else { return String::new(); };
+    let Some(partial) = &roll.partial_prompt_origin else {
+        return String::new();
+    };
     format!(
         "  post-compaction tool origin: {}/{} calls; known subsequently appended tool bytes={}\n    compacted base and other origins: unknown; request upper bound={} (local byte estimates; not provider tokens or allocated cost)\n",
-        partial.observed_call_count, roll.total_call_count,
-        partial.known_tool_result_bytes, partial.request_upper_bound,
+        partial.observed_call_count,
+        roll.total_call_count,
+        partial.known_tool_result_bytes,
+        partial.request_upper_bound,
     )
 }
 

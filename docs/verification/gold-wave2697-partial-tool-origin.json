@@ -22,31 +22,31 @@
   "sources": [
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "4CBE8CFEBF98C435B895252C10E83BCE5552F4CD1432C388CE13CA13CE7E7131"
+      "sha256": "4842425A0DEFDFB316E7D281B3F9038ADBFF173AF01144F2633A44CEF3828B54"
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/decode.rs",
-      "sha256": "675F9906FAC1D5E2D39A08B7C4287BB258DA095B44D139955BEF87EC5040B179"
+      "sha256": "6896BFB48AF56AA650F09BC38C5B44ABF093FD9276C42190531EC03479C19046"
     },
     {
       "path": "SRC/neothd/src/cli/usage.rs",
-      "sha256": "D101FD552B21EA8ECFCDD9A0C2EA06188CAAE5976D6A9D600BB6C6C732A613E1"
+      "sha256": "76EB78C5323B5466C1CF45C69EF65278D32BD2E9981AB0E9C3F0579A997B03CE"
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sha256": "BB33502C7EE45AB737E5CC9081E96C649CA80BD7F665DB326BF1613C3D0E459E"
+      "sha256": "A23F4D5B7CB84C273ADCE6DC64F261E2D217B149BBF209850CB080003A8CA23F"
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
-      "sha256": "4A216B559B504A0BA3E29E295941BBC0B461AE0B3CA7755C3CEB0F1E34C6294D"
+      "sha256": "124287D904E7F98D9C06C3415A6C0BEF41F3C3FD9819D107F8556A2A17B14F7D"
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sha256": "19061CCCB20CFD8870DC26DAC043FEEF1489D7FE008D98391EDD3681253211FF"
+      "sha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F"
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sha256": "5548C68926A0EBCFAA3233C64B02FBED87C00BDA3EEB2F93CD9281AEE8F55759"
+      "sha256": "4E95C4AF75A6D5DAC1199FAB1F04E625589D8B4EF59141C5A14DC01747A3B8DF"
     },
     {
       "path": "SRC/neothd/src/tokens/mod.rs",
@@ -54,7 +54,7 @@
     },
     {
       "path": "SRC/neothd/src/tokens/partial_prompt_origin.rs",
-      "sha256": "E71D99FB44495C829F65E67C26372F58934B7F2C44D7542D8EB4380D6CD49419"
+      "sha256": "66D350A42E3BC0838D713D38CE40090AD33596B436C48CFF55D74490CAD73C4A"
     }
   ],
   "validation": {
@@ -70,5 +70,20 @@
     "Live GUI/mobile partial display not asserted; shared rollup and CLI only",
     "Existing append-only attribution and all prior130 focused regressions retained"
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42081586217,
+    "artifact": 13441976241,
+    "producer": "77aac1cc0b78be708ddf749abb9cbf470b8e5f73",
+    "apiZipAndMembersVerified": true,
+    "exactPrePostImages": 8,
+    "runtimeAccepted": false
+  },
+  "independentReview": {
+    "agent": "/root/w2688_rust_review",
+    "model": "GPT-6.1 Terra high",
+    "scope": "Prompt-only production algorithms and actual request binding/snapshot codec excerpts",
+    "outcome": "Presence/null and stale historical tax questions resolved by existing explicit guards; no remaining concrete issue in excerpts",
+    "executedTests": false
+  }
 }

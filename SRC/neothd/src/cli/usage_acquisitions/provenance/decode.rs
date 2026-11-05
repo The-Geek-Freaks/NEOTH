@@ -132,9 +132,10 @@ pub(super) fn terminal(event_type: u8, payload: &[u8]) -> Result<Terminal, &'sta
     };
     let amount_provenance = match projection_schema {
         "neoth.provider-usage.v2" => "legacy_unpriced",
-        "neoth.provider-usage.v3" | "neoth.provider-usage.v4" | "neoth.provider-usage.v5" | "neoth.provider-usage.v6" => {
-            "frozen_computed_amounts_not_invoice"
-        }
+        "neoth.provider-usage.v3"
+        | "neoth.provider-usage.v4"
+        | "neoth.provider-usage.v5"
+        | "neoth.provider-usage.v6" => "frozen_computed_amounts_not_invoice",
         _ => return Err("unsupported_schema"),
     };
     let lifecycle_present = match object.get("schema") {

@@ -233,7 +233,10 @@ impl PromptContinuationBinding {
         }
         Some(Self {
             base_binding: prompt_tax_request_binding_sha256(&base.prompt, base.system.as_deref()),
-            final_binding: prompt_tax_request_binding_sha256(&request.prompt, request.system.as_deref()),
+            final_binding: prompt_tax_request_binding_sha256(
+                &request.prompt,
+                request.system.as_deref(),
+            ),
             appended_bytes: 0,
             tool_result_bytes: evidence.bytes(),
             compacted: true,
@@ -280,10 +283,12 @@ impl PromptContinuationBinding {
         }
         if self.compacted {
             context.prompt_tax = None;
-            context.partial_prompt_origin = crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(
-                self.tool_result_bytes,
-                crate::providers::token_cap::request_token_upper_bound(request),
-            ).ok();
+            context.partial_prompt_origin =
+                crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(
+                    self.tool_result_bytes,
+                    crate::providers::token_cap::request_token_upper_bound(request),
+                )
+                .ok();
             context.prompt_tax_request_binding_sha256 = Some(self.final_binding.clone());
             return;
         }
@@ -661,7 +666,8 @@ pub struct ProviderCallAuditContext {
     /// local prompt bundle. This is not provider-reported input usage.
     pub prompt_tax: Option<crate::tokens::budget::PromptTax>,
     /// Private partial origin evidence; cannot populate historical tax counters.
-    pub(crate) partial_prompt_origin: Option<crate::tokens::partial_prompt_origin::PartialPromptOrigin>,
+    pub(crate) partial_prompt_origin:
+        Option<crate::tokens::partial_prompt_origin::PartialPromptOrigin>,
     /// Internal content-free binding for `prompt_tax`. It is cleared before a
     /// ticket is created and is never added to WAL or usage payloads.
     pub(crate) prompt_tax_request_binding_sha256: Option<String>,
@@ -1046,7 +1052,10 @@ impl ProviderCallAuditTicket {
             .is_some_and(|tax| tax.components.is_some());
         let with_partial = usage_event.partial_prompt_origin.is_some();
         if with_partial {
-            payload.insert("partial_prompt_origin".into(), serde_json::to_value(usage_event.partial_prompt_origin)?);
+            payload.insert(
+                "partial_prompt_origin".into(),
+                serde_json::to_value(usage_event.partial_prompt_origin)?,
+            );
         }
         if with_components {
             payload.insert(
@@ -5398,38 +5407,91 @@ mod tests {
     #[tokio::test]
     async fn compacted_continuation_binds_partial_bytes_without_historical_zeroes() {
         let (base, tax) = continuation_fixture();
-        let request = Request { prompt: "summary\n🦀".into(), ..base.clone() };
+        let request = Request {
+            prompt: "summary\n🦀".into(),
+            ..base.clone()
+        };
         for bytes in [0, 4] {
             let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
                 .with_prompt_tax(tax, &base.prompt, base.system.as_deref());
             let admitted = prompt_continuation_scope(
-                PromptContinuationBinding::for_origin(&base, &request,
-                    Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes))),
-                authorizer.authorize_leaf("local_ollama", &request, "test.partial_origin", false, Some(64)),
-            ).await.unwrap();
+                PromptContinuationBinding::for_origin(
+                    &base,
+                    &request,
+                    Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes)),
+                ),
+                authorizer.authorize_leaf(
+                    "local_ollama",
+                    &request,
+                    "test.partial_origin",
+                    false,
+                    Some(64),
+                ),
+            )
+            .await
+            .unwrap();
             assert!(admitted.ticket.context.prompt_tax.is_none());
-            assert!(admitted.ticket.context.prompt_tax_request_binding_sha256.is_none());
+            assert!(
+                admitted
+                    .ticket
+                    .context
+                    .prompt_tax_request_binding_sha256
+                    .is_none()
+            );
             let partial = admitted.ticket.context.partial_prompt_origin.unwrap();
             assert_eq!(partial.known_tool_result_bytes(), bytes);
-            assert_eq!(partial.request_upper_bound(), crate::providers::token_cap::request_token_upper_bound(&request));
+            assert_eq!(
+                partial.request_upper_bound(),
+                crate::providers::token_cap::request_token_upper_bound(&request)
+            );
             for changed in [
-                Request { prompt: "changed bytes".into(), ..request.clone() },
-                Request { system: Some("changed system".into()), ..request.clone() },
+                Request {
+                    prompt: "changed bytes".into(),
+                    ..request.clone()
+                },
+                Request {
+                    system: Some("changed system".into()),
+                    ..request.clone()
+                },
             ] {
                 let other = prompt_continuation_scope(
-                    PromptContinuationBinding::for_origin(&base, &request,
-                        Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes))),
-                    authorizer.authorize_leaf("local_ollama", &changed, "test.partial_origin", false, Some(64)),
-                ).await.unwrap();
+                    PromptContinuationBinding::for_origin(
+                        &base,
+                        &request,
+                        Some(
+                            crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes),
+                        ),
+                    ),
+                    authorizer.authorize_leaf(
+                        "local_ollama",
+                        &changed,
+                        "test.partial_origin",
+                        false,
+                        Some(64),
+                    ),
+                )
+                .await
+                .unwrap();
                 assert!(other.ticket.context.partial_prompt_origin.is_none());
                 assert!(other.ticket.context.prompt_tax.is_none());
             }
             let missing = ProviderCallAuthorizer::test_only(AutonomyLevel::Full);
             let no_base = prompt_continuation_scope(
-                PromptContinuationBinding::for_origin(&base, &request,
-                    Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes))),
-                missing.authorize_leaf("local_ollama", &request, "test.partial_origin", false, Some(64)),
-            ).await.unwrap();
+                PromptContinuationBinding::for_origin(
+                    &base,
+                    &request,
+                    Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(bytes)),
+                ),
+                missing.authorize_leaf(
+                    "local_ollama",
+                    &request,
+                    "test.partial_origin",
+                    false,
+                    Some(64),
+                ),
+            )
+            .await
+            .unwrap();
             assert!(no_base.ticket.context.partial_prompt_origin.is_none());
         }
     }
@@ -9268,7 +9330,14 @@ mod tests {
             ..Default::default()
         };
         let base = request.clone();
-        let request = if with_partial { Request { prompt: "summary\n🦀".into(), ..request } } else { request };
+        let request = if with_partial {
+            Request {
+                prompt: "summary\n🦀".into(),
+                ..request
+            }
+        } else {
+            request
+        };
         let mut authorizer = ProviderCallAuthorizer::fail_closed(
             AutonomyLevel::Full,
             Some(writer.clone()),
@@ -9292,16 +9361,26 @@ mod tests {
             );
         }
         if with_partial {
-            authorizer = authorizer.with_prompt_tax(Default::default(), &base.prompt, base.system.as_deref());
+            authorizer = authorizer.with_prompt_tax(
+                Default::default(),
+                &base.prompt,
+                base.system.as_deref(),
+            );
         }
         let authorized = CostAuthorizingProvider::new(&provider, authorizer, None, "usage.repair");
 
         let binding = if with_partial {
             PromptContinuationBinding::for_origin(
-                &base, &request, Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(4))
+                &base,
+                &request,
+                Some(crate::mcp::dispatch_loop::ToolOriginEvidence::after_compaction(4)),
             )
-        } else { None };
-        prompt_continuation_scope(binding, authorized.complete(request)).await.unwrap();
+        } else {
+            None
+        };
+        prompt_continuation_scope(binding, authorized.complete(request))
+            .await
+            .unwrap();
         drop(authorized);
         drop(writer);
         join.await.unwrap();
@@ -9352,7 +9431,13 @@ mod tests {
         assert_eq!(frames[1].1["ts_unix"], events[0].ts_unix);
         if with_partial {
             assert!(events[0].prompt_tax.is_none());
-            assert_eq!(events[0].partial_prompt_origin.unwrap().known_tool_result_bytes(), 4);
+            assert_eq!(
+                events[0]
+                    .partial_prompt_origin
+                    .unwrap()
+                    .known_tool_result_bytes(),
+                4
+            );
             let roll = crate::daemon::usage_log::aggregate(home.path(), 0, i64::MAX);
             assert!(roll.prompt_tax.is_none());
             assert!(roll.prompt_components.is_none());
