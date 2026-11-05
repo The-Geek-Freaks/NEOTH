@@ -14,11 +14,11 @@
   "sources": [
     {
       "path": "SRC/neothd/src/daemon/email_ingest_cron.rs",
-      "sha256": "0188988E7E00A42FD35594D83EC6726FC32E30D6CF709C5EFA45DA7FB3C52798"
+      "sha256": "3C014D0F994117EBE4AA354F6ADD797E500E3B2E9073C6A4870FDE6EF640BE53"
     },
     {
       "path": "docs/verification/gold-wave2557-email-paperless-recovery-tests.json",
-      "sha256": "0825638FB8DD6C7818D4C73949D85AAD83B55356A5B0C8AF9B0B6A7D336DDC08"
+      "sha256": "1A6139B2F74A9EDC336C855A7A9A97A4FEF06B08CB4DD8BD56F28E4D77B82F86"
     },
     {
       "path": ".github/workflows/paperless-product.yml",
@@ -44,5 +44,13 @@
     "Named retryable/terminal_failure product projection and approved rendition-revision controls remain separate A04 scope.",
     "Prior101-case acceptance is bound to5003a482; this102-case successor remains pending."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42112113761,
+    "artifact": 13455446153,
+    "producer": "8b379666819c474ae7cbe1212fb3bb326b02d8b8",
+    "apiZipMemberAndPrePostImagesVerified": true,
+    "localFormatterExecuted": false,
+    "proof": "work/gold-20260906/wave2711-hosted-format/FORMAT_IMPORT.json"
+  }
 }

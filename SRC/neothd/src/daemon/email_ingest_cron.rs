@@ -1044,9 +1044,14 @@ mod tests {
 
     #[tokio::test]
     async fn cron_mixed_http_outcomes_preserve_completed_units_and_reconcile_after_restart() {
-        use crate::email::seen_store::scoped::{self, DeliveryContext, Identity, Purpose, SeenState};
+        use crate::email::seen_store::scoped::{
+            self, DeliveryContext, Identity, Purpose, SeenState,
+        };
         use crate::wal::paperless_post_receipts::PaperlessPostIntentDescriptor;
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
         use wiremock::matchers::{body_string_contains, header, method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1054,33 +1059,49 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/ui_settings/"))
             .and(header("authorization", "Token fixture-token"))
-            .respond_with(ResponseTemplate::new(200)
-                .insert_header("X-Version", "3.2.1")
-                .insert_header("X-Api-Version", "10")
-                .set_body_json(serde_json::json!({"user":{"id":17}})))
-            .mount(&server).await;
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Version", "3.2.1")
+                    .insert_header("X-Api-Version", "10")
+                    .set_body_json(serde_json::json!({"user":{"id":17}})),
+            )
+            .mount(&server)
+            .await;
         let emails = [
             vault_identity_email("1", Some("<mixed-completed>")),
             vault_identity_email("2", Some("<mixed-uncertain>")),
         ];
         let base = server.uri();
         let (endpoint, title) = paperless_request_binding(&base, &emails[0].subject).unwrap();
-        let context = DeliveryContext::new(None, "NEOTH", Some(&base), true, true).unwrap()
-            .with_authenticated_paperless_principal(&endpoint, 17).unwrap();
+        let context = DeliveryContext::new(None, "NEOTH", Some(&base), true, true)
+            .unwrap()
+            .with_authenticated_paperless_principal(&endpoint, 17)
+            .unwrap();
         let destination = PaperlessDestination::from_parts(Some(&base), Some("fixture-token"));
         let mut units = Vec::new();
-        let visible = [Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))];
+        let visible = [
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        ];
         for (index, email) in emails.iter().enumerate() {
             let identity = Identity::inbox("imap.example", 993, "alice", email, 7).unwrap();
             let descriptor = PaperlessPostIntentDescriptor::from_mail(
-                "imap.example", 993, "alice", &paperless_mail_key(email, 7).unwrap(),
-                &email.body, &title, &endpoint,
-            ).with_authenticated_principal(17).unwrap();
+                "imap.example",
+                993,
+                "alice",
+                &paperless_mail_key(email, 7).unwrap(),
+                &email.body,
+                &title,
+                &endpoint,
+            )
+            .with_authenticated_principal(17)
+            .unwrap();
             let marker = descriptor.marker_filename();
             let document_id = 71 + index as u64;
             let observed = visible[index].clone();
             let listed_marker = marker.clone();
-            Mock::given(method("GET")).and(path("/api/documents/"))
+            Mock::given(method("GET"))
+                .and(path("/api/documents/"))
                 .and(query_param("original_filename__iexact", marker.clone()))
                 .respond_with(move |_: &wiremock::Request| {
                     let body = if observed.load(Ordering::SeqCst) {
@@ -1089,72 +1110,170 @@ mod tests {
                     } else {
                         serde_json::json!({"count":0,"next":null,"previous":null,"results":[]})
                     };
-                    ResponseTemplate::new(200).insert_header("X-Version", "3.2.1")
-                        .insert_header("X-Api-Version", "10").set_body_json(body)
-                }).mount(&server).await;
+                    ResponseTemplate::new(200)
+                        .insert_header("X-Version", "3.2.1")
+                        .insert_header("X-Api-Version", "10")
+                        .set_body_json(body)
+                })
+                .mount(&server)
+                .await;
             let uploaded = visible[index].clone();
-            Mock::given(method("POST")).and(path("/api/documents/post_document/"))
+            Mock::given(method("POST"))
+                .and(path("/api/documents/post_document/"))
                 .and(body_string_contains(marker))
                 .respond_with(move |_: &wiremock::Request| {
-                    if index == 0 { uploaded.store(true, Ordering::SeqCst); }
+                    if index == 0 {
+                        uploaded.store(true, Ordering::SeqCst);
+                    }
                     ResponseTemplate::new(202)
-                }).expect(1).mount(&server).await;
-            Mock::given(method("GET")).and(path(format!("/api/documents/{document_id}/download/")))
+                })
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/api/documents/{document_id}/download/")))
                 .and(query_param("original", "true"))
-                .respond_with(ResponseTemplate::new(200).set_body_bytes(email.body.as_bytes().to_vec()))
-                .mount(&server).await;
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_bytes(email.body.as_bytes().to_vec()),
+                )
+                .mount(&server)
+                .await;
             units.push((identity, descriptor));
         }
         let (writer, join, home, segment) =
-            crate::wal::writer::spawn_isolated_ready_test_writer("cron-mixed-http").await.unwrap();
+            crate::wal::writer::spawn_isolated_ready_test_writer("cron-mixed-http")
+                .await
+                .unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
         for (index, (identity, descriptor)) in units.iter().enumerate() {
             let outcome = reconcile_or_upload_paperless(
-                home.path(), &writer, descriptor.clone(), &endpoint, "fixture-token",
-                &title, &emails[index].body,
-            ).await.unwrap();
-            assert_eq!(outcome, if index == 0 { PaperlessReconcileOutcome::Completed } else {
-                PaperlessReconcileOutcome::UnknownOutcome
-            });
-            assert_eq!(destination.record_delivery(&conn, identity, &context, 100,
-                (false, true), Some(outcome)).unwrap(), index == 0);
+                home.path(),
+                &writer,
+                descriptor.clone(),
+                &endpoint,
+                "fixture-token",
+                &title,
+                &emails[index].body,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                outcome,
+                if index == 0 {
+                    PaperlessReconcileOutcome::Completed
+                } else {
+                    PaperlessReconcileOutcome::UnknownOutcome
+                }
+            );
+            assert_eq!(
+                destination
+                    .record_delivery(&conn, identity, &context, 100, (false, true), Some(outcome))
+                    .unwrap(),
+                index == 0
+            );
         }
-        assert_eq!(scoped::state(&conn, &units[0].0, Purpose::Ingest, Some(&context)).unwrap(), SeenState::Seen);
-        assert_eq!(scoped::state(&conn, &units[1].0, Purpose::Ingest, Some(&context)).unwrap(), SeenState::Unseen);
+        assert_eq!(
+            scoped::state(&conn, &units[0].0, Purpose::Ingest, Some(&context)).unwrap(),
+            SeenState::Seen
+        );
+        assert_eq!(
+            scoped::state(&conn, &units[1].0, Purpose::Ingest, Some(&context)).unwrap(),
+            SeenState::Unseen
+        );
         drop(conn);
         drop(writer);
         join.await.unwrap().unwrap();
 
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            segment, home.path().to_path_buf(),
-        ).unwrap();
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf()).unwrap();
         ready.wait().await.unwrap();
-        assert_eq!(scoped::state(&conn, &units[0].0, Purpose::Ingest, Some(&context)).unwrap(), SeenState::Seen);
-        assert_eq!(scoped::state(&conn, &units[1].0, Purpose::Ingest, Some(&context)).unwrap(), SeenState::Unseen);
+        assert_eq!(
+            scoped::state(&conn, &units[0].0, Purpose::Ingest, Some(&context)).unwrap(),
+            SeenState::Seen
+        );
+        assert_eq!(
+            scoped::state(&conn, &units[1].0, Purpose::Ingest, Some(&context)).unwrap(),
+            SeenState::Unseen
+        );
         let pending = reconcile_or_upload_paperless(
-            home.path(), &writer, units[1].1.clone(), &endpoint, "fixture-token",
-            &title, &emails[1].body,
-        ).await.unwrap();
+            home.path(),
+            &writer,
+            units[1].1.clone(),
+            &endpoint,
+            "fixture-token",
+            &title,
+            &emails[1].body,
+        )
+        .await
+        .unwrap();
         assert_eq!(pending, PaperlessReconcileOutcome::UnknownOutcome);
-        assert!(!destination.record_delivery(&conn, &units[1].0, &context, 200,
-            (false, true), Some(pending)).unwrap());
-        assert_eq!(server.received_requests().await.unwrap().iter().filter(|r| r.method.as_str() == "POST").count(), 2);
+        assert!(
+            !destination
+                .record_delivery(
+                    &conn,
+                    &units[1].0,
+                    &context,
+                    200,
+                    (false, true),
+                    Some(pending)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.method.as_str() == "POST")
+                .count(),
+            2
+        );
 
         visible[1].store(true, Ordering::SeqCst);
         for now in [300, 400] {
             let completed = reconcile_or_upload_paperless(
-                home.path(), &writer, units[1].1.clone(), &endpoint, "fixture-token",
-                &title, &emails[1].body,
-            ).await.unwrap();
+                home.path(),
+                &writer,
+                units[1].1.clone(),
+                &endpoint,
+                "fixture-token",
+                &title,
+                &emails[1].body,
+            )
+            .await
+            .unwrap();
             assert_eq!(completed, PaperlessReconcileOutcome::Completed);
-            assert!(destination.record_delivery(&conn, &units[1].0, &context, now,
-                (false, true), Some(completed)).unwrap());
+            assert!(
+                destination
+                    .record_delivery(
+                        &conn,
+                        &units[1].0,
+                        &context,
+                        now,
+                        (false, true),
+                        Some(completed)
+                    )
+                    .unwrap()
+            );
         }
         for (identity, _) in &units {
-            assert_eq!(scoped::state(&conn, identity, Purpose::Ingest, Some(&context)).unwrap(), SeenState::Seen);
+            assert_eq!(
+                scoped::state(&conn, identity, Purpose::Ingest, Some(&context)).unwrap(),
+                SeenState::Seen
+            );
         }
-        assert_eq!(server.received_requests().await.unwrap().iter().filter(|r| r.method.as_str() == "POST").count(), 2);
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.method.as_str() == "POST")
+                .count(),
+            2
+        );
         drop(conn);
         drop(writer);
         join.await.unwrap().unwrap();
