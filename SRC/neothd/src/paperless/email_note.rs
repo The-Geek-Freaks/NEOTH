@@ -218,7 +218,14 @@ pub(crate) fn sync_email_to_obsidian(
     vault_root: &Path,
     subdir: &str,
 ) -> io::Result<EmailNoteOutcome> {
-    sync_email_to_obsidian_observed(payload, input_text, legacy_doc_id, vault_root, subdir, |_| {})
+    sync_email_to_obsidian_observed(
+        payload,
+        input_text,
+        legacy_doc_id,
+        vault_root,
+        subdir,
+        |_| {},
+    )
 }
 
 fn sync_email_to_obsidian_observed(
@@ -248,8 +255,7 @@ fn sync_email_to_obsidian_observed(
     let name = OsString::from(format!("{}.md", payload.document_id));
     let target = parent_path.join(&name);
     let rendition = render_email_note(payload, input_text);
-    if let Some(outcome) =
-        observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
+    if let Some(outcome) = observe_existing(&directory, &name, rendition.as_bytes(), &mut observe)?
     {
         return Ok(outcome);
     }

@@ -10,11 +10,11 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/paperless/email_note.rs",
-      "sha256": "645AB096576EFB417EA90B4F707F92A34B76196F72ADF2AE6A8267316126CF8A"
+      "sha256": "F52E157D6216F5AC36D725D8EC59CB2FA854FF3F8511EDD6589944EBAD3083F0"
     },
     {
       "path": "SRC/neothd/src/paperless/email_note/tests.rs",
-      "sha256": "B11E618FBD3C52090C358E8C0E564D33BEF07247C9A49F20DE0144B54018987F"
+      "sha256": "15BA6C4FEF42B0BC9D09A919C2B6CBBF382326518B25C8BBACE6AB57C49BFDA5"
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
@@ -71,5 +71,24 @@
   "localExecutableValidationRan": false,
   "hostedAccepted": false,
   "nativeAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "hostedFormatting": {
+    "run": "42001882002",
+    "producer": "b9b912928fc92413612abe28acd1b3be17fc9942",
+    "artifact": "13403051709",
+    "zipSha256": "B23BC6FC9A95F0070638C03F7B6E80E57FB8A239638AF34B653B963CB9F5A198",
+    "paths": [
+      "SRC/neothd/src/paperless/email_note.rs",
+      "SRC/neothd/src/paperless/email_note/tests.rs"
+    ],
+    "preimages": [
+      "124a89c41093491ad4dfbc05a9b021cb132c2b97",
+      "3ad169dc200cfd6069a55be040dd48d424df9e1f"
+    ],
+    "postimages": [
+      "8e3f3695972369359e98393a878012591c38881c",
+      "4e97949ee6ab7d0c0e81bf9c8e911a0af8450cb9"
+    ],
+    "localFormatterRan": false
+  }
 }

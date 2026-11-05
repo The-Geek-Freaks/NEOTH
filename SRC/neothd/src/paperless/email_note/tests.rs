@@ -219,7 +219,10 @@ fn email_note_post_commit_failure_preserves_a_verifiable_retry() {
     );
     assert!(result.is_err());
     let bytes = fs::read(&target).unwrap();
-    assert_eq!(bytes, render_email_note(&item, "Committed invoice").as_bytes());
+    assert_eq!(
+        bytes,
+        render_email_note(&item, "Committed invoice").as_bytes()
+    );
     assert_eq!(
         sync_email_to_obsidian(&item, "Committed invoice", "legacy", &root, "mail").unwrap(),
         EmailNoteOutcome::AlreadyPresent
@@ -301,19 +304,13 @@ fn email_note_leaf_replacement_after_read_is_not_completion() {
     let target = path(&root, &item);
     let retained = target.with_file_name("retained-original.md");
     let expected = fs::read(&target).unwrap();
-    let result = sync_email_to_obsidian_observed(
-        &item,
-        "Read invoice",
-        "legacy",
-        &root,
-        "mail",
-        |stage| {
+    let result =
+        sync_email_to_obsidian_observed(&item, "Read invoice", "legacy", &root, "mail", |stage| {
             if stage == NoteObservation::ExistingRead {
                 fs::rename(&target, &retained).unwrap();
                 fs::write(&target, &expected).unwrap();
             }
-        },
-    );
+        });
     assert!(result.is_err());
     assert_eq!(fs::read(&target).unwrap(), expected);
     assert_eq!(fs::read(&retained).unwrap(), expected);
@@ -377,7 +374,10 @@ fn email_note_parent_sync_failure_cannot_acknowledge_publication() {
     assert!(result.is_err());
     let target = path(&root, &item);
     let bytes = fs::read(&target).unwrap();
-    assert_eq!(bytes, render_email_note(&item, "Unsynced invoice").as_bytes());
+    assert_eq!(
+        bytes,
+        render_email_note(&item, "Unsynced invoice").as_bytes()
+    );
     assert_eq!(
         sync_email_to_obsidian(&item, "Unsynced invoice", "legacy", &root, "mail").unwrap(),
         EmailNoteOutcome::AlreadyPresent
