@@ -249,6 +249,7 @@ impl Provider for CohereAdapter {
                 MAX_SUCCESS_BODY_BYTES,
             )
             .await?;
+            reject_unsupported_native_tools(&parsed)?;
             let termination = cohere_termination(parsed.finish_reason.clone())?;
 
             // Concatenate every text block (Anthropic-like content[] array).
@@ -319,6 +320,23 @@ impl Provider for CohereAdapter {
     }
 }
 
+fn reject_unsupported_native_tools(response: &CohereResponse) -> Result<()> {
+    let tool_payload = response
+        .message
+        .as_ref()
+        .and_then(|message| message.tool_calls.as_ref())
+        .is_some_and(|value| !value.is_null() && value.as_array().is_none_or(|v| !v.is_empty()));
+    if tool_payload
+        || response
+            .finish_reason
+            .as_deref()
+            .is_some_and(|reason| reason.eq_ignore_ascii_case("TOOL_CALL"))
+    {
+        anyhow::bail!("cohere_api returned an unsupported native tool call");
+    }
+    Ok(())
+}
+
 fn cohere_termination(finish_reason: Option<String>) -> Result<ProviderTermination> {
     if let Some(reason) = finish_reason.as_deref()
         && matches!(reason.to_ascii_uppercase().as_str(), "ERROR" | "TIMEOUT")
@@ -367,6 +385,8 @@ struct CohereResponse {
 struct CohereRespMessage {
     #[serde(default)]
     content: Vec<CohereContentBlock>,
+    #[serde(default)]
+    tool_calls: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -540,6 +560,97 @@ mod tests {
             completion.termination.finish_reason.as_deref(),
             Some("COMPLETE")
         );
+    }
+
+    #[test]
+    fn native_tool_payload_and_finish_reason_cannot_become_text_success() {
+        for payload in [
+            serde_json::json!([{"id": "private-call", "function": {"name": "unrequested", "arguments": "private-input"}}]),
+            serde_json::json!({}),
+            serde_json::json!("malformed-private-payload"),
+            serde_json::json!(false),
+        ] {
+            let parsed: CohereResponse = serde_json::from_value(serde_json::json!({
+                "finish_reason": "COMPLETE",
+                "message": {"content": [{"type": "text", "text": "private prose"}], "tool_calls": payload}
+            }))
+            .unwrap();
+            let error = reject_unsupported_native_tools(&parsed).unwrap_err();
+            assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+        }
+        for reason in ["TOOL_CALL", "tool_call", "Tool_Call"] {
+            let parsed: CohereResponse = serde_json::from_value(serde_json::json!({
+                "finish_reason": reason,
+                "message": {"content": [{"type": "text", "text": "not complete"}], "tool_calls": []}
+            }))
+            .unwrap();
+            assert!(reject_unsupported_native_tools(&parsed).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn absent_null_and_empty_tool_fields_preserve_text_completion() {
+        for mut message in [
+            serde_json::json!({}),
+            serde_json::json!({"tool_calls": null}),
+            serde_json::json!({"tool_calls": []}),
+        ] {
+            message["content"] = serde_json::json!([{"type": "text", "text": "visible answer"}]);
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "finish_reason": "COMPLETE", "message": message
+                })))
+                .mount(&mock)
+                .await;
+            let completion = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(completion.text, "visible answer");
+            assert_eq!(completion.termination.finish_reason.as_deref(), Some("COMPLETE"));
+            assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_tool_http_response_fails_complete_and_buffered_stream() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "finish_reason": "COMPLETE",
+                "message": {
+                    "content": [{"type": "text", "text": "private prose must not escape"}],
+                    "tool_calls": [{"id": "private-call", "function": {"name": "unrequested", "arguments": "{}"}}]
+                }
+            })))
+            .mount(&mock)
+            .await;
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+        let error = match build_adapter_against(&mock.uri())
+            .stream(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+            .await
+        {
+            Ok(_) => panic!("unexecuted native tool must not produce a stream"),
+            Err(error) => error,
+        };
+        assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+        assert_eq!(mock.received_requests().await.unwrap().len(), 2);
     }
 
     #[tokio::test]

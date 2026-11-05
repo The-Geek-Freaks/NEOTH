@@ -303,8 +303,10 @@ impl Provider for AnthropicAdapter {
             )
             .await?;
 
-            // Concatenate every text block (a normal reply is a single text
-            // block; tool-use / multi-block replies still yield the prose).
+            reject_unsupported_native_tools(&parsed)?;
+
+            // Concatenate text only after ruling out an unsupported native
+            // tool exchange, even when the same response includes prose.
             // Empty/absent text remains an error unless Anthropic explicitly
             // returned `stop_reason=refusal`. A native 200 refusal is a valid
             // response envelope and must reach downstream recovery as typed
@@ -460,6 +462,21 @@ impl CacheControl {
 struct AnthropicMessage {
     role: &'static str,
     content: String,
+}
+
+fn reject_unsupported_native_tools(response: &MessagesResponse) -> Result<()> {
+    let tool_block = response.content.iter().any(|block| {
+        let kind = block.block_type.as_str();
+        matches!(kind, "tool_use" | "tool_result")
+            || kind.ends_with("_tool_use")
+            || kind.ends_with("_tool_result")
+    });
+    if tool_block
+        || matches!(response.stop_reason.as_deref(), Some("tool_use" | "pause_turn"))
+    {
+        anyhow::bail!("anthropic_api returned an unsupported native tool exchange");
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -729,6 +746,98 @@ mod tests {
             Some("end_turn")
         );
         assert!(!completion.termination.is_refusal());
+    }
+
+    #[test]
+    fn native_tool_blocks_and_paused_turns_cannot_become_text_success() {
+        for kind in [
+            "tool_use",
+            "tool_result",
+            "server_tool_use",
+            "web_search_tool_result",
+            "web_fetch_tool_result",
+            "code_execution_tool_result",
+            "mcp_tool_use",
+            "mcp_tool_result",
+        ] {
+            for reason in ["end_turn", "refusal"] {
+                let parsed: MessagesResponse = serde_json::from_value(serde_json::json!({
+                    "content": [
+                        {"type": "text", "text": "private prose must not escape"},
+                        {"type": kind, "id": "private-call", "input": "malformed-private-input"}
+                    ],
+                    "stop_reason": reason
+                }))
+                .unwrap();
+                let error = reject_unsupported_native_tools(&parsed).unwrap_err();
+                assert_eq!(
+                    format!("{error:#}"),
+                    "anthropic_api returned an unsupported native tool exchange"
+                );
+            }
+        }
+        for reason in ["tool_use", "pause_turn"] {
+            let parsed: MessagesResponse = serde_json::from_value(serde_json::json!({
+                "content": [{"type": "text", "text": "not complete"}],
+                "stop_reason": reason
+            }))
+            .unwrap();
+            assert!(reject_unsupported_native_tools(&parsed).is_err());
+        }
+    }
+
+    #[test]
+    fn ordinary_text_thinking_and_refusal_remain_tool_free() {
+        for reason in ["end_turn", "max_tokens", "stop_sequence", "refusal"] {
+            let parsed: MessagesResponse = serde_json::from_value(serde_json::json!({
+                "content": [
+                    {"type": "thinking", "thinking": "private reasoning"},
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "text", "text": "visible answer"}
+                ],
+                "stop_reason": reason
+            }))
+            .unwrap();
+            reject_unsupported_native_tools(&parsed).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn native_tool_http_response_fails_complete_and_buffered_stream() {
+        for (kind, reason) in [("tool_use", "end_turn"), ("server_tool_use", "pause_turn")] {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/messages"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "content": [
+                        {"type": "text", "text": "private prose must not escape"},
+                        {"type": kind, "id": "private-call", "name": "unrequested", "input": {}}
+                    ],
+                    "stop_reason": reason
+                })))
+                .mount(&mock)
+                .await;
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(format!("{error:#}"), "anthropic_api returned an unsupported native tool exchange");
+            let error = match build_adapter_against(&mock.uri())
+                .stream(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(_) => panic!("unexecuted native tool must not produce a stream"),
+                Err(error) => error,
+            };
+            assert_eq!(format!("{error:#}"), "anthropic_api returned an unsupported native tool exchange");
+            assert_eq!(mock.received_requests().await.unwrap().len(), 2);
+        }
     }
 
     #[tokio::test]

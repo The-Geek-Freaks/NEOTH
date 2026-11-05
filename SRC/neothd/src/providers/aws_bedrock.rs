@@ -372,26 +372,7 @@ impl Provider for AwsBedrockAdapter {
             )
             .await?;
 
-            let termination = bedrock_termination(parsed.stop_reason.clone());
-            let text = parsed
-                .output
-                .and_then(|o| o.message)
-                .map(|m| {
-                    m.content
-                        .into_iter()
-                        .map(|content| content.text)
-                        .collect::<String>()
-                })
-                .unwrap_or_default();
-            if text.is_empty() && !termination.is_refusal() {
-                anyhow::bail!(
-                    "aws_bedrock returned 200 OK but the response has no \
-                     output.message.content[].text and stopReason {:?} is not a \
-                     guardrail/content-filter refusal. Inspect the raw HTTP body via \
-                     NEOTH_LOG_LEVEL=debug.",
-                    termination.finish_reason
-                );
-            }
+            let (text, termination) = completion_content(&parsed)?;
 
             let latency = started.elapsed();
             debug!(
@@ -431,6 +412,33 @@ impl Provider for AwsBedrockAdapter {
         })
         .await
     }
+}
+
+fn completion_content(response: &ConverseResponse) -> Result<(String, ProviderTermination)> {
+    let message = response.output.as_ref().and_then(|output| output.message.as_ref());
+    let tool_payload = message.is_some_and(|message| {
+        message
+            .content
+            .iter()
+            .any(|block| block.tool_use.is_some() || block.tool_result.is_some())
+    });
+    if tool_payload || response.stop_reason.as_deref() == Some("tool_use") {
+        anyhow::bail!("aws_bedrock returned an unsupported native tool exchange");
+    }
+    let termination = bedrock_termination(response.stop_reason.clone());
+    let text = message
+        .map(|message| message.content.iter().map(|block| block.text.as_str()).collect::<String>())
+        .unwrap_or_default();
+    if text.is_empty() && !termination.is_refusal() {
+        anyhow::bail!(
+            "aws_bedrock returned 200 OK but the response has no \
+             output.message.content[].text and stopReason {:?} is not a \
+             guardrail/content-filter refusal. Inspect the raw HTTP body via \
+             NEOTH_LOG_LEVEL=debug.",
+            termination.finish_reason
+        );
+    }
+    Ok((text, termination))
 }
 
 fn bedrock_termination(stop_reason: Option<String>) -> ProviderTermination {
@@ -667,6 +675,10 @@ struct ConverseRespMessage {
 struct ConverseRespContent {
     #[serde(default)]
     text: String,
+    #[serde(rename = "toolUse", default)]
+    tool_use: Option<serde_json::Value>,
+    #[serde(rename = "toolResult", default)]
+    tool_result: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1048,6 +1060,64 @@ mod tests {
                 assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
                 assert_eq!(refusal.reason, reason);
             }
+        }
+    }
+
+    #[test]
+    fn native_tool_blocks_and_stop_reason_cannot_become_text_success() {
+        for field in ["toolUse", "toolResult"] {
+            for payload in [
+                serde_json::json!({"toolUseId": "private-call", "name": "unrequested", "input": "private-input"}),
+                serde_json::json!({}),
+                serde_json::json!([]),
+                serde_json::json!("malformed-private-payload"),
+            ] {
+                for reason in ["end_turn", "guardrail_intervened"] {
+                    let mut block = serde_json::json!({});
+                    block[field] = payload.clone();
+                    let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+                        "stopReason": reason,
+                        "output": {"message": {"content": [{"text": "private prose"}, block]}}
+                    }))
+                    .unwrap();
+                    let error = completion_content(&parsed).unwrap_err();
+                    assert_eq!(format!("{error:#}"), "aws_bedrock returned an unsupported native tool exchange");
+                }
+            }
+        }
+        let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+            "stopReason": "tool_use",
+            "output": {"message": {"content": [{"text": "not complete"}]}}
+        }))
+        .unwrap();
+        assert!(completion_content(&parsed).is_err());
+    }
+
+    #[test]
+    fn tool_free_converse_projection_preserves_text_and_guardrail_refusal() {
+        let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+            "stopReason": "end_turn",
+            "output": {"message": {"content": [
+                {"reasoningContent": {"reasoningText": {"text": "private reasoning"}}},
+                {"text": "visible", "toolUse": null, "toolResult": null},
+                {"text": " answer"}
+            ]}}
+        }))
+        .unwrap();
+        let (text, termination) = completion_content(&parsed).unwrap();
+        assert_eq!(text, "visible answer");
+        assert_eq!(termination.finish_reason.as_deref(), Some("end_turn"));
+        assert!(!termination.is_refusal());
+        for reason in ["guardrail_intervened", "content_filtered"] {
+            let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+                "stopReason": reason,
+                "output": {"message": {"content": []}}
+            }))
+            .unwrap();
+            let (text, termination) = completion_content(&parsed).unwrap();
+            assert!(text.is_empty());
+            assert!(termination.is_refusal());
+            assert_eq!(termination.finish_reason.as_deref(), Some(reason));
         }
     }
 

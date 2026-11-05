@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T10:15:53.9699579Z",
-  "validationStatus": "STATIC_REVIEWED_AZURE_NATIVE_TOOL_REJECTION_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T10:28:19.1932773Z",
+  "validationStatus": "STATIC_REVIEWED_NATIVE_PROVIDER_TOOLS_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4862,6 +4862,11 @@
       "sha256": "CD80281393EFA5B4BBD03A5233F03B44E6792F6428EBFB0AA1B61558147512BD"
     },
     {
+      "path": "docs/verification/gold-wave2676-native-provider-tool-rejection.json",
+      "bytes": 3988,
+      "sha256": "53F916778D3446ECC90AA9DC688C2F2630A406D15C50DEF0C64CBCFA09817C3E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -6113,8 +6118,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2781257,
-      "sha256": "D4D6E42829525F11572131397412DDAD452410D1F813826BD2E95C7A98A9CFBF"
+      "bytes": 2783098,
+      "sha256": "F05BE94DDB74D6F156C3CAB7335521237C62E1CB43EC90FD9A742705A0D5F71F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9418,13 +9423,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 44387,
-      "sha256": "5E6164C61332401B529511B7378CB85F2846DB7BB68586A12B384933DCBCE06D"
+      "bytes": 48841,
+      "sha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "bytes": 40260,
-      "sha256": "8F0425C1B44ACF3BDBEB7D4D6D7A23EECAAB8B2EAFE6A01D9516020837CFCD0C"
+      "bytes": 43515,
+      "sha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A"
     },
     {
       "path": "SRC/neothd/src/providers/azure_openai.rs",
@@ -9458,8 +9463,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cohere_api.rs",
-      "bytes": 29205,
-      "sha256": "E8C98D36233C60A293BB9A0CA47435588FC42B5899363B809889E68409E29206"
+      "bytes": 33912,
+      "sha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB"
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",

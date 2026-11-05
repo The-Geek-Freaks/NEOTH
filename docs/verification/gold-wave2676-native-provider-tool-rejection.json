@@ -1,0 +1,66 @@
+{
+  "schema": "neoth.wave2676.native-provider-tool-rejection.v1",
+  "producerBase": "fdaa92aa0594d99aa1412cf83c4ea5d3b53ac64c",
+  "batch": "B03",
+  "roadmap": [
+    "ADOPT-20261012-A08",
+    "GOLD-R4-14"
+  ],
+  "finding": "Anthropic, Cohere and Bedrock could discard native-tool blocks/payloads and still return accompanying prose as a successful completion.",
+  "change": [
+    "Anthropic rejects native tool-use/result block families and tool_use/pause_turn before text or refusal projection.",
+    "Cohere retains tool_calls and rejects nonempty payloads or TOOL_CALL finish reasons before projecting text.",
+    "Bedrock retains toolUse/toolResult and rejects their presence or tool_use before the shared production text/refusal projection."
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cohere_api.rs",
+      "sha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB"
+    },
+    {
+      "path": "SRC/neothd/src/providers/aws_bedrock.rs",
+      "sha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A"
+    }
+  ],
+  "newCases": [
+    "providers::anthropic_api::tests::native_tool_blocks_and_paused_turns_cannot_become_text_success",
+    "providers::anthropic_api::tests::ordinary_text_thinking_and_refusal_remain_tool_free",
+    "providers::anthropic_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
+    "providers::cohere_api::tests::native_tool_payload_and_finish_reason_cannot_become_text_success",
+    "providers::cohere_api::tests::absent_null_and_empty_tool_fields_preserve_text_completion",
+    "providers::cohere_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
+    "providers::aws_bedrock::tests::native_tool_blocks_and_stop_reason_cannot_become_text_success",
+    "providers::aws_bedrock::tests::tool_free_converse_projection_preserves_text_and_guardrail_refusal"
+  ],
+  "requiredPortableNativeTests": 3274,
+  "coverage": "Eight new registered tests: native client/server tools, result blocks, marker-only responses, malformed payloads and refusal conflicts; ordinary text/thinking/refusal compatibility; Anthropic and Cohere real mocked HTTP complete and buffered-stream failures with exact payload-free errors and request counts. Bedrock uses the same decoder/projection helper as production; no live AWS or signing claim.",
+  "references": [
+    "https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons",
+    "https://docs.cohere.com/v2/reference/chat",
+    "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ContentBlock.html",
+    "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html"
+  ],
+  "review": "GPT-6.1 Terra high prompt-only review of supplied core implementation and test description; no concrete remaining finding. Root performed bounded text/diff inspection.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "No native tool execution or new streaming transport. Existing permissions, cost/WAL/effect gates, response bounds and credential handling unchanged.",
+    "Gemini currently requires text in each part and rejects protocol-valid standalone function-call parts during bounded decoding; this slice neither changes that schema nor claims every malformed or future Gemini block is covered.",
+    "Whole A08 transport/cancellation parity, current-producer native tests and release acceptance remain open."
+  ],
+  "previousProducerEvidence": {
+    "linuxPassed": 19745,
+    "head": "28163cc8ab5fe4c986c9d866abe07387e2f1d50c",
+    "windowsRun": 19607,
+    "accepted": false,
+    "linuxRun": 19746,
+    "windowsPassed": 19606,
+    "custody": "work/gold-20260906/wave2667-native-integration/ROOT_LINUX_WINDOWS_ARCHIVE_CUSTODY.json",
+    "run": 41993234910
+  }
+}
