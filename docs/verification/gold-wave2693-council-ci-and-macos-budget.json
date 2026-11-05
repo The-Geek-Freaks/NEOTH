@@ -30,10 +30,22 @@
     "workspaceClippyRequiredForPlannedRun": true,
     "selectionSourceBound": true,
     "exactDiscoveryAndPassRequired": true,
-    "hostedAccepted": false,
-    "nativeAccepted": false
+    "hostedAccepted": true,
+    "nativeAccepted": false,
+    "admittedEvidence": {
+      "run": 42071015391,
+      "producer": "f06584e8e84d2a01d86e005c81ad27b53c704aa2",
+      "artifact": 13437389061,
+      "exactCases": 7,
+      "archiveEntries": 20,
+      "sourceBindings": 15,
+      "proof": "work/gold-20260906/wave2693-council-ci/ROOT_FOCUSED_ADMISSION.json",
+      "workspaceClippy": "pending",
+      "currentDispatcherAccepted": false
+    }
   },
   "validation": "Root bounded text/diff review and GPT-6.1 Terra high prompt-only review; execution pending. Optional focused input does not replace required full native suite.",
   "localExecutableValidationRan": false,
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "staticBudgetContract": "Updated exact existing macOS budget contract to the observed 190/300 retry allocation; job/build concurrency and all test coverage assertions retained. Preflight42075875018 isolated the old 150/240 expected block."
 }
