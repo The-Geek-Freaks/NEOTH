@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T19:10:22.8488376Z",
-  "validationStatus": "Flutter analysis and92of93 passed; lazy viewport test corrected, hosted retry pending",
+  "capturedUtc": "2026-11-05T19:28:35.8793646Z",
+  "validationStatus": "Mobile93 accepted; predecessor C6 and presentation admitted; four checkpoint-selection regressions pending hosted execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -718,8 +718,8 @@
     },
     {
       "path": "docs/cli-reference.md",
-      "bytes": 30860,
-      "sha256": "2CFF3E671E5D3679C1CBFFC0931AF75E9EE4E871041F3189C13C9B1B14EE612D"
+      "bytes": 31306,
+      "sha256": "8A32AB0A8A558615306F1C99C7DF16DD675023B32C50E61025EC8516080A1727"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -4823,8 +4823,8 @@
     },
     {
       "path": "docs/verification/gold-wave2667-mcp-credential-errors.json",
-      "bytes": 3352,
-      "sha256": "515ADAE6550FCD70CF651AD280785DACD9C33E3EFD63ACA6682FA64C71AE2BA3"
+      "bytes": 3979,
+      "sha256": "DE2E361ADDD5A23FEBD9FD9A347D908B94D2AD06C043041EC9A6468A13C31390"
     },
     {
       "path": "docs/verification/gold-wave2668-ssh-verified-public-key.json",
@@ -4923,8 +4923,8 @@
     },
     {
       "path": "docs/verification/gold-wave2688-session-presentation.json",
-      "bytes": 4755,
-      "sha256": "AB64AD3C7B16EF4ED1EFBE203DF1803877841BD18B4D45630183D4A6E1871A9C"
+      "bytes": 6849,
+      "sha256": "E64C20EFDBF9495081865A5921AC960795188AF6956A8A0FC50F5DBAA437573E"
     },
     {
       "path": "docs/verification/gold-wave2690-cli-reference.json",
@@ -4958,8 +4958,13 @@
     },
     {
       "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
-      "bytes": 4217,
-      "sha256": "F671FC23722071163FE787175EC6C618A8F6DF806AFBC974085C8BA5F1240B75"
+      "bytes": 5721,
+      "sha256": "21C314BD5B96B470B4F757BD49BA43A7DC641987AF3B45341B1CE1380662AAB4"
+    },
+    {
+      "path": "docs/verification/gold-wave2704-checkpoint-selection.json",
+      "bytes": 2295,
+      "sha256": "236CC892BAEA477E4CC100E6E6304814CB3FBA3FA2DE4E2C56BF99B6CBB4FD8B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6223,8 +6228,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2811038,
-      "sha256": "4F49D712286E5D0DC120AE68F6F2A372621AEAC9B7590DB8179E6E44C14C786F"
+      "bytes": 2813782,
+      "sha256": "3A3998ED6B95E5E915D06BED333675FB16C859BD61E84141FDD5DF2530625A02"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9785,6 +9790,11 @@
       "path": "SRC/neothd/src/recall/parity.rs",
       "bytes": 18061,
       "sha256": "EB09587CB747D47D289BAA02A23B54ABE793E3B23179E6ABF38447E279B9AF03"
+    },
+    {
+      "path": "SRC/neothd/src/recall/reconstruct.rs",
+      "bytes": 27537,
+      "sha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0"
     },
     {
       "path": "SRC/neothd/src/reflection/hygiene_store.rs",

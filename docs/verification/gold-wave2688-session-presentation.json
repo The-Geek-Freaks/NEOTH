@@ -87,5 +87,62 @@
     "producer": "056bcde7ea225290299153af37d784a4876660b9",
     "proof": "docs/verification/gold-wave2690-cli-reference.json",
     "correctedDocTestPending": true
+  },
+  "predecessorFocusedAcceptance": {
+    "run": 42044284023,
+    "producer": "056bcde7ea225290299153af37d784a4876660b9",
+    "linuxCasesPassed": 10,
+    "windowsCasesPassed": 10,
+    "sourceBindings": [
+      {
+        "path": "SRC/neothd/src/profile/communication.rs",
+        "producerGitBlob": "758e422bb16ddc2724f7a78de9bbb1e217fc9820",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/profile/communication_session.rs",
+        "producerGitBlob": "10b1210c08e9ce47908da4252644b30ddecc727d",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/profile/communication_session_tests.rs",
+        "producerGitBlob": "d7bfb20660aaf303882d9fac0a29340374b9d1d9",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/cli/profile.rs",
+        "producerGitBlob": "49cf3f112c00b9576773f109daf09253210f0250",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/cli/profile_communication_session.rs",
+        "producerGitBlob": "5dd8bcfb23b48b7bc715157affd268274ef60c34",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/cli/profile_communication_session_tests.rs",
+        "producerGitBlob": "d681dc2f0f909e35a2392c308d7d7761c922c6ca",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat.rs",
+        "producerGitBlob": "8d9da0855b905d45692523071d5d0298391e0b12",
+        "matchesCurrentHead": false
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+        "producerGitBlob": "47faecaee05b22173108a4c31ac03a9e82249ea0",
+        "matchesCurrentHead": true
+      }
+    ],
+    "originalArtifacts": [
+      13434316866,
+      13430854590
+    ],
+    "method": "Bounded literal line comparison of full hash-verified original nextest member; no XML parser",
+    "currentProducerExecuted": false,
+    "wholeWorkflowAccepted": false,
+    "goldAccepted": false,
+    "proof": "work/gold-20260906/wave2702-c6-predecessor-evidence/ROOT_PRESENTATION_PREDECESSOR_ADMISSION.json"
   }
 }

@@ -85,6 +85,13 @@ Per-call sampling controls are strict: unsupported controls and invalid ranges
 fail before provider authorization or transport. The exact provider matrix and
 portable limits are in [providers.md](providers.md#per-call-controls).
 
+`neoth chat --resume-from <hash> "continue"` selects a stored checkpoint by
+its printed 12-character lowercase hexadecimal hash or a unique nonempty
+prefix. An ambiguous prefix stops the request; use the full hash instead.
+Identical duplicate snapshots are allowed, but a corrupt matching snapshot
+cannot be hidden by a newer valid one. Resume still requires the checkpoint's
+recorded MCP scope and does not restore removed or disabled servers.
+
 | Command | Purpose |
 | :-- | :-- |
 | `neoth chat <prompt>` | Ask NEOTH from the terminal; `--skill <id>` pins one authority-admitted Skill for the turn. |

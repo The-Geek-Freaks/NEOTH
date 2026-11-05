@@ -45,9 +45,9 @@
   "expectedPackageTestCount": 93,
   "review": "GPT-6.1 Terra high prompt-only lifecycle and recovery review; no remaining concrete defect in supplied excerpts",
   "navigation": "Existing producer312fe759 Graphify file-navigation consulted for companion daemon/native ownership; Flutter source read directly; graph not rebuilt and not treated as semantic or acceptance proof.",
-  "verification": "Root bounded source/diff review only; hosted Flutter analysis and all93 package tests pending",
+  "verification": "Hosted Flutter source analysis and all93 exact package cases admitted on fd5c0b37276c94f33a64aa7c8450400342b92016; original API job log and five producer Git bindings retained.",
   "localExecutableValidationRan": false,
-  "hostedAccepted": false,
+  "hostedAccepted": true,
   "nativeDeviceAccepted": false,
   "goldAccepted": false,
   "rawRoadmapRowsClosed": 0,
@@ -75,5 +75,44 @@
     "productionChanged": false,
     "review": "GPT-6.1 Terra high prompt-only review",
     "hostedRevalidation": "pending"
+  },
+  "hostedAcceptance": {
+    "run": 42091460009,
+    "producer": "fd5c0b37276c94f33a64aa7c8450400342b92016",
+    "job": 127470287146,
+    "analysisPassed": true,
+    "exactPackageCasesPassed": 93,
+    "newCasesPassed": 7,
+    "originalLogSha256": "A1676847A49A8FF185285E72BE73CA66C4C1FD44EBCB8CAE378F1AFAC6E2D812",
+    "sourceGitBindings": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "producerGitBlob": "34feed4c7f41a5a1004d78c8cea52896ec2700e7",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "apps/neoth_companion/lib/main.dart",
+        "producerGitBlob": "921478b2dd7439508d5048cd3bfcfa4124de8304",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "producerGitBlob": "f60a73bb8c3549b677833e2fa4bdd65cf2a01c3d",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "producerGitBlob": "f63b5cc6d4e0cc2a8b00eaafe18696f2ca95d77a",
+        "matchesCurrentHead": true
+      },
+      {
+        "path": "apps/neoth_companion/pubspec.lock",
+        "producerGitBlob": "c21cd8fad06ae172f77e8ee779e6336b303047aa",
+        "matchesCurrentHead": true
+      }
+    ],
+    "nativeDeviceAccepted": false,
+    "releaseAccepted": false,
+    "proof": "work/gold-20260906/wave2701-mobile-viewport/ROOT_ADMISSION.json"
   }
 }

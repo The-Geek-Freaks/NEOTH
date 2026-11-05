@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Flutter analysis and92of93 passed; lazy viewport test corrected, hosted retry pending",
+  "status": "Mobile93 accepted; predecessor C6 and presentation admitted; four checkpoint-selection regressions pending hosted execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474917,
-    "sha256": "7933D788B314D966B008E797D2D40B6637B91FA2B488E8903949914B71CF267E"
+    "bytes": 475319,
+    "sha256": "50CC3D2C27222317916B1CB4D5E4ED2F2B7C81D42F014AA5153A7943CED4115B"
   },
-  "sourceInputs": 2591,
+  "sourceInputs": 2593,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -20012,6 +20012,30 @@
       "test": "tokens::partial_prompt_origin::tests::partial_origin_retains_zero_coverage_and_rejects_invalid_or_overflowing_evidence",
       "sourcePath": "SRC/neothd/src/tokens/partial_prompt_origin.rs",
       "sourceSha256": "66D350A42E3BC0838D713D38CE40090AD33596B436C48CFF55D74490CAD73C4A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::reconstruct::tests::reconstruct_rejects_invalid_prefix_before_database_access",
+      "sourcePath": "SRC/neothd/src/recall/reconstruct.rs",
+      "sourceSha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::reconstruct::tests::reconstruct_rejects_distinct_prefix_matches_in_either_timestamp_order",
+      "sourcePath": "SRC/neothd/src/recall/reconstruct.rs",
+      "sourceSha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::reconstruct::tests::reconstruct_accepts_duplicate_identical_snapshots",
+      "sourcePath": "SRC/neothd/src/recall/reconstruct.rs",
+      "sourceSha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::reconstruct::tests::reconstruct_does_not_hide_older_matching_corruption",
+      "sourcePath": "SRC/neothd/src/recall/reconstruct.rs",
+      "sourceSha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0",
       "junitClass": "neoth"
     }
   ],
@@ -95038,6 +95062,56 @@
       }
     ],
     "note": "Test-only real scroll before button/permission lookup; production startup authority unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2704CheckpointSelection": {
+    "base": "fd5c0b37276c94f33a64aa7c8450400342b92016",
+    "sources": [
+      {
+        "path": "docs/cli-reference.md",
+        "bytes": 31306,
+        "sha256": "8A32AB0A8A558615306F1C99C7DF16DD675023B32C50E61025EC8516080A1727",
+        "blob": "3674c4352332fb7c984011c97d63af4d72b151b2"
+      },
+      {
+        "path": "docs/verification/gold-wave2667-mcp-credential-errors.json",
+        "bytes": 3979,
+        "sha256": "DE2E361ADDD5A23FEBD9FD9A347D908B94D2AD06C043041EC9A6468A13C31390",
+        "blob": "f5ed38379ee3435c1ce737e9d40ebba14db7c6ad"
+      },
+      {
+        "path": "docs/verification/gold-wave2688-session-presentation.json",
+        "bytes": 6849,
+        "sha256": "E64C20EFDBF9495081865A5921AC960795188AF6956A8A0FC50F5DBAA437573E",
+        "blob": "00d98d78f34569108246494154fa0a53509ecee0"
+      },
+      {
+        "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
+        "bytes": 5721,
+        "sha256": "21C314BD5B96B470B4F757BD49BA43A7DC641987AF3B45341B1CE1380662AAB4",
+        "blob": "ecb683baba2df52c1785ed19b9422d2633af38ac"
+      },
+      {
+        "path": "docs/verification/gold-wave2704-checkpoint-selection.json",
+        "bytes": 2295,
+        "sha256": "236CC892BAEA477E4CC100E6E6304814CB3FBA3FA2DE4E2C56BF99B6CBB4FD8B",
+        "blob": "173a66d97e55c8ba66f3d4f1e9786d5516b4c8fb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2813782,
+        "sha256": "3A3998ED6B95E5E915D06BED333675FB16C859BD61E84141FDD5DF2530625A02",
+        "blob": "3ac2876669ec64477731a06649d3594de1af3878"
+      },
+      {
+        "path": "SRC/neothd/src/recall/reconstruct.rs",
+        "bytes": 27537,
+        "sha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0",
+        "blob": "17cdf78c3b9be10f6b57fa100cb3756122ab4bb1"
+      }
+    ],
+    "note": "Reject ambiguous/invalid resume selectors before any session identity reuse; duplicate identical snapshots allowed; all matching corruption remains visible.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

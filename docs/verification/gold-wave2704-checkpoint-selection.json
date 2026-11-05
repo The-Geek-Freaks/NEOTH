@@ -1,0 +1,47 @@
+{
+  "schema": "neoth.wave2704.checkpoint-selection.v1",
+  "producerBase": "fd5c0b37276c94f33a64aa7c8450400342b92016",
+  "batch": "B08",
+  "roadmap": [
+    "ADOPT-20261012-A07"
+  ],
+  "finding": "Explicit resume accepted empty hash prefixes and silently chose the newest of distinct matching checkpoints, making retained-session preference work unsafe to attach.",
+  "changes": [
+    "Validate a nonempty lowercase hexadecimal prefix of at most12 characters before database lookup.",
+    "Require one unique complete valid snapshot; repeated identical indexed snapshots remain accepted.",
+    "Scan every matching parseable row and preserve HashMismatch precedence even after ambiguity; exact full hashes still select distinct snapshots.",
+    "Existing MCP-scope enforcement remains unchanged. No prior session identity, authority, effects or preferences are reactivated by this patch."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/recall/reconstruct.rs",
+      "sha256": "CAD4BDC8C0BCB42B1646AEC8C83922FB66DDAEA67DD35C1331DBFF481A78F9A0"
+    },
+    {
+      "path": "docs/cli-reference.md",
+      "sha256": "8A32AB0A8A558615306F1C99C7DF16DD675023B32C50E61025EC8516080A1727"
+    }
+  ],
+  "tests": [
+    "recall::reconstruct::tests::reconstruct_rejects_invalid_prefix_before_database_access",
+    "recall::reconstruct::tests::reconstruct_rejects_distinct_prefix_matches_in_either_timestamp_order",
+    "recall::reconstruct::tests::reconstruct_accepts_duplicate_identical_snapshots",
+    "recall::reconstruct::tests::reconstruct_does_not_hide_older_matching_corruption"
+  ],
+  "newPortableCases": 4,
+  "totalPortableCases": 3335,
+  "validation": {
+    "architecture": "GPT-6.1 Terra high prompt-only exact-selection and corruption-precedence review",
+    "rust": "GPT-6.1 Terra high prompt-only Rust review; selected is borrowed via &selected",
+    "localExecutableValidationRan": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "goldAccepted": false
+  },
+  "limits": [
+    "A07 resume identity/preference continuity is still separate work; no broad session identity reuse implemented.",
+    "No device override or GUI change.",
+    "Current active validation42092106950 uses the predecessor and does not execute these new tests."
+  ],
+  "rawRoadmapRowsClosed": 0
+}

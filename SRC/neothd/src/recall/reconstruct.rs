@@ -203,6 +203,10 @@ pub fn catchup_summary(conn: &rusqlite::Connection, since_ts_unix: i64) -> Catch
 /// callers fold these into operator-visible wizard / CLI warnings.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ReconstructError {
+    #[error("checkpoint hash prefix must contain 1 to 12 lowercase hexadecimal characters")]
+    InvalidHashPrefix,
+    #[error("multiple MODE_CHECKPOINT snapshots match hash prefix {0}; use a longer prefix")]
+    AmbiguousCheckpoint(String),
     #[error("SQLite read failed: {0}")]
     Sqlite(String),
     #[error("no MODE_CHECKPOINT frame found with hash prefix {0}")]
@@ -217,7 +221,8 @@ pub enum ReconstructError {
 /// prefix. The operator pastes the 12-char prefix; this function
 /// scans `idx_episode` for `event_type = 0x9A` rows whose payload
 /// JSON's `checkpoint_hash` starts with the prefix, returns the
-/// matching snapshot (newest first if multiple match).
+/// unique matching snapshot. Repeated identical snapshots are allowed, but
+/// distinct matching snapshots are rejected instead of choosing by timestamp.
 ///
 /// The hash is recomputed from the payload + compared with the
 /// stored value to catch tampering / WAL corruption — a mismatch
@@ -228,9 +233,17 @@ pub fn reconstruct_from_checkpoint<S: AsRef<str>>(
     hash_prefix: S,
 ) -> Result<ModeCheckpoint, ReconstructError> {
     let prefix = hash_prefix.as_ref();
+    if prefix.is_empty()
+        || prefix.len() > 12
+        || !prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ReconstructError::InvalidHashPrefix);
+    }
     // The indexer materialises MODE_CHECKPOINT payloads into
-    // idx_episode.text (raw JSON). We scan latest-first and return
-    // the first parse-succeeding + hash-matching entry.
+    // idx_episode.text (raw JSON). Validate every matching snapshot before
+    // selecting one, so an older matching corrupt row cannot be hidden.
     let mut stmt = conn
         .prepare(
             "SELECT text FROM idx_episode \
@@ -243,6 +256,8 @@ pub fn reconstruct_from_checkpoint<S: AsRef<str>>(
             row.get::<_, String>(0)
         })
         .map_err(|e| ReconstructError::Sqlite(e.to_string()))?;
+    let mut selected: Option<ModeCheckpoint> = None;
+    let mut ambiguous = false;
     for row in rows {
         let payload = row.map_err(|e| ReconstructError::Sqlite(e.to_string()))?;
         let cp: ModeCheckpoint = match serde_json::from_str(&payload) {
@@ -259,9 +274,16 @@ pub fn reconstruct_from_checkpoint<S: AsRef<str>>(
                 computed: recomputed,
             });
         }
-        return Ok(cp);
+        if let Some(prior) = &selected {
+            ambiguous |= prior != &cp;
+        } else {
+            selected = Some(cp);
+        }
     }
-    Err(ReconstructError::CheckpointNotFound(prefix.to_string()))
+    if ambiguous {
+        return Err(ReconstructError::AmbiguousCheckpoint(prefix.to_string()));
+    }
+    selected.ok_or_else(|| ReconstructError::CheckpointNotFound(prefix.to_string()))
 }
 
 #[cfg(test)]
@@ -433,10 +455,10 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_returns_newest_when_prefix_matches_multiple() {
+    fn reconstruct_selects_exact_hash_among_distinct_snapshots() {
         let conn = build_in_memory_db();
-        // Two distinct checkpoints with different phases. If their
-        // hashes happen to share a prefix, newest-by-ts wins.
+        // Two distinct checkpoints remain independently selectable by exact
+        // hash, regardless of their timestamps.
         let cp_old = sample_checkpoint();
         let mut cp_new = sample_checkpoint();
         cp_new.phase = "council:awaiting-synthesis".to_string();
@@ -475,8 +497,92 @@ mod tests {
     #[test]
     fn reconstruct_empty_db_surfaces_not_found() {
         let conn = build_in_memory_db();
-        let err = reconstruct_from_checkpoint(&conn, "anyhash12345").unwrap_err();
+        let err = reconstruct_from_checkpoint(&conn, "012345abcdef").unwrap_err();
         assert!(matches!(err, ReconstructError::CheckpointNotFound(_)));
+    }
+
+    #[test]
+    fn reconstruct_rejects_invalid_prefix_before_database_access() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // No idx_episode schema: attempting the query would return Sqlite.
+        for prefix in ["", " ", "ABCDEF", "abc\n", "gg", "0123456789abc", "é"] {
+            assert!(matches!(
+                reconstruct_from_checkpoint(&conn, prefix),
+                Err(ReconstructError::InvalidHashPrefix)
+            ));
+        }
+    }
+
+    #[test]
+    fn reconstruct_rejects_distinct_prefix_matches_in_either_timestamp_order() {
+        let mut prefixes = std::collections::BTreeMap::new();
+        let mut collision = None;
+        // Seventeen distinct snapshots guarantee a shared first hex digit.
+        for index in 0..17 {
+            let mut cp = sample_checkpoint();
+            cp.phase = format!("bounded-collision-{index}");
+            cp.stamp_hash();
+            let prefix = cp.checkpoint_hash[..1].to_owned();
+            if let Some(prior) = prefixes.insert(prefix.clone(), cp.clone()) {
+                collision = Some((prefix, prior, cp));
+                break;
+            }
+        }
+        let (prefix, first, second) = collision.expect("pigeonhole collision");
+        assert_ne!(first, second);
+        assert_ne!(first.checkpoint_hash, second.checkpoint_hash);
+        assert_eq!(first.compute_hash(), first.checkpoint_hash);
+        assert_eq!(second.compute_hash(), second.checkpoint_hash);
+        for (older, newer) in [(&first, &second), (&second, &first)] {
+            let conn = build_in_memory_db();
+            insert_checkpoint_row(&conn, 1, 100, older);
+            insert_checkpoint_row(&conn, 2, 200, newer);
+            assert!(matches!(
+                reconstruct_from_checkpoint(&conn, &prefix),
+                Err(ReconstructError::AmbiguousCheckpoint(value)) if value == prefix
+            ));
+            assert_eq!(
+                reconstruct_from_checkpoint(&conn, &older.checkpoint_hash).unwrap(),
+                *older
+            );
+            assert_eq!(
+                reconstruct_from_checkpoint(&conn, &newer.checkpoint_hash).unwrap(),
+                *newer
+            );
+            let mut corrupted = older.clone();
+            corrupted.phase = "unstamped-older-corruption".into();
+            insert_checkpoint_row(&conn, 3, 50, &corrupted);
+            assert!(matches!(
+                reconstruct_from_checkpoint(&conn, &prefix),
+                Err(ReconstructError::HashMismatch { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn reconstruct_accepts_duplicate_identical_snapshots() {
+        let conn = build_in_memory_db();
+        let cp = sample_checkpoint();
+        insert_checkpoint_row(&conn, 1, 100, &cp);
+        insert_checkpoint_row(&conn, 2, 200, &cp);
+        assert_eq!(
+            reconstruct_from_checkpoint(&conn, &cp.checkpoint_hash[..6]).unwrap(),
+            cp
+        );
+    }
+
+    #[test]
+    fn reconstruct_does_not_hide_older_matching_corruption() {
+        let conn = build_in_memory_db();
+        let cp = sample_checkpoint();
+        let mut corrupted = cp.clone();
+        corrupted.session_id = "different-session-with-unstamped-hash".into();
+        insert_checkpoint_row(&conn, 1, 100, &corrupted);
+        insert_checkpoint_row(&conn, 2, 200, &cp);
+        assert!(matches!(
+            reconstruct_from_checkpoint(&conn, &cp.checkpoint_hash),
+            Err(ReconstructError::HashMismatch { .. })
+        ));
     }
 
     // ── catchup_summary ───────────────────────────────────────────────
