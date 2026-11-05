@@ -25,7 +25,7 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "sha256": "DC1586CF33B6AA628F22E99E86AD02AEC9D6DCEE3CCF27B963BC46B7332CF20F"
+      "sha256": "C976693A83CA71BD01571E0D4EA48A72657CA98B8D71D5DAADB96432869DB667"
     },
     {
       "path": "apps/neoth_companion/README.md",
@@ -55,5 +55,13 @@
     "Setup retry does not retry pairing or daemon effects.",
     "No Android/iOS/device/signing/release acceptance claimed.",
     "Existing mobile daemon/native delivery and protected-store owners retained."
-  ]
+  ],
+  "hostedAnalysisCorrection": {
+    "run": 42089432818,
+    "producer": "bd5128a8aa828a20e08adc9963d346b353404742",
+    "diagnostic": "unnecessary_import for dart:typed_data already exported by flutter/services.dart",
+    "repair": "Remove only redundant test import",
+    "testsExecuted": false,
+    "hostedRevalidation": "pending"
+  }
 }

@@ -5857,14 +5857,23 @@ mod tests {
     #[tokio::test]
     async fn compacted_loop_counts_only_new_rendered_tool_blocks() {
         let home = test_instance_home();
-        let tool =
-            "```mcp-tool-call\n{\"server\":\"missing\",\"tool\":\"read\",\"arguments\":{}}\n```";
+        let counter = home.path().join("tools-call-count.txt");
+        let mut cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        cfg.smart_approve = false;
+        let servers = McpServers {
+            servers: vec![cfg],
+            smart_loading: true,
+        };
+        let tool = concat!(
+            "```mcp-tool-call\n{\"server\":\"w46-stdio-fixture\",\"tool\":\"read\",\"arguments\":{}}\n```\n",
+            "```mcp-tool-call\n{\"server\":\"missing\",\"tool\":\"read\",\"arguments\":{}}\n```"
+        );
         let mut driver = ScriptedDriver::new(vec!["done", "compact summary", tool, "done"]);
         let outcome = run_tool_loop_with_cap(
             &mut driver,
             "x".repeat(10_001),
-            &McpServers::default(),
-            AutonomyLevel::Standard,
+            &servers,
+            AutonomyLevel::Full,
             None,
             None,
             &McpToolScope::default(),
@@ -5891,6 +5900,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome.iterations, 3);
+        assert_eq!(outcome.successful_calls, 1);
+        assert_eq!(outcome.failed_calls, 1);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
         let partial = driver.seen_partial.lock().unwrap();
         assert_eq!(partial.len(), 3);
         assert_eq!(partial[0], None);
@@ -5904,6 +5916,7 @@ mod tests {
         let seen = driver.seen_prompts.lock().unwrap();
         let final_prompt = seen.last().unwrap();
         assert!(final_prompt.starts_with(crate::context::compaction::SUMMARY_MARKER));
+        assert!(final_prompt.contains("w46-stdio-fixture"));
         assert!(final_prompt.contains("missing"));
         assert!(usize::try_from(bytes).unwrap() < final_prompt.len());
     }

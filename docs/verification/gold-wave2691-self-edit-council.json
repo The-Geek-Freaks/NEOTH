@@ -88,5 +88,20 @@
     "review": "GPT-6.1 Terra high prompt-only build-error review",
     "revalidation": "pending",
     "localExecutableValidationRan": false
+  },
+  "focusedDispatcherAcceptance": {
+    "run": 42085568217,
+    "producer": "f9d04da6bd161f04f72df0e54369ee95d3deeb6c",
+    "exactTestsPassed": 11,
+    "originalArtifact": 13442764140,
+    "archiveEntries": 28,
+    "verifiedMemberChecksums": 27,
+    "verifiedRawGitSourceBindings": 23,
+    "focusedAccepted": true,
+    "wholeWorkflowAccepted": false,
+    "workspaceClippyAccepted": false,
+    "nativeGoldAccepted": false,
+    "proof": "work/gold-20260906/wave2698-council-cost-validation/ROOT_COUNCIL_ADMISSION.json",
+    "limit": "Later cost fixture failed; focused Council proof remains scoped to its successful exact step and original artifact."
   }
 }

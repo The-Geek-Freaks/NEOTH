@@ -42,7 +42,7 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F"
+      "sha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577"
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
@@ -119,5 +119,19 @@
     "exactPrePostImages": 1,
     "apiZipAndMembersVerified": true,
     "runtimeAccepted": false
+  },
+  "hostedFixtureCorrection": {
+    "run": 42085568217,
+    "producer": "f9d04da6bd161f04f72df0e54369ee95d3deeb6c",
+    "originalArtifact": 13443149137,
+    "verifiedArchiveEntries": 276,
+    "passed": 134,
+    "failed": 1,
+    "failedTest": "mcp::dispatch_loop::tests::compacted_loop_counts_only_new_rendered_tool_blocks",
+    "cause": "All calls targeted an unknown server, so the existing no-progress guard correctly stopped before the expected third request.",
+    "repair": "Existing real stdio read plus missing-server call in the same response; retain three iterations and origin assertions; additionally require exactly one actual tools/call, one success and one failure.",
+    "productionGuardUnchanged": true,
+    "hostedRevalidation": "pending",
+    "proof": "work/gold-20260906/wave2698-council-cost-validation/ROOT_COST_FAILURE_DIAGNOSIS.json"
   }
 }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Mobile startup source complete; hosted93 Flutter acceptance pending",
+  "status": "Council11 focused accepted; cost134of135 diagnosed; corrected fixture/mobile analysis awaiting hosted execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 474899,
-    "sha256": "3B5D8462D1138716D2708D086A4BD99F66AAB4670E13E865404480FF01997E56"
+    "bytes": 474943,
+    "sha256": "0A8091C6917D9E41ABD0E4B6094DF2C110F803C155A36401820C019434A2C5CC"
   },
   "sourceInputs": 2591,
   "requiredNativeTests": [
@@ -96,25 +96,25 @@
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -330,7 +330,7 @@
     {
       "test": "mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -9858,7 +9858,7 @@
     {
       "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_or_smartapprove_list",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -9948,7 +9948,7 @@
     {
       "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -16879,7 +16879,7 @@
     {
       "test": "mcp::dispatch_loop::tests::contended_activity_view_is_sticky_loss_without_a_call_handle",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -16927,7 +16927,7 @@
     {
       "test": "mcp::dispatch_loop::tests::jm03_activity_change_notification_is_coalesced_and_execution_independent",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -19081,13 +19081,13 @@
     {
       "test": "mcp::dispatch_loop::tests::loop_compaction_invalidates_attribution_but_append_only_nudges_retain_it",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::manifest_scan_without_wal_survives_feedback_but_never_issues_a_permit",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -19993,7 +19993,7 @@
     {
       "test": "mcp::dispatch_loop::tests::compacted_loop_counts_only_new_rendered_tool_blocks",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "1090FC7065C771362D1E710B279A5C4CFF127D2B5006CB835C9521E3D65A185F",
+      "sourceSha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
       "junitClass": "neoth"
     },
     {
@@ -94962,6 +94962,56 @@
       }
     ],
     "note": "Independent optional-link read, epoch-bound shared setup, retained enrollment after native failure and explicit setup recovery;7 new Flutter cases",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2700FixtureAnalysisCorrection": {
+    "base": "bd5128a8aa828a20e08adc9963d346b353404742",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 63619,
+        "sha256": "C976693A83CA71BD01571E0D4EA48A72657CA98B8D71D5DAADB96432869DB667",
+        "blob": "8ac46c2e978cda75ebed68b3e4905478e453dd7b"
+      },
+      {
+        "path": "docs/verification/gold-wave2691-self-edit-council.json",
+        "bytes": 5204,
+        "sha256": "BE57F67778986E5EFF8B01BB66FF2755E3002027351F4F0BA257969D61084A6D",
+        "blob": "e38f6c4e6aa461022234b825c419600f73a867ac"
+      },
+      {
+        "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
+        "bytes": 6062,
+        "sha256": "26D3B6DA9EBD530568BC46634567F7C6D51ED4B38BA3D9FC69E000649A897F2C",
+        "blob": "7ac90e5e9c501a0702adef108baeaa5dac272f0a"
+      },
+      {
+        "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
+        "bytes": 6677,
+        "sha256": "DFECFB762DF1EFF6767F26FFDD267C6C3B61E09EB7B4DA7E032F0C9FEF63944B",
+        "blob": "1fadc89b51fadce60dde802dd96a8c7fe8311f7f"
+      },
+      {
+        "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
+        "bytes": 3613,
+        "sha256": "C5642B9CAB0D5C21711DF4ECF34F66C0B1129516DD096CFF1D4F1C48A05A8113",
+        "blob": "ebf63156e5ff28a0f96e171ea26cd33b04d97c35"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2810569,
+        "sha256": "A89F5E30D2572D352E4464B38FBB6FD8D9E9CCEE5B0935D05DCBF60769AC7297",
+        "blob": "7bda94070d23bb9e7db5bbd8a108a54eb5bede91"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
+        "bytes": 338634,
+        "sha256": "07ED2F68CE374F51147E58D8857D72E34B53C81B52370646BC4E7EC60E2E8577",
+        "blob": "5eb5804923aa3cd9c59bc770137b65f544e47e1f"
+      }
+    ],
+    "note": "Real mixed-success MCP fixture preserves production termination and attribution assertions; remove redundant Dart test import. Local BSOD hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
