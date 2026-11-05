@@ -78,7 +78,12 @@ impl server::Handler for PasswordForwardServer {
         }
     }
 
-    async fn auth_publickey(&mut self, user: &str, public_key: &PublicKey) -> Result<server::Auth> {
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: server::VerifiedPublicKey<'_>,
+    ) -> Result<server::Auth> {
+        let public_key = key.public_key;
         self.record(format!("auth-publickey:{user}"));
         match self.expected_public_key.as_deref() {
             Some(expected) if user == USERNAME && public_key == expected => {

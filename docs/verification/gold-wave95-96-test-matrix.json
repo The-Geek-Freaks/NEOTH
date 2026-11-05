@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "MCP_SECRET_ERROR_BOUNDARIES_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
+  "status": "STATIC_REVIEWED_SSH_FIXTURE_API_ADAPTATION_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 466102,
-    "sha256": "446A749898533DADEA4E209A2BDC74216D2CF091376B3828D651AD55F6BA37F0"
+    "bytes": 466470,
+    "sha256": "75B6BB6D103A34C0E61064DAA640EA8CE2C2782621FA40E955616A3978169F45"
   },
-  "sourceInputs": 2544,
+  "sourceInputs": 2546,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -92279,6 +92279,32 @@
       }
     ],
     "note": "Authenticated hosted single-file rustfmt patch imported; four new and four existing cases stay source-bound; local formatter not executed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2668SshVerifiedPublicKey": {
+    "base": "28163cc8ab5fe4c986c9d866abe07387e2f1d50c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2668-ssh-verified-public-key.json",
+        "bytes": 1155,
+        "sha256": "C704F467753577D59AF2E68157935976020FD3DBFD7BCAA03079C96C3FDFB349",
+        "blob": "bab771ff034d82c6ba450818611d2fd50b4514b4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2769021,
+        "sha256": "36EC89F258708E66397FE98BF0BF3D5CED89F695030AC49449E6C499268CD2A6",
+        "blob": "dc996462c8b6160ebbdcc640666c3114dbc04eed"
+      },
+      {
+        "path": "SRC/neothd/src/transport/ssh_runtime_tests.rs",
+        "bytes": 24245,
+        "sha256": "AE41080C39440D6DD5EDA78994FCCDC5E1E46F464B17ABB3B53AF07F9F004CD3",
+        "blob": "bb67ba6b754211345891b3cb810c32a5f60c0f35"
+      }
+    ],
+    "note": "Use exact russh0.65 VerifiedPublicKey in existing loopback test server; preserve 40 transport and7 credential contracts; no local executable checks.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

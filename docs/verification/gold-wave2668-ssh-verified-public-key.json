@@ -1,0 +1,26 @@
+{
+  "schema": "neoth.wave2668.ssh-verified-public-key.v1",
+  "base": "28163cc8ab5fe4c986c9d866abe07387e2f1d50c",
+  "failureRun": 41993234910,
+  "failureJob": 127130207702,
+  "sourcePath": "SRC/neothd/src/transport/ssh_runtime_tests.rs",
+  "sourceSha256": "AE41080C39440D6DD5EDA78994FCCDC5E1E46F464B17ABB3B53AF07F9F004CD3",
+  "diagnostic": "E0053: auth_publickey expected VerifiedPublicKey but fixture still accepted &PublicKey",
+  "upstream": "https://github.com/Eugeny/russh/blob/v0.65.0/russh/src/server/mod.rs",
+  "change": "Use server::VerifiedPublicKey supplied after russh signature verification and retain the existing username/key equality, key recording and rejection behavior",
+  "scope": "Existing hermetic SSH loopback test server only",
+  "review": "GPT-6.1 Terra high, prompt-only upstream signature and supplied fixture review; no concrete issue found",
+  "existingHostedContracts": {
+    "credentials": 7,
+    "transport": 40,
+    "platforms": [
+      "ubuntu-24.04",
+      "windows-2022",
+      "macos-14"
+    ]
+  },
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false
+}
