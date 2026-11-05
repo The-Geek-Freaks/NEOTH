@@ -1,0 +1,39 @@
+{
+  "schema": "neoth.wave2685.mobile-source-qa-mode.v1",
+  "producerBase": "72df49143d69fad4bf1a2fabf694f2fb03286b96",
+  "batch": "B01/B04",
+  "purpose": "Use the existing pinned Flutter source gate for narrow app-source changes without repeating unrelated Android/iOS builds.",
+  "behavior": [
+    "Add source_qa_only boolean, default false. Full native producer and its existing dependency chain remain default.",
+    "Source-only mode runs the existing pinned-SDK approved-lock/pub-get/analyze/all-package-tests step and skips Android, iOS, materialization and lock bootstrap.",
+    "Dispatch run name explicitly identifies partial source QA. Conflicting source-only and bootstrap modes enter a required validation failure rather than silently skipping all jobs.",
+    "No new workflow, local runtime, release artifact, independent dispatch loop or native acceptance claim."
+  ],
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/mobile-companion.yml",
+      "sha256": "D87B84B274EF45E7E9BE1F5F5EF3A0658DBDADBECA56D7A3670E7E3FBC8D89B4"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "sha256": "CF867EC2F23F3FC1D3EBF9C38DED412F0775E328373EEC7E5286B96F77F3E096"
+    },
+    {
+      "path": "apps/neoth_companion/README.md",
+      "sha256": "E465C55D79823577432CAB7EAB5A61095721E5D201A0F92BADFE0097521E4374"
+    }
+  ],
+  "newHostedContractTests": [
+    "CiCadenceContractTests.test_mobile_source_qa_keeps_full_native_default_and_dependencies",
+    "CiCadenceContractTests.test_mobile_source_qa_and_lock_bootstrap_conflict_is_a_failure"
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "nativeAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "A successful source-only workflow does not qualify native binaries, interop, devices, signatures or releases.",
+    "Root must audit all five active run statuses before the single sequential dispatch.",
+    "No native job or test requirement is removed from the default full producer."
+  ]
+}

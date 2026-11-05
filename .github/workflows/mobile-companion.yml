@@ -1,4 +1,5 @@
 name: Mobile Companion Native Producer
+run-name: Mobile Companion ${{ inputs.source_qa_only && 'Flutter source QA only' || inputs.bootstrap_locks && 'lock bootstrap only' || 'full native producer' }}
 
 on:
   workflow_dispatch:
@@ -33,6 +34,11 @@ on:
         required: true
         default: false
         type: boolean
+      source_qa_only:
+        description: Run Flutter analysis and package tests only; produces no native release artifacts
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -46,12 +52,23 @@ jobs:
   # either native producer begins. The native materialization below remains the
   # complete artifact/FFI/CodeQL gate.
   flutter-source-qa:
-    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    if: github.ref == 'refs/heads/main' && (inputs.bootstrap_locks != true || inputs.source_qa_only == true)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
+      - name: Validate mobile producer mode
+        shell: bash
+        env:
+          SOURCE_QA_ONLY: ${{ inputs.source_qa_only }}
+          BOOTSTRAP_LOCKS: ${{ inputs.bootstrap_locks }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_QA_ONLY" == true && "$BOOTSTRAP_LOCKS" == true ]]; then
+            echo '::error::source_qa_only and bootstrap_locks are mutually exclusive'
+            exit 1
+          fi
       - name: Select immutable Flutter SDK archive
         id: flutter-archive
         shell: bash
@@ -126,7 +143,7 @@ jobs:
 
   android-native:
     needs: [flutter-source-qa]
-    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true && inputs.source_qa_only != true
     runs-on: ubuntu-24.04
     env:
       BRIDGE_CARGO_SHA256: ${{ inputs.bridge_cargo_sha256 }}
@@ -161,7 +178,7 @@ jobs:
 
   ios-native:
     needs: [flutter-source-qa]
-    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true && inputs.source_qa_only != true
     runs-on: macos-15
     env:
       BRIDGE_CARGO_SHA256: ${{ inputs.bridge_cargo_sha256 }}
@@ -188,7 +205,7 @@ jobs:
 
   materialize-flutter:
     needs: [android-native, ios-native]
-    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true && inputs.source_qa_only != true
     runs-on: macos-15
     permissions:
       contents: read
@@ -347,7 +364,7 @@ jobs:
           retention-days: 14
 
   bootstrap-locks:
-    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks == true
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks == true && inputs.source_qa_only != true
     runs-on: ubuntu-24.04
     env:
       CARGO_TERM_COLOR: always

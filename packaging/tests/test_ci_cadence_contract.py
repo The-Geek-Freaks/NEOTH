@@ -207,6 +207,38 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_mobile_source_qa_keeps_full_native_default_and_dependencies(self) -> None:
+        workflow = (WORKFLOWS / "mobile-companion.yml").read_text(encoding="utf-8")
+        self.assertRegex(
+            trigger_block(workflow),
+            r"(?s)source_qa_only:\n.*?default: false\n\s*type: boolean",
+        )
+        jobs = workflow_jobs(workflow)
+        for name in ("android-native", "ios-native", "materialize-flutter", "bootstrap-locks"):
+            self.assertRegex(jobs[name], r"(?m)^    if: .*inputs\.source_qa_only != true$")
+        self.assertEqual(job_dependencies(jobs["android-native"]), {"flutter-source-qa"})
+        self.assertEqual(job_dependencies(jobs["ios-native"]), {"flutter-source-qa"})
+        self.assertEqual(job_dependencies(jobs["materialize-flutter"]), {"android-native", "ios-native"})
+        qa = workflow_steps(jobs["flutter-source-qa"])["Verify approved lock and run Flutter source QA"]
+        for command in ("& $flutter pub get", "& $flutter analyze", "& $flutter test"):
+            self.assertIn(command, qa)
+        self.assertIn("flutter pub get changed the approved pubspec.lock", qa)
+        self.assertNotIn("continue-on-error", jobs["flutter-source-qa"])
+        self.assertIn("Flutter source QA only", workflow.splitlines()[1])
+
+    def test_mobile_source_qa_and_lock_bootstrap_conflict_is_a_failure(self) -> None:
+        workflow = (WORKFLOWS / "mobile-companion.yml").read_text(encoding="utf-8")
+        jobs = workflow_jobs(workflow)
+        self.assertIn(
+            "(inputs.bootstrap_locks != true || inputs.source_qa_only == true)",
+            jobs["flutter-source-qa"],
+        )
+        steps = workflow_steps(jobs["flutter-source-qa"])
+        self.assertEqual(next(iter(steps)), "Validate mobile producer mode")
+        mode = steps["Validate mobile producer mode"]
+        self.assertIn('"$SOURCE_QA_ONLY" == true && "$BOOTSTRAP_LOCKS" == true', mode)
+        self.assertIn("exit 1", mode)
+
 
     def test_paperless_case_count_has_one_catalog_bound_authority(self) -> None:
         workflow = (WORKFLOWS / "paperless-product.yml").read_text(encoding="utf-8")

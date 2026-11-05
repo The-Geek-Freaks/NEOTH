@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T13:04:22.4123705Z",
-  "validationStatus": "W2684_MOBILE_ENROLLMENT_STARTUP_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T13:10:17.2588690Z",
+  "validationStatus": "W2685_MOBILE_SOURCE_QA_MODE_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -218,8 +218,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
-      "bytes": 21369,
-      "sha256": "67A8967FB20A9186474A1FF08BABAA2F362BA78390FFFB445E450DF02EB3AFA4"
+      "bytes": 22321,
+      "sha256": "D87B84B274EF45E7E9BE1F5F5EF3A0658DBDADBECA56D7A3670E7E3FBC8D89B4"
     },
     {
       "path": ".github/workflows/mobile-live-output-contracts.yml",
@@ -533,8 +533,8 @@
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "bytes": 7906,
-      "sha256": "87F113B47138405595E266FE9F6300C5EAF9DC9583E340D49AC3B010CC05EF8C"
+      "bytes": 8345,
+      "sha256": "E465C55D79823577432CAB7EAB5A61095721E5D201A0F92BADFE0097521E4374"
     },
     {
       "path": "apps/neoth_companion/test/activity_reason_test.dart",
@@ -4902,6 +4902,11 @@
       "sha256": "6A2EE99EE337A946BB593F3C455DD874F68A17AC2BC5D778EC85E63AB7E51EDE"
     },
     {
+      "path": "docs/verification/gold-wave2685-mobile-source-qa-mode.json",
+      "bytes": 2015,
+      "sha256": "99AC727A1CE52D28D97E598C40472FD672029CF7637C4B65EDA7224DB8991815"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5913,8 +5918,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 87961,
-      "sha256": "EDFC3618CC93ACB8DAC46B2522A09F0BC723BA96D07CB0AE44206122ABCD6E39"
+      "bytes": 89924,
+      "sha256": "CF867EC2F23F3FC1D3EBF9C38DED412F0775E328373EEC7E5286B96F77F3E096"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -6153,8 +6158,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2792213,
-      "sha256": "382F0B0405051CFC3F1B0CB24817FA88B7B76BAB25D3805A1FCDA36CEE027937"
+      "bytes": 2793138,
+      "sha256": "72638BABC2AD1D326A9B4BC374A7E6BEF6474F253238E830C4F23136472FF0F6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

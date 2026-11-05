@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2684_MOBILE_ENROLLMENT_STARTUP_HOSTED_PENDING",
+  "status": "W2685_MOBILE_SOURCE_QA_MODE_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 469738,
-    "sha256": "D3497DBEC508C61F4AF51EF4BD312EBA3A139A9CD77D7AAFE1151F36CFE0DFE2"
+    "bytes": 469927,
+    "sha256": "7B2C304725CB88169127127C00E7E1CFA916B99095AFB2071054974F1B88F33F"
   },
-  "sourceInputs": 2563,
+  "sourceInputs": 2564,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -93591,6 +93591,44 @@
       }
     ],
     "note": "Six new Flutter controlled-future cases. Protected enrollment must initialize before pairing; same-epoch coalescing, atomic checkpoint publication and stale-generation rejection. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2685MobileSourceQaMode": {
+    "base": "72df49143d69fad4bf1a2fabf694f2fb03286b96",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "bytes": 22321,
+        "sha256": "D87B84B274EF45E7E9BE1F5F5EF3A0658DBDADBECA56D7A3670E7E3FBC8D89B4",
+        "blob": "f63b5cc6d4e0cc2a8b00eaafe18696f2ca95d77a"
+      },
+      {
+        "path": "apps/neoth_companion/README.md",
+        "bytes": 8345,
+        "sha256": "E465C55D79823577432CAB7EAB5A61095721E5D201A0F92BADFE0097521E4374",
+        "blob": "c71fb16421a42cbf054fe6ed727089e586b6688b"
+      },
+      {
+        "path": "docs/verification/gold-wave2685-mobile-source-qa-mode.json",
+        "bytes": 2015,
+        "sha256": "99AC727A1CE52D28D97E598C40472FD672029CF7637C4B65EDA7224DB8991815",
+        "blob": "e9a5028fa15211b4c3c5b2ef7cfc534131d91669"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 89924,
+        "sha256": "CF867EC2F23F3FC1D3EBF9C38DED412F0775E328373EEC7E5286B96F77F3E096",
+        "blob": "ce5097fbfbd385544c243d3e35bf530383f64c49"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2793138,
+        "sha256": "72638BABC2AD1D326A9B4BC374A7E6BEF6474F253238E830C4F23136472FF0F6",
+        "blob": "f35b955363637e8c1bd23d026621c02df2ee7853"
+      }
+    ],
+    "note": "Existing mobile producer gains explicit default-off source-only mode. Same pinned Flutter analysis and all tests; default native DAG retained; mutually exclusive bootstrap enforced.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

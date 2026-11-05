@@ -28,6 +28,13 @@ read failure blocks pairing until a later explicit attempt succeeds. Forget
 invalidates any old startup result and requires a fresh read before another
 pairing. This does not cancel a native request that was already sent.
 
+For app-source changes, the existing Mobile Companion Native Producer workflow
+supports `source_qa_only=true` with the exact approved Flutter lock hash. It
+runs the same pinned SDK, lock check, analysis and complete package tests, then
+skips native producers and packaging. The default remains the complete native
+run. Source QA is not Android/iOS, device, signing or release qualification;
+it cannot be combined with lock bootstrapping.
+
 The daemon owns device grants. These commands use its same-user control path:
 
 ```text
