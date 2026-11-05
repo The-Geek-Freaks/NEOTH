@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_CONVERSATION_SETTLEMENT_HOSTED_PENDING",
+  "status": "HOSTED_FORMAT_IMPORTED_CONVERSATION_SETTLEMENT_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 467417,
-    "sha256": "A8B25A1C27BBF5547DADCB49F04262A8B986DE7DC2E50B4B04F32E74AA37648A"
+    "bytes": 467424,
+    "sha256": "15191848889D93C62031DA4FFA246453F8CE022626B23AA8853FE33B9483179D"
   },
   "sourceInputs": 2551,
   "requiredNativeTests": [
@@ -16093,49 +16093,49 @@
     {
       "test": "daemon::conversation_registry::tests::concurrent_duplicate_preflight_mints_one_owner_call_and_one_subscription",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::changed_preflight_body_for_same_request_is_a_conflict",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::foreign_session_cannot_control_bound_subscription",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::failed_start_is_not_cached_and_retry_reaches_owner",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::more_than_the_retention_limit_of_settled_lifecycles_admits_the_next_request",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::relay_lag_publishes_indeterminate_terminal_and_closes_its_owner",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::relay_lag_owner_close_failure_is_returned_by_runtime_close",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::runtime_close_joins_a_long_lived_relay_after_session_cleanup",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
@@ -19549,31 +19549,31 @@
     {
       "test": "daemon::conversation_registry::tests::stopped_relay_releases_capacity_and_retires_records_once",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::settled_subscription_cannot_mutate_replacement_availability",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::availability_payload_cannot_release_an_admitted_slot",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::terminal_preflight_is_cached_without_reserving_capacity",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_registry::tests::preflight_finishing_after_global_close_cannot_reopen_the_registry",
       "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sourceSha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2",
+      "sourceSha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
       "junitClass": "neoth"
     }
   ],
@@ -92631,6 +92631,26 @@
       }
     ],
     "note": "Active-subscription settlement, atomic admission and global-close rejection; five portable regressions authored; hosted/native pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2672HostedFormat": {
+    "base": "1adc444e47243e6b4a79d665069b77279eb042f9",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2672-conversation-settlement.json",
+        "bytes": 2627,
+        "sha256": "C7CB86097C9E57B15F8D181363C6715D033044579C91141A8A67A82ACFB63BC7",
+        "blob": "728052c6d2b973178a0660e28ad27f2bc4897552"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_registry.rs",
+        "bytes": 67394,
+        "sha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5",
+        "blob": "a3f42f4c46a2268c919294bc226a21f36668b43a"
+      }
+    ],
+    "note": "Verified original hosted format archive and single-source exact pre/postimages; five portable cases remain native pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

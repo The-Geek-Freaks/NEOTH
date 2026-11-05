@@ -1443,7 +1443,11 @@ mod tests {
             assert!(!state.availability.busy);
             assert!(state.active_subscription.is_none());
             assert_eq!(
-                state.settled.iter().filter(|id| *id == subscription_id).count(),
+                state
+                    .settled
+                    .iter()
+                    .filter(|id| *id == subscription_id)
+                    .count(),
                 1
             );
             assert!(state.subscriptions.len() <= CONVERSATION_REPLAY_MAX_FRAMES);
@@ -1457,15 +1461,15 @@ mod tests {
     #[tokio::test]
     async fn settled_subscription_cannot_mutate_replacement_availability() {
         let owner = Arc::new(FakeOwner::new(false));
-        let registry = ConversationRegistry::new(
-            "boot".into(),
-            owner,
-            ConversationTaskRegistry::default(),
-        )
-        .await
-        .unwrap();
+        let registry =
+            ConversationRegistry::new("boot".into(), owner, ConversationTaskRegistry::default())
+                .await
+                .unwrap();
         let old_id = ConversationRequestId(uuid::Uuid::new_v4());
-        let old = registry.preflight(preflight(old_id, "session")).await.unwrap();
+        let old = registry
+            .preflight(preflight(old_id, "session"))
+            .await
+            .unwrap();
         let old_subscription = old.subscription_id.clone().unwrap();
         ConversationRegistry::relay_event(
             &registry.state,
@@ -1478,7 +1482,10 @@ mod tests {
         )
         .await;
         let next = registry
-            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .preflight(preflight(
+                ConversationRequestId(uuid::Uuid::new_v4()),
+                "session",
+            ))
             .await
             .unwrap();
         let (expected, old_binding) = {
@@ -1550,7 +1557,10 @@ mod tests {
         .await
         .unwrap();
         let request_id = ConversationRequestId(uuid::Uuid::new_v4());
-        let admission = registry.preflight(preflight(request_id, "session")).await.unwrap();
+        let admission = registry
+            .preflight(preflight(request_id, "session"))
+            .await
+            .unwrap();
         let mut reported = registry.state.lock().await.availability.clone();
         reported.busy = false;
         reported.microphone = MicrophonePermissionState::Granted;
@@ -1559,11 +1569,16 @@ mod tests {
             &registry.projections,
             "boot",
             request_id,
-            ConversationEvent::Availability { availability: reported },
+            ConversationEvent::Availability {
+                availability: reported,
+            },
         )
         .await;
         let denied = registry
-            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .preflight(preflight(
+                ConversationRequestId(uuid::Uuid::new_v4()),
+                "session",
+            ))
             .await
             .unwrap_err();
         assert_eq!(denied.code, ConversationErrorCode::Busy);
@@ -1571,7 +1586,10 @@ mod tests {
         let state = registry.state.lock().await;
         assert!(state.availability.busy);
         assert_eq!(state.active_subscription, admission.subscription_id);
-        assert_eq!(state.availability.microphone, MicrophonePermissionState::Granted);
+        assert_eq!(
+            state.availability.microphone,
+            MicrophonePermissionState::Granted
+        );
     }
 
     #[tokio::test]
@@ -1596,7 +1614,10 @@ mod tests {
         }
         owner.terminal_preflight.store(false, Ordering::SeqCst);
         registry
-            .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+            .preflight(preflight(
+                ConversationRequestId(uuid::Uuid::new_v4()),
+                "session",
+            ))
             .await
             .unwrap();
         assert_eq!(owner.preflights.load(Ordering::SeqCst), 2);
@@ -1620,7 +1641,10 @@ mod tests {
             let registry = registry.clone();
             tokio::spawn(async move {
                 registry
-                    .preflight(preflight(ConversationRequestId(uuid::Uuid::new_v4()), "session"))
+                    .preflight(preflight(
+                        ConversationRequestId(uuid::Uuid::new_v4()),
+                        "session",
+                    ))
                     .await
             })
         };

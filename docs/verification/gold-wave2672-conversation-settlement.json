@@ -13,7 +13,7 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/daemon/conversation_registry.rs",
-      "sha256": "7E3FAC771220A4CE559F10522A0E0FF7E64CB3E582D2E0C669E46F05439986D2"
+      "sha256": "5511C258A1194CA16B93457C2C4CBB60935AFF25717AA1EDF73C47AB2E13BDA5"
     }
   ],
   "newCases": [
@@ -33,5 +33,14 @@
     "Synthetic registry tests do not qualify actual microphone/speaker devices or client end-to-end flows.",
     "Current full run41993234910 uses earlier producer28163cc8. Fresh current-producer execution is required.",
     "No roadmap checkbox is closed by this static slice."
-  ]
+  ],
+  "hostedFormatting": {
+    "run": "42006722490",
+    "producer": "1adc444e47243e6b4a79d665069b77279eb042f9",
+    "artifact": "13404659644",
+    "zipSha256": "2A6781D21990A5683145E373627D4A8D532374B0AF1746581B9EA627665E086B",
+    "preimage": "f1ad47ea2461558a401d05313ff1887e1b6fd476",
+    "postimage": "a3f42f4c46a2268c919294bc226a21f36668b43a",
+    "localFormatterRan": false
+  }
 }
