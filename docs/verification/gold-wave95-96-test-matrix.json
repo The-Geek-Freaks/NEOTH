@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2681_VAULT_RECEIPTS_FORMAT_BOUND_NATIVE_PENDING",
+  "status": "W2681_FOCUSED101_BOUND_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 469154,
-    "sha256": "DEC3CBF58131204AE3FD0468E5F05C172E480EDDC62E5A72946FAC8DDC8C17F2"
+    "bytes": 469143,
+    "sha256": "7E9CAC6A75DA21EC708EE3D681AD626670449303433B9BEDF1B75345BC1EEA73"
   },
   "sourceInputs": 2560,
   "requiredNativeTests": [
@@ -93381,6 +93381,26 @@
       }
     ],
     "note": "Original Preflight42025411343 artifact13413806576 API/ZIP/member/pre-postimage verified. Eight source-only formatter postimages;3296 portable/101 focused cases. No local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2681FocusedCaseAuthority": {
+    "base": "6cf08bae3a8c4d97cdfeaa14bd86e8f0f0ef78a0",
+    "sources": [
+      {
+        "path": ".github/workflows/paperless-product.yml",
+        "bytes": 6978,
+        "sha256": "F05BAD39005B2BCDE8F3FB1D9E975C0D2AF9FD76D8E3EB3498E8477590971741",
+        "blob": "73a1f59a73312d92f94ea007ece1fd4f045db0ad"
+      },
+      {
+        "path": "docs/verification/gold-wave2681-email-vault-receipts.json",
+        "bytes": 7754,
+        "sha256": "F8EA16A7B0F5B2C89AF75785D80A00CB94C86D0F6CA0C9EF5EB7377194FD134B",
+        "blob": "96ef43206d7b8bd717d6bf4aed4c7c7ba4d190e8"
+      }
+    ],
+    "note": "Preflight42025893329 correctly rejected stale91 workflow authority; update to101 exact registered cases without weakening checks. Native pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

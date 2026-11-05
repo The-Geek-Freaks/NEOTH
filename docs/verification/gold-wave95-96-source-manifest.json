@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T12:17:07.2711960Z",
-  "validationStatus": "W2681_VAULT_RECEIPTS_FORMAT_BOUND_NATIVE_PENDING",
+  "capturedUtc": "2026-11-05T12:31:29.4760775Z",
+  "validationStatus": "W2681_FOCUSED101_BOUND_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -278,8 +278,8 @@
     },
     {
       "path": ".github/workflows/paperless-product.yml",
-      "bytes": 6977,
-      "sha256": "D65CCA05C8B268DC49F3D6265661BB00B5E05BE7114470957E53608CEBAF7A83"
+      "bytes": 6978,
+      "sha256": "F05BAD39005B2BCDE8F3FB1D9E975C0D2AF9FD76D8E3EB3498E8477590971741"
     },
     {
       "path": ".github/workflows/paperless-provenance.yml",
@@ -4883,8 +4883,8 @@
     },
     {
       "path": "docs/verification/gold-wave2681-email-vault-receipts.json",
-      "bytes": 7334,
-      "sha256": "FD6092DCBC698CE0C0D4F4B2C233ADD632383CF1C723B686CD111B1115FFEC09"
+      "bytes": 7754,
+      "sha256": "F8EA16A7B0F5B2C89AF75785D80A00CB94C86D0F6CA0C9EF5EB7377194FD134B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",

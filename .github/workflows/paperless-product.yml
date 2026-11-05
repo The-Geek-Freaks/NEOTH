@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  W2557_EXPECTED_CASES: '91'
+  W2557_EXPECTED_CASES: '101'
   CARGO_BUILD_JOBS: '1'
   CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
