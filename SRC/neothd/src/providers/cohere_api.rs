@@ -576,7 +576,10 @@ mod tests {
             }))
             .unwrap();
             let error = reject_unsupported_native_tools(&parsed).unwrap_err();
-            assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+            assert_eq!(
+                format!("{error:#}"),
+                "cohere_api returned an unsupported native tool call"
+            );
         }
         for reason in ["TOOL_CALL", "tool_call", "Tool_Call"] {
             let parsed: CohereResponse = serde_json::from_value(serde_json::json!({
@@ -612,7 +615,10 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(completion.text, "visible answer");
-            assert_eq!(completion.termination.finish_reason.as_deref(), Some("COMPLETE"));
+            assert_eq!(
+                completion.termination.finish_reason.as_deref(),
+                Some("COMPLETE")
+            );
             assert_eq!(mock.received_requests().await.unwrap().len(), 1);
         }
     }
@@ -633,23 +639,29 @@ mod tests {
             .await;
         let error = build_adapter_against(&mock.uri())
             .complete(Request {
-                    prompt: "fixture".into(),
-                    ..Default::default()
-                })
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
             .await
             .unwrap_err();
-        assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+        assert_eq!(
+            format!("{error:#}"),
+            "cohere_api returned an unsupported native tool call"
+        );
         let error = match build_adapter_against(&mock.uri())
             .stream(Request {
-                    prompt: "fixture".into(),
-                    ..Default::default()
-                })
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
             .await
         {
             Ok(_) => panic!("unexecuted native tool must not produce a stream"),
             Err(error) => error,
         };
-        assert_eq!(format!("{error:#}"), "cohere_api returned an unsupported native tool call");
+        assert_eq!(
+            format!("{error:#}"),
+            "cohere_api returned an unsupported native tool call"
+        );
         assert_eq!(mock.received_requests().await.unwrap().len(), 2);
     }
 

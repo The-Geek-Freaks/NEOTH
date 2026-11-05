@@ -415,7 +415,10 @@ impl Provider for AwsBedrockAdapter {
 }
 
 fn completion_content(response: &ConverseResponse) -> Result<(String, ProviderTermination)> {
-    let message = response.output.as_ref().and_then(|output| output.message.as_ref());
+    let message = response
+        .output
+        .as_ref()
+        .and_then(|output| output.message.as_ref());
     let tool_payload = message.is_some_and(|message| {
         message
             .content
@@ -427,7 +430,13 @@ fn completion_content(response: &ConverseResponse) -> Result<(String, ProviderTe
     }
     let termination = bedrock_termination(response.stop_reason.clone());
     let text = message
-        .map(|message| message.content.iter().map(|block| block.text.as_str()).collect::<String>())
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<String>()
+        })
         .unwrap_or_default();
     if text.is_empty() && !termination.is_refusal() {
         anyhow::bail!(
@@ -1081,7 +1090,10 @@ mod tests {
                     }))
                     .unwrap();
                     let error = completion_content(&parsed).unwrap_err();
-                    assert_eq!(format!("{error:#}"), "aws_bedrock returned an unsupported native tool exchange");
+                    assert_eq!(
+                        format!("{error:#}"),
+                        "aws_bedrock returned an unsupported native tool exchange"
+                    );
                 }
             }
         }

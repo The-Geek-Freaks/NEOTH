@@ -15,15 +15,15 @@
   "bindings": [
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC"
+      "sha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F"
     },
     {
       "path": "SRC/neothd/src/providers/cohere_api.rs",
-      "sha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB"
+      "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "sha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A"
+      "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977"
     }
   ],
   "newCases": [
@@ -62,5 +62,32 @@
     "windowsPassed": 19606,
     "custody": "work/gold-20260906/wave2667-native-integration/ROOT_LINUX_WINDOWS_ARCHIVE_CUSTODY.json",
     "run": 41993234910
+  },
+  "hostedFormat": {
+    "schema": "neoth.hosted-format-admission.v1",
+    "run": 42011062478,
+    "artifact": 13407525501,
+    "producer": "5c2ba7b8887964686bd3869600abbc5e9750adc3",
+    "zipSha256": "209917A8A668AB07C2292DB83583DC46EA88684488C1BEEC5E796A853121B5A7",
+    "exactImages": [
+      {
+        "pre": "d005a19a67a0afa82b8bba19b676d32a3dd5ae2c",
+        "post": "4ca1918723c45e645687317233a29a276e6014ee",
+        "path": "SRC/neothd/src/providers/anthropic_api.rs"
+      },
+      {
+        "pre": "05b8164dcf1162b4f744ea4c45d591c4632120de",
+        "post": "16a9f46507294f1a0e4fde3764313a2956e7c6b1",
+        "path": "SRC/neothd/src/providers/aws_bedrock.rs"
+      },
+      {
+        "pre": "4449365ba2048019e25b6bdb059d1e267f03c772",
+        "post": "edeb3fee4deb836398427d14d900b73bc0d2591e",
+        "path": "SRC/neothd/src/providers/cohere_api.rs"
+      }
+    ],
+    "apiDigestVerified": true,
+    "allMembersVerified": true,
+    "localFormatterRan": false
   }
 }

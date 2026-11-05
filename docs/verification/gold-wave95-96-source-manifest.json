@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T10:28:19.1932773Z",
-  "validationStatus": "STATIC_REVIEWED_NATIVE_PROVIDER_TOOLS_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T10:30:22.3760751Z",
+  "validationStatus": "HOSTED_FORMAT_IMPORTED_NATIVE_PROVIDER_TOOLS_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4863,8 +4863,8 @@
     },
     {
       "path": "docs/verification/gold-wave2676-native-provider-tool-rejection.json",
-      "bytes": 3988,
-      "sha256": "53F916778D3446ECC90AA9DC688C2F2630A406D15C50DEF0C64CBCFA09817C3E"
+      "bytes": 4965,
+      "sha256": "9DC99C62E88ECA802D41D0A60DD3195EF055260210B11C20531D79326E0A948B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -9423,13 +9423,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 48841,
-      "sha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC"
+      "bytes": 48967,
+      "sha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "bytes": 43515,
-      "sha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A"
+      "bytes": 43704,
+      "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977"
     },
     {
       "path": "SRC/neothd/src/providers/azure_openai.rs",
@@ -9463,8 +9463,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cohere_api.rs",
-      "bytes": 33912,
-      "sha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB"
+      "bytes": 34048,
+      "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105"
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",

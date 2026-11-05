@@ -472,7 +472,10 @@ fn reject_unsupported_native_tools(response: &MessagesResponse) -> Result<()> {
             || kind.ends_with("_tool_result")
     });
     if tool_block
-        || matches!(response.stop_reason.as_deref(), Some("tool_use" | "pause_turn"))
+        || matches!(
+            response.stop_reason.as_deref(),
+            Some("tool_use" | "pause_turn")
+        )
     {
         anyhow::bail!("anthropic_api returned an unsupported native tool exchange");
     }
@@ -824,7 +827,10 @@ mod tests {
                 })
                 .await
                 .unwrap_err();
-            assert_eq!(format!("{error:#}"), "anthropic_api returned an unsupported native tool exchange");
+            assert_eq!(
+                format!("{error:#}"),
+                "anthropic_api returned an unsupported native tool exchange"
+            );
             let error = match build_adapter_against(&mock.uri())
                 .stream(Request {
                     prompt: "fixture".into(),
@@ -835,7 +841,10 @@ mod tests {
                 Ok(_) => panic!("unexecuted native tool must not produce a stream"),
                 Err(error) => error,
             };
-            assert_eq!(format!("{error:#}"), "anthropic_api returned an unsupported native tool exchange");
+            assert_eq!(
+                format!("{error:#}"),
+                "anthropic_api returned an unsupported native tool exchange"
+            );
             assert_eq!(mock.received_requests().await.unwrap().len(), 2);
         }
     }

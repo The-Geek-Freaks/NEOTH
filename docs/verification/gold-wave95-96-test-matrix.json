@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_NATIVE_PROVIDER_TOOLS_HOSTED_PENDING",
+  "status": "HOSTED_FORMAT_IMPORTED_NATIVE_PROVIDER_TOOLS_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 468212,
-    "sha256": "A08B2591D45E4E7415BF37CDC941A2F0D8F9A9A57E5DC9B45DA119384ECED43E"
+    "bytes": 468220,
+    "sha256": "9FB451F136954B648D2DBD9BD78EAEFC451D34150C5EF2F190EFF8FCB70FB91A"
   },
   "sourceInputs": 2555,
   "requiredNativeTests": [
@@ -6042,13 +6042,13 @@
     {
       "test": "providers::anthropic_api::tests::mock_401_auth_fail_names_status_and_provider",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC",
+      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cohere_api::tests::mock_401_names_status_and_provider",
       "sourcePath": "SRC/neothd/src/providers/cohere_api.rs",
-      "sourceSha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB",
+      "sourceSha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
       "junitClass": "neoth"
     },
     {
@@ -19627,49 +19627,49 @@
     {
       "test": "providers::anthropic_api::tests::native_tool_blocks_and_paused_turns_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC",
+      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::ordinary_text_thinking_and_refusal_remain_tool_free",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC",
+      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::anthropic_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sourceSha256": "3EB9ABAAB02BF14C7F469E567C6696B0A337B1B96270163FFAC4C070A36779EC",
+      "sourceSha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cohere_api::tests::native_tool_payload_and_finish_reason_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/cohere_api.rs",
-      "sourceSha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB",
+      "sourceSha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cohere_api::tests::absent_null_and_empty_tool_fields_preserve_text_completion",
       "sourcePath": "SRC/neothd/src/providers/cohere_api.rs",
-      "sourceSha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB",
+      "sourceSha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cohere_api::tests::native_tool_http_response_fails_complete_and_buffered_stream",
       "sourcePath": "SRC/neothd/src/providers/cohere_api.rs",
-      "sourceSha256": "2CFDD7CCDC9CF2E9D201635B9CDB61EC114DEE3F0CE671B2601F14D6A49BFABB",
+      "sourceSha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
       "junitClass": "neoth"
     },
     {
       "test": "providers::aws_bedrock::tests::native_tool_blocks_and_stop_reason_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "sourceSha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A",
+      "sourceSha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977",
       "junitClass": "neoth"
     },
     {
       "test": "providers::aws_bedrock::tests::tool_free_converse_projection_preserves_text_and_guardrail_refusal",
       "sourcePath": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "sourceSha256": "10756AC203F8D5563E07F7BB5544E50A379233430FD8DF415CAD9A5FD6CAB84A",
+      "sourceSha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977",
       "junitClass": "neoth"
     }
   ],
@@ -92867,6 +92867,38 @@
       }
     ],
     "note": "Eight new native-tool rejection/compatibility tests across Anthropic Cohere Bedrock; root-only text work under BSOD hold. Existing full CI remains active; fresh native execution pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2676HostedFormat": {
+    "base": "5c2ba7b8887964686bd3869600abbc5e9750adc3",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2676-native-provider-tool-rejection.json",
+        "bytes": 4965,
+        "sha256": "9DC99C62E88ECA802D41D0A60DD3195EF055260210B11C20531D79326E0A948B",
+        "blob": "876e98eb66bc82db8a3b57ba09b8ad1df96ff177"
+      },
+      {
+        "path": "SRC/neothd/src/providers/anthropic_api.rs",
+        "bytes": 48967,
+        "sha256": "D60C87DF6B9680E1ED5ABCECADE04D2498BE086F4A12312A0FC073A4AF23200F",
+        "blob": "4ca1918723c45e645687317233a29a276e6014ee"
+      },
+      {
+        "path": "SRC/neothd/src/providers/aws_bedrock.rs",
+        "bytes": 43704,
+        "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977",
+        "blob": "16a9f46507294f1a0e4fde3764313a2956e7c6b1"
+      },
+      {
+        "path": "SRC/neothd/src/providers/cohere_api.rs",
+        "bytes": 34048,
+        "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105",
+        "blob": "edeb3fee4deb836398427d14d900b73bc0d2591e"
+      }
+    ],
+    "note": "Original hosted format patch verified against API digest and exact three Git pre/postimages; no local formatter. Native execution pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
