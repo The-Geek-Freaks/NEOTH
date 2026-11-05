@@ -57,5 +57,13 @@
   "localExecutableValidationRan": false,
   "correctedGuardHostedAccepted": false,
   "fullCiAccepted": false,
-  "goldAccepted": false
+  "goldAccepted": false,
+  "observedWindowsSummary": {
+    "job": "127130207418",
+    "run": 19607,
+    "passed": 19606,
+    "failed": 1,
+    "skipped": 34,
+    "failedCase": "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed"
+  }
 }

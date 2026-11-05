@@ -9,7 +9,7 @@
   "change": "Native OpenAI chat requests explicitly serialize store:false for both synchronous and streaming calls through the existing authorized request builder. Custom endpoints, compatible profiles and Copilot omit the unreviewed field.",
   "source": {
     "path": "SRC/neothd/src/providers/openai_api.rs",
-    "sha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78"
+    "sha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6"
   },
   "reference": {
     "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
@@ -32,5 +32,14 @@
   "limits": [
     "This explicit API field does not assert Zero Data Retention, no prompt caching, or live-service acceptance.",
     "The broader A08 provider, hosted-tool, cancellation and tool-transport requirements remain open."
-  ]
+  ],
+  "hostedFormatting": {
+    "run": "42008318197",
+    "producer": "ccadcc2f388b389b24da715cffc962f8c6b39686",
+    "artifact": "13405567780",
+    "zipSha256": "DC53D0ECB92B6EE614BE71338C404B5600C62AE7209BD0C7973E64F566B028E6",
+    "preimage": "af4f9a196bfe5dbb4071a12995a7382648b4fc72",
+    "postimage": "8d416029ebc70af837e112227f9ece8958c8a6ba",
+    "localFormatterRan": false
+  }
 }

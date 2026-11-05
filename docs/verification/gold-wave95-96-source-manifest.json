@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T10:08:31.8774569Z",
-  "validationStatus": "STATIC_REVIEWED_STORAGE_AND_CALLSITE_RECONCILIATION_HOSTED_PENDING",
+  "capturedUtc": "2026-11-05T10:15:53.9699579Z",
+  "validationStatus": "STATIC_REVIEWED_AZURE_NATIVE_TOOL_REJECTION_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4848,13 +4848,18 @@
     },
     {
       "path": "docs/verification/gold-wave2673-native-openai-storage.json",
-      "bytes": 2173,
-      "sha256": "1DD2DB463E1F44CE8EE52AF070A303C5BE017CAB0AD61C87043E3E9A870EC51A"
+      "bytes": 2556,
+      "sha256": "44585D217BCB0AFE07132779B0D534A276BE771CC29D1492FB5F56004C8AC918"
     },
     {
       "path": "docs/verification/gold-wave2674-provider-surface-reconciliation.json",
-      "bytes": 2693,
-      "sha256": "40F510358C826B9D4EE0B8FAD305E17924A1E87B61F0D2D5BCB6B346B297E480"
+      "bytes": 2939,
+      "sha256": "EF4F523454E78229571A6BD08B276AF3D9D577E219A3A14AF959CC27F0887646"
+    },
+    {
+      "path": "docs/verification/gold-wave2675-azure-native-tool-rejection.json",
+      "bytes": 2051,
+      "sha256": "CD80281393EFA5B4BBD03A5233F03B44E6792F6428EBFB0AA1B61558147512BD"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6108,8 +6113,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2779518,
-      "sha256": "37491A455F91CE694E0A440E60ECF5C49F146E20EB7E941D34948154A776A14B"
+      "bytes": 2781257,
+      "sha256": "D4D6E42829525F11572131397412DDAD452410D1F813826BD2E95C7A98A9CFBF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9423,8 +9428,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/azure_openai.rs",
-      "bytes": 42440,
-      "sha256": "C1E3A9DB8EA82D52B0C3D87FC552D5858B57CC2403270D052C938A1DCF7E120B"
+      "bytes": 46707,
+      "sha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB"
     },
     {
       "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
@@ -9513,8 +9518,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/openai_api.rs",
-      "bytes": 170730,
-      "sha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78"
+      "bytes": 170843,
+      "sha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6"
     },
     {
       "path": "SRC/neothd/src/providers/ouro/adapter.rs",

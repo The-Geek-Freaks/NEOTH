@@ -1553,7 +1553,7 @@ impl SseChoice {
     }
 }
 
-fn reject_unsupported_native_tools(
+pub(super) fn reject_unsupported_native_tools(
     finish_reason: Option<&str>,
     tool_calls: Option<&serde_json::Value>,
     function_call: Option<&serde_json::Value>,
@@ -4459,9 +4459,14 @@ mod tests {
         let mut stream = adapter.stream(req).await.expect("stream must start");
         let mut completed = false;
         while let Some(chunk) = stream.next().await {
-            completed |= chunk.expect("matched native stream must remain successful").done;
+            completed |= chunk
+                .expect("matched native stream must remain successful")
+                .done;
         }
-        assert!(completed, "native storage contract needs a completed stream");
+        assert!(
+            completed,
+            "native storage contract needs a completed stream"
+        );
     }
 
     #[tokio::test]
@@ -4492,7 +4497,9 @@ mod tests {
             .expect("compat stream body must use max_tokens");
         let mut completed = false;
         while let Some(chunk) = stream.next().await {
-            completed |= chunk.expect("compatible stream must remain successful").done;
+            completed |= chunk
+                .expect("compatible stream must remain successful")
+                .done;
         }
         assert!(completed, "compatible contract needs a completed stream");
     }

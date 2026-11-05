@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_STORAGE_AND_CALLSITE_RECONCILIATION_HOSTED_PENDING",
+  "status": "STATIC_REVIEWED_AZURE_NATIVE_TOOL_REJECTION_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 467825,
-    "sha256": "2ABBABA2F6C6F58529B79056016E0787C9298A9DD7448E4C84156C05C33C5BFD"
+    "bytes": 468016,
+    "sha256": "F1BA7E98A8A3DD396526F2362EDB08871D9CF6C0F3F4F5B3D4442A306262DB85"
   },
-  "sourceInputs": 2553,
+  "sourceInputs": 2554,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -6054,7 +6054,7 @@
     {
       "test": "providers::openai_api::tests::mock_401_auth_fail_returns_descriptive_error",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
@@ -9162,13 +9162,13 @@
     {
       "test": "providers::openai_api::tests::custom_openai_endpoint_has_a_distinct_unknown_pricing_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::only_the_exact_official_openai_origin_and_v1_path_keep_official_identity",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
@@ -17587,19 +17587,19 @@
     {
       "test": "providers::openai_api::tests::mock_200_native_tool_calls_cannot_become_text_success",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_sse_native_tool_calls_error_without_success_terminal",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::empty_native_tool_fields_preserve_plain_text_responses",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
@@ -17683,7 +17683,7 @@
     {
       "test": "providers::openai_api::tests::mock_adapter_breakers_isolate_cases_and_preserve_repeated_failure_trip",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
@@ -19579,31 +19579,49 @@
     {
       "test": "providers::openai_api::tests::native_storage_opt_out_is_explicit_without_changing_compatible_contracts",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_request_carries_correct_bearer_and_payload",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_official_sse_stream_uses_developer_role_and_stream_true",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_compat_complete_uses_only_legacy_max_tokens",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
       "junitClass": "neoth"
     },
     {
       "test": "providers::openai_api::tests::mock_compat_stream_uses_only_legacy_max_tokens",
       "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
-      "sourceSha256": "E4986CA430DE4FC0408C7134E962A54F383B8A593177A325524F6E3AD7241B78",
+      "sourceSha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::azure_openai::tests::native_tool_payloads_cannot_become_azure_text_success",
+      "sourcePath": "SRC/neothd/src/providers/azure_openai.rs",
+      "sourceSha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::azure_openai::tests::empty_native_tool_fields_preserve_azure_text_and_refusal",
+      "sourcePath": "SRC/neothd/src/providers/azure_openai.rs",
+      "sourceSha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::azure_openai::tests::native_tool_http_response_fails_complete_and_buffered_stream",
+      "sourcePath": "SRC/neothd/src/providers/azure_openai.rs",
+      "sourceSha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB",
       "junitClass": "neoth"
     }
   ],
@@ -92719,6 +92737,50 @@
       }
     ],
     "note": "Native storage opt-out with5 registered cases and two reviewed callsite baseline corrections; no guard bypass; native hosted pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2675AzureNativeTools": {
+    "base": "ccadcc2f388b389b24da715cffc962f8c6b39686",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2673-native-openai-storage.json",
+        "bytes": 2556,
+        "sha256": "44585D217BCB0AFE07132779B0D534A276BE771CC29D1492FB5F56004C8AC918",
+        "blob": "81e5850ae4f6cc022bb1de427675daaf89165c91"
+      },
+      {
+        "path": "docs/verification/gold-wave2674-provider-surface-reconciliation.json",
+        "bytes": 2939,
+        "sha256": "EF4F523454E78229571A6BD08B276AF3D9D577E219A3A14AF959CC27F0887646",
+        "blob": "e334439876c7dd8efdf92e6ff056248a83198f1e"
+      },
+      {
+        "path": "docs/verification/gold-wave2675-azure-native-tool-rejection.json",
+        "bytes": 2051,
+        "sha256": "CD80281393EFA5B4BBD03A5233F03B44E6792F6428EBFB0AA1B61558147512BD",
+        "blob": "0ac11cdcd831ae529d035654c42a014fcf3c3df6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2781257,
+        "sha256": "D4D6E42829525F11572131397412DDAD452410D1F813826BD2E95C7A98A9CFBF",
+        "blob": "d4b58e745151ebde16e45cca99e878faffadab9f"
+      },
+      {
+        "path": "SRC/neothd/src/providers/azure_openai.rs",
+        "bytes": 46707,
+        "sha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB",
+        "blob": "e2f7e91de1ea3a8e750cb22b104cd034d5ab5a4a"
+      },
+      {
+        "path": "SRC/neothd/src/providers/openai_api.rs",
+        "bytes": 170843,
+        "sha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6",
+        "blob": "bed57906b6385ea69191a36175a670c1732f634c"
+      }
+    ],
+    "note": "Azure uses shared native-tool rejection before text/refusal;3new cases registered; native storage hosted format verified; Windows predecessor shares only known callsite guard failure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

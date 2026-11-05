@@ -410,7 +410,18 @@ fn parse_azure_choice(choice: ChatChoice) -> Result<(String, ProviderTermination
         message,
         finish_reason,
     } = choice;
-    let ChatChoiceMessage { content, refusal } = message;
+    let ChatChoiceMessage {
+        content,
+        refusal,
+        tool_calls,
+        function_call,
+    } = message;
+    super::openai_api::reject_unsupported_native_tools(
+        finish_reason.as_deref(),
+        tool_calls.as_ref(),
+        function_call.as_ref(),
+        "azure_openai",
+    )?;
     let refusal_present = refusal.is_some();
     let refusal_message = refusal.filter(|value| !value.trim().is_empty());
     let content_filtered = finish_reason.as_deref() == Some("content_filter");
@@ -542,8 +553,8 @@ fn map_azure_error(
 
 // ── Wire types ─────────────────────────────────────────────────────────
 //
-// Identical to `providers::openai_api`'s shapes — Azure mirrors OpenAI's
-// request/response envelope, only the auth + URL differ.
+// Azure shares the OpenAI chat envelope and native-tool rejection policy.
+// Request options remain explicit to this adapter's supported API version.
 
 #[derive(Serialize)]
 struct ChatRequest {
@@ -595,6 +606,10 @@ struct ChatChoiceMessage {
     content: Option<String>,
     #[serde(default)]
     refusal: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    function_call: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -969,6 +984,47 @@ mod tests {
     }
 
     #[test]
+    fn native_tool_payloads_cannot_become_azure_text_success() {
+        for fixture in [
+            serde_json::json!({"message": {"content": null, "tool_calls": [{"id": "private-tool-payload"}]}, "finish_reason": "tool_calls"}),
+            serde_json::json!({"message": {"content": "apparently complete", "tool_calls": [{"id": "private-tool-payload"}]}, "finish_reason": "stop"}),
+            serde_json::json!({"message": {"content": "apparently complete", "function_call": {"name": "private-tool-payload"}}, "finish_reason": "stop"}),
+            serde_json::json!({"message": {"content": "apparently complete", "tool_calls": []}, "finish_reason": "tool_calls"}),
+            serde_json::json!({"message": {"content": "apparently complete"}, "finish_reason": "function_call"}),
+            serde_json::json!({"message": {"content": "apparently complete", "tool_calls": "private-tool-payload"}, "finish_reason": "stop"}),
+            serde_json::json!({"message": {"content": null, "refusal": "private-tool-payload", "tool_calls": [{"id": "private-tool-payload"}]}, "finish_reason": "content_filter"}),
+        ] {
+            let choice = serde_json::from_value(fixture).unwrap();
+            let error = parse_azure_choice(choice).unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                "azure_openai returned an unsupported native tool call"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_native_tool_fields_preserve_azure_text_and_refusal() {
+        let text = serde_json::from_value(serde_json::json!({
+            "message": {"content": "ordinary answer", "tool_calls": [], "function_call": null},
+            "finish_reason": "stop"
+        }))
+        .unwrap();
+        let (answer, termination) = parse_azure_choice(text).unwrap();
+        assert_eq!(answer, "ordinary answer");
+        assert!(!termination.is_refusal());
+
+        let refusal = serde_json::from_value(serde_json::json!({
+            "message": {"content": null, "refusal": "policy refusal", "tool_calls": null, "function_call": null},
+            "finish_reason": "content_filter"
+        }))
+        .unwrap();
+        let (answer, termination) = parse_azure_choice(refusal).unwrap();
+        assert_eq!(answer, "policy refusal");
+        assert!(termination.is_refusal());
+    }
+
+    #[test]
     fn http_policy_envelope_is_recognised_without_message_substring_guessing() {
         let (reason, message) = parse_azure_policy_error(
             r#"{"error":{"code":"content_filter","message":"Prompt blocked.","innererror":{"code":"ResponsibleAIPolicyViolation"}}}"#,
@@ -1016,6 +1072,48 @@ mod tests {
             .await
             .expect_err("bounded fixture must fail")
             .to_string()
+    }
+
+    #[tokio::test]
+    async fn native_tool_http_response_fails_complete_and_buffered_stream() {
+        let mock = MockServer::start().await;
+        let body = serde_json::to_vec(&serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "unexecuted private-tool-output",
+                    "tool_calls": [{"id": "private-tool-payload", "type": "function", "function": {"name": "unrequested", "arguments": "{}"}}]
+                },
+                "finish_reason": "stop"
+            }]
+        }))
+        .unwrap();
+        mount_completions(&mock, 200, body).await;
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "azure_openai returned an unsupported native tool call"
+        );
+        let error = match build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(_) => panic!("native tool payload must not become a successful buffered stream"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            format!("{error:#}"),
+            "azure_openai returned an unsupported native tool call"
+        );
+        assert_eq!(mock.received_requests().await.unwrap().len(), 2);
     }
 
     #[tokio::test]

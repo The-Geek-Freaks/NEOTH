@@ -1,0 +1,37 @@
+{
+  "schema": "neoth.wave2675.azure-native-tool-rejection.v1",
+  "producerBase": "ccadcc2f388b389b24da715cffc962f8c6b39686",
+  "roadmap": [
+    "ADOPT-20261012-A08",
+    "GOLD-R4-14"
+  ],
+  "batch": "B03",
+  "finding": "Azure discarded tool_calls/function_call fields and could project accompanying text as a successful completion even though the native call was unsupported and unexecuted.",
+  "change": "Decode optional native tool payloads and run the existing OpenAI rejection helper before projecting text or refusal. Refuse native tool finish reasons or nonempty payloads with a fixed payload-free error.",
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/providers/azure_openai.rs",
+      "sha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB"
+    },
+    {
+      "path": "SRC/neothd/src/providers/openai_api.rs",
+      "sha256": "003999B1BD66A6DA6E3DAAA47F6AA95C700FF8967B3047AE968BBC61C71B7DD6"
+    }
+  ],
+  "reference": "https://learn.microsoft.com/en-us/azure/foundry/reference/rest/chat-create-chat-completion",
+  "newCases": [
+    "providers::azure_openai::tests::native_tool_payloads_cannot_become_azure_text_success",
+    "providers::azure_openai::tests::empty_native_tool_fields_preserve_azure_text_and_refusal",
+    "providers::azure_openai::tests::native_tool_http_response_fails_complete_and_buffered_stream"
+  ],
+  "requiredPortableNativeTests": 3266,
+  "coverage": "Seven negative envelope fixtures; empty/null-field success and refusal compatibility; real mocked HTTP responses through complete and the existing buffered-stream entry, requiring2requests and exact payload-free failure.",
+  "review": "GPT-6.1 Terra high prompt-only review found no concrete flaw in supplied implementation and tests.",
+  "localExecutableValidationRan": false,
+  "hostedAccepted": false,
+  "goldAccepted": false,
+  "limits": [
+    "Azure still uses its existing nonstreaming HTTP path; no native SSE or native tool execution is added.",
+    "No credentials, live model calls or whole A08/provider-parity acceptance."
+  ]
+}
