@@ -30,10 +30,7 @@ impl ReviewLeaf for Leaf {
             std::fs::write(root.join("drift.txt"), "changed index").unwrap();
             git(root, &["add", "drift.txt"]);
         }
-        Ok(LeafOutput {
-            text: if self.dissent { FAIL } else { PASS }.into(),
-            completion_identity_sha256: "injected-transport-only".into(),
-        })
+        Ok(LeafOutput::for_test(if self.dissent { FAIL } else { PASS }))
     }
 }
 

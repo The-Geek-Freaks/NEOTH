@@ -175,6 +175,16 @@ pub(in crate::coding) struct LeafOutput {
     completion_identity_sha256: String,
 }
 
+#[cfg(test)]
+impl LeafOutput {
+    pub(in crate::coding) fn for_test(text: &str) -> Self {
+        Self {
+            text: text.into(),
+            completion_identity_sha256: "injected-transport-only".into(),
+        }
+    }
+}
+
 /// Private transport seam; production always uses NativeLeaf. No CLI switch.
 #[async_trait::async_trait]
 pub(in crate::coding) trait ReviewLeaf: Send + Sync {

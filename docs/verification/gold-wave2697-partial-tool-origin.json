@@ -58,7 +58,7 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage_acquisitions/provenance/tests.rs",
-      "sha256": "5C9276ABEFAF4F4E4D713FEBA3ABE797F0C4D2E17EE3BDBCFEC23DAFE551353F"
+      "sha256": "DFECF108D2E8A2FA66F3ADD6D3BC484D3BB378FA169D3E1F7B7401DCD811872D"
     }
   ],
   "validation": {
@@ -94,7 +94,7 @@
     "run": 42082092627,
     "diagnostic": "PowerShell culture sort disagreed with hosted Python ordinal order at providers::cost versus providers::cost_authorization",
     "repair": "Ordinal StringComparer order for all135 same identities; no selection or assertion removed",
-    "hostedRevalidation": "pending"
+    "hostedRevalidation": "Preflight42082426906 success on b6a3563d981a9444c1b59fa4f383627c3760517f"
   },
   "hostedDependencyPreparation": {
     "observedRun": 42078920867,
@@ -105,11 +105,19 @@
     "futureStepLimitMinutes": 10,
     "activeRunCancelled": false,
     "compilerOrTestsWeakened": false,
-    "cause": "Unknown until terminal job logs are available"
+    "cause": "Installation completed at18:20:23; later type-check failed E0451. No package-install cause inferred from elapsed time."
   },
   "strengthenedConsumerTests": [
     "cli::usage_acquisitions::provenance::tests::provenance_terminal_retains_each_frozen_schema_and_prompt_components",
     "daemon::capability_decay::tests::versioned_terminal_snapshots_reach_authenticated_capability_observation",
     "daemon::capability_decay::tests::versioned_capability_terminals_refuse_bad_snapshots_without_legacy_fallback"
-  ]
+  ],
+  "consumerHostedFormatting": {
+    "run": 42083634124,
+    "artifact": 13442585124,
+    "producer": "9c8f94c9d13aee6cbcd3fd0ccbed75f5dbe62675",
+    "exactPrePostImages": 1,
+    "apiZipAndMembersVerified": true,
+    "runtimeAccepted": false
+  }
 }

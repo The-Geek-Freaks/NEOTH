@@ -102,9 +102,8 @@ fn terminal(version: u8) -> Value {
         value["pricing_basis"] = serde_json::to_value(&event.pricing_basis).unwrap();
     }
     if version == 6 {
-        event.partial_prompt_origin = Some(
-            crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(4, 520).unwrap(),
-        );
+        event.partial_prompt_origin =
+            Some(crate::tokens::partial_prompt_origin::PartialPromptOrigin::new(4, 520).unwrap());
         value["partial_prompt_origin"] = serde_json::to_value(event.partial_prompt_origin).unwrap();
     }
     if version >= 3 {

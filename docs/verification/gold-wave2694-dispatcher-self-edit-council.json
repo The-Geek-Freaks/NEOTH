@@ -28,7 +28,7 @@
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "sha256": "04CE7245544539C864F250B11C692DF2717D8E73EDBFC7F295AE83F2D3A16A42"
+      "sha256": "7EC17243EC28EE138AA8BFEDC9F817754CC73A9DFC46A8A2FB2FAA29E4AB482D"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
@@ -56,7 +56,7 @@
     },
     {
       "path": "SRC/neothd/src/coding/self_source_council.rs",
-      "sha256": "03B2AB5BE8457E0253C2B136B53F3FBA3BA9331BF7A0D638FE5D188E54D755B3"
+      "sha256": "8E142B817155B851A1F0C7CA78C2A1021F935EDDD0B690812E71A21B790BB43D"
     }
   ],
   "validation": {
@@ -99,5 +99,15 @@
     "producer": "f262c586bcb00fb69bd2abaee5138123297f1c7f",
     "exactPrePostImages": 1,
     "apiZipAndMembersVerified": true
+  },
+  "testVisibilityFollowup": {
+    "run": 42078920867,
+    "producer": "ef62e91b9b2b1983d44b0c8b65813f7cf7e5d005",
+    "conclusion": "failure",
+    "diagnostic": "E0451: sibling dispatcher test constructed private LeafOutput fields",
+    "repair": "Test-only coding-scoped constructor; production fields and terminal validation stay private",
+    "review": "GPT-6.1 Terra high prompt-only build-error review",
+    "revalidation": "pending",
+    "localExecutableValidationRan": false
   }
 }
