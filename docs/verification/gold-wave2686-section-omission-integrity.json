@@ -12,7 +12,7 @@
   "sources": [
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
-      "sha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48"
+      "sha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60"
     },
     {
       "path": "SRC/neothd/src/media/docx_sections.rs",
@@ -37,5 +37,11 @@
     "Compatibility is with the inspected current extractor contract. Previously admitted inconsistent persisted or external metadata now fails closed; it is not rewritten or silently dropped.",
     "Whole A03 structure, lineage and deletion acceptance is not established by this narrow repair."
   ],
-  "rawRoadmapRowsClosed": 0
+  "rawRoadmapRowsClosed": 0,
+  "hostedFormatting": {
+    "run": 42035720788,
+    "artifact": 13418886470,
+    "patch": "exact verified pre/postimage import",
+    "runtimeAccepted": false
+  }
 }

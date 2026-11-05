@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "section-omission-contract-static-reviewed-hosted-pending",
+  "status": "mobile-source86-hosted-passed-rust-native-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 470139,
-    "sha256": "42A05987DF969EC5553BFC1AB9F3FA9F97C30A167A88D365B9E854207DDFE2FD"
+    "bytes": 470132,
+    "sha256": "EC8A7D3335261EA454F9F63945EF3DC08143F4C628ED6855C1CB8D2C36FA6008"
   },
   "sourceInputs": 2565,
   "requiredNativeTests": [
@@ -18013,31 +18013,31 @@
     {
       "test": "memory::document_structure::tests::structure_admits_bounded_incomplete_members_and_zero_length_eof_tail",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_checks_actual_json_and_global_collection_limits",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_enforces_row_cell_and_paragraph_caps_across_parent_collections",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_rejects_unknown_fields_bad_coordinates_and_inconsistent_completeness",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::structure_roundtrip_retains_source_ranges_and_rejects_other_source_binding",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
@@ -18877,13 +18877,13 @@
     {
       "test": "memory::document_structure::tests::section_structure_rejects_unknown_contexts_ranges_and_false_completeness",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::section_structure_v2_roundtrips_without_reinterpreting_historical_v1",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
@@ -18955,13 +18955,13 @@
     {
       "test": "memory::document_structure::tests::numbering_structure_versions_roundtrip_and_enforce_field_presence",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::numbering_structure_rejects_invalid_records_metadata_and_bindings",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
@@ -19861,13 +19861,13 @@
     {
       "test": "memory::document_structure::tests::section_omission_counts_preserve_exact_capped_and_metadata_summary_contracts",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     },
     {
       "test": "memory::document_structure::tests::section_omission_count_and_summary_corruption_fail_closed",
       "sourcePath": "SRC/neothd/src/memory/document_structure.rs",
-      "sourceSha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48",
+      "sourceSha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
       "junitClass": "neoth"
     }
   ],
@@ -93699,6 +93699,44 @@
       }
     ],
     "note": "A03 section omission counts, detail cap and metadata summary match existing extractor; two new portable cases,3307 total; no local execution, hosted pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2686HostedFormatAndMobileAcceptance": {
+    "base": "28a609c789a8f3b2eee99fca78dfed890c3218a2",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2684-mobile-enrollment-startup.json",
+        "bytes": 4959,
+        "sha256": "4DE5D6C3DD66EC6A3CECF4DB7B1B63C50D0C908C8E4ED855BED720F45F133C17",
+        "blob": "cac0512389b8f6751c80f0b53965878e28702c71"
+      },
+      {
+        "path": "docs/verification/gold-wave2685-mobile-source-qa-mode.json",
+        "bytes": 3080,
+        "sha256": "1A664B1DB5A144C758A3B11D46CDB9D8A01E1507C55FBB24EDA138450084970B",
+        "blob": "27566ac8307acaa7720f5126e2624c7700cf5802"
+      },
+      {
+        "path": "docs/verification/gold-wave2686-section-omission-integrity.json",
+        "bytes": 2204,
+        "sha256": "F46B6D08A941F81ECF87A250DC122C87EC3929C02D6D3B0089FAE35D351E033F",
+        "blob": "05aac920ca5b58e3e5dfcee8b56207b1c656665a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2795451,
+        "sha256": "8FC0D9CAADFFECE2FD3962FD16B9FAE923ADA57BB022600D66819E5774C325C6",
+        "blob": "3a6fb3ec78b829aacb5daba8a3b47d4b8f0113b7"
+      },
+      {
+        "path": "SRC/neothd/src/memory/document_structure.rs",
+        "bytes": 39879,
+        "sha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60",
+        "blob": "84e74c933404d80ca7ffc372a3e5ace555210cf8"
+      }
+    ],
+    "note": "Original hosted Flutter log admits86/86 and seven new pairing cases on1f1773fc; exact hosted Rust format patch imported for section integrity; no native/Gold claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T13:25:14.4445619Z",
-  "validationStatus": "section-omission-contract-static-reviewed-hosted-pending",
+  "capturedUtc": "2026-11-05T13:27:53.7746056Z",
+  "validationStatus": "mobile-source86-hosted-passed-rust-native-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4898,18 +4898,18 @@
     },
     {
       "path": "docs/verification/gold-wave2684-mobile-enrollment-startup.json",
-      "bytes": 3886,
-      "sha256": "1D0E27C1FC79A72DDED2CC90A9AB5AC446051A508A5CDDC26171D7C279C6C320"
+      "bytes": 4959,
+      "sha256": "4DE5D6C3DD66EC6A3CECF4DB7B1B63C50D0C908C8E4ED855BED720F45F133C17"
     },
     {
       "path": "docs/verification/gold-wave2685-mobile-source-qa-mode.json",
-      "bytes": 2015,
-      "sha256": "99AC727A1CE52D28D97E598C40472FD672029CF7637C4B65EDA7224DB8991815"
+      "bytes": 3080,
+      "sha256": "1A664B1DB5A144C758A3B11D46CDB9D8A01E1507C55FBB24EDA138450084970B"
     },
     {
       "path": "docs/verification/gold-wave2686-section-omission-integrity.json",
-      "bytes": 2041,
-      "sha256": "BB5CF33F0F49428C96AED6ABDA2B255A594204F7C19BC91AC0C7288CE734510E"
+      "bytes": 2204,
+      "sha256": "F46B6D08A941F81ECF87A250DC122C87EC3929C02D6D3B0089FAE35D351E033F"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6163,8 +6163,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2794791,
-      "sha256": "19662602E88F2AAA6FB4919BC3519BBE0DD9B056560EF42AAC56436EF6407164"
+      "bytes": 2795451,
+      "sha256": "8FC0D9CAADFFECE2FD3962FD16B9FAE923ADA57BB022600D66819E5774C325C6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -9133,8 +9133,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/document_structure.rs",
-      "bytes": 39647,
-      "sha256": "9D18AA65EBE13E4AAFC31E2ECF1FE140C5E900778A4976639FCEA68C4296DC48"
+      "bytes": 39879,
+      "sha256": "14CD424B190505DC3B08A4CD88B22E6695802063497B3BA9CA43C9112C323A60"
     },
     {
       "path": "SRC/neothd/src/memory/drift.rs",

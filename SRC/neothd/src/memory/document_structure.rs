@@ -755,12 +755,16 @@ mod tests {
                 let omissions = if metadata {
                     serde_json::json!([{"reason":"metadata_limit","source_range":[0,100]}])
                 } else {
-                    serde_json::json!((0..count.min(64)).map(|index| {
-                        serde_json::json!({
-                            "reason":"unsupported_section_context",
-                            "source_range":[index,index + 1]
-                        })
-                    }).collect::<Vec<_>>())
+                    serde_json::json!(
+                        (0..count.min(64))
+                            .map(|index| {
+                                serde_json::json!({
+                                    "reason":"unsupported_section_context",
+                                    "source_range":[index,index + 1]
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    )
                 };
                 value["section_properties"] = serde_json::json!({
                     "complete":false, "omitted_observed":count,
@@ -819,13 +823,16 @@ mod tests {
             for (details, count) in [(63, 65), (64, 64)] {
                 let mut corrupt = value.clone();
                 corrupt["section_properties"]["omitted_observed"] = serde_json::json!(count);
-                corrupt["section_properties"]["omissions"] =
-                    serde_json::json!((0..details).map(|index| {
-                        serde_json::json!({
-                            "reason":"unsupported_section_context",
-                            "source_range":[index,index + 1]
+                corrupt["section_properties"]["omissions"] = serde_json::json!(
+                    (0..details)
+                        .map(|index| {
+                            serde_json::json!({
+                                "reason":"unsupported_section_context",
+                                "source_range":[index,index + 1]
+                            })
                         })
-                    }).collect::<Vec<_>>());
+                        .collect::<Vec<_>>()
+                );
                 assert!(DocumentStructure::from_value(&corrupt).is_err());
             }
         }

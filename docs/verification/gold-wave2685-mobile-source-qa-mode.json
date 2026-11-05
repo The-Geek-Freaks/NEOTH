@@ -28,12 +28,39 @@
     "CiCadenceContractTests.test_mobile_source_qa_and_lock_bootstrap_conflict_is_a_failure"
   ],
   "localExecutableValidationRan": false,
-  "hostedAccepted": false,
+  "hostedAccepted": true,
   "nativeAccepted": false,
   "goldAccepted": false,
   "limits": [
     "A successful source-only workflow does not qualify native binaries, interop, devices, signatures or releases.",
     "Root must audit all five active run statuses before the single sequential dispatch.",
     "No native job or test requirement is removed from the default full producer."
-  ]
+  ],
+  "hostedScope": "Flutter source analysis and all86 package tests only; seven startup/save cases. Native/device/signing/release acceptance remains separate.",
+  "hostedProof": {
+    "run": 42035196908,
+    "producer": "1f1773fc29e0af58c21a0984749210d03847b2c7",
+    "job": 127271420075,
+    "passed": 86,
+    "analysis": "No issues found",
+    "originalLogSha256": "021FEC55802F0E75DB2CDE9D0644CDF0AE48A298EB311BC280F01D254E1C4F32",
+    "bindings": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "producerGitBlob": "adfade46886001f79e19ff036bac39ec2e509162"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "producerGitBlob": "636ff67ce1bf97784e824652cee13be4bc59c41c"
+      },
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "producerGitBlob": "f63b5cc6d4e0cc2a8b00eaafe18696f2ca95d77a"
+      },
+      {
+        "path": "apps/neoth_companion/pubspec.lock",
+        "producerGitBlob": "c21cd8fad06ae172f77e8ee779e6336b303047aa"
+      }
+    ]
+  }
 }
