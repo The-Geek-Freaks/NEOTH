@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Claude lane: GOLD-R3-13b, CRG-02 seed leaf and ADOPT31-W1 accepted on exact-head CI 43066720078 (Linux and Windows green; macOS pending)",
+  "status": "Claude lane: unversioned executable source ratchet (GOLD-LF-002-15 stays open); exact-head CI 43066720078 macOS pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477610,
-    "sha256": "1069319E07E8CE2EBCD6314EE2DDC5052B136675ED19192EEAFEFBF2F0623C8A"
+    "bytes": 477593,
+    "sha256": "944578C5D93C91E90DA08FC526FDB6D5E33454A10503512D39E520E3AC7EDDDC"
   },
   "sourceInputs": 2605,
   "requiredNativeTests": [

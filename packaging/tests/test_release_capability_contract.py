@@ -176,6 +176,68 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
                 with self.subTest(config=relative, marker=marker):
                     self.assertNotIn(marker, text)
 
+    def test_unversioned_executable_sources_do_not_grow(self) -> None:
+        # GOLD-LF-002-15 ratchet. The leaf stays open while the entries below
+        # exist; this only stops a new moving executable source from landing
+        # and forces the list to shrink when one of them is pinned.
+        known_open = {
+            (
+                "SRC/neothd/src/installers/cbm.rs",
+                "raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh",
+            ): "install script is fetched from the moving main branch",
+            (
+                "SRC/neothd/src/installers/cbm.rs",
+                "github.com/DeusData/codebase-memory-mcp/releases/latest",
+            ): "release lookup follows the moving latest alias",
+            (
+                "SRC/neothd/src/computer_use.rs",
+                "raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1",
+            ): "Windows driver install hint pipes a main-branch script",
+            (
+                "SRC/neothd/src/computer_use.rs",
+                "raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh",
+            ): "Unix driver install hint pipes a main-branch script",
+        }
+        moving = re.compile(
+            r"raw\.githubusercontent\.com/[^\"\s]*/(?:main|master)/"
+            r"|/releases/latest|@latest\b|:latest\b"
+        )
+        source = ROOT / "SRC" / "neothd" / "src"
+        files = sorted((source / "installers").rglob("*.rs")) + [
+            source / "computer_use.rs",
+            source / "cli" / "update.rs",
+        ]
+        self.assertGreater(len(files), 10)
+
+        findings: set[tuple[str, str]] = set()
+        unexpected: list[str] = []
+        for path in files:
+            if path.name.endswith("_tests.rs"):
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if stripped == "#[cfg(test)]":
+                    break  # production code precedes the in-file test module
+                if stripped.startswith("//") or moving.search(line) is None:
+                    continue
+                matched = [
+                    key for key in known_open if key[0] == relative and key[1] in line
+                ]
+                if len(matched) == 1:
+                    findings.add(matched[0])
+                else:
+                    unexpected.append(f"{relative}:{number}: {stripped[:120]}")
+
+        self.assertListEqual(
+            unexpected, [], "new unversioned executable source; pin it to a tag and digest"
+        )
+        self.assertSetEqual(
+            findings,
+            set(known_open),
+            "an allowlisted moving source is gone; remove its entry",
+        )
+
     def test_every_native_desktop_target_uses_the_desktop_release_path(self) -> None:
         matrix = release_matrix(self.workflow)
 

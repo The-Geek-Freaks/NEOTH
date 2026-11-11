@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T19:07:14.4733970Z",
-  "validationStatus": "Claude lane: GOLD-R3-13b, CRG-02 seed leaf and ADOPT31-W1 accepted on exact-head CI 43066720078 (Linux and Windows green; macOS pending)",
+  "capturedUtc": "2026-11-11T19:10:36.4652650Z",
+  "validationStatus": "Claude lane: unversioned executable source ratchet (GOLD-LF-002-15 stays open); exact-head CI 43066720078 macOS pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6103,8 +6103,8 @@
     },
     {
       "path": "packaging/tests/test_release_capability_contract.py",
-      "bytes": 23159,
-      "sha256": "84FE569B658C3AEC0BB57CAC6221A6B438F9EDC3ED33485A51E321BF3C468A3D"
+      "bytes": 26011,
+      "sha256": "B0DC7289D632FA5B957DD73DBA4B806090B544709D719698E3F5C46A7E5200A7"
     },
     {
       "path": "packaging/tests/test_roadmap_release_gate.py",
