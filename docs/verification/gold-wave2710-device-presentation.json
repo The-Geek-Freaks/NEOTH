@@ -18,7 +18,7 @@
   "sources": [
     {
       "path": "SRC/neothd/src/profile/communication_device_tests.rs",
-      "sha256": "79033D5818A2E8DEC35D0CC02AD89D9F7790FE8EFF68C5F0F199A4B715765336"
+      "sha256": "E8D0FEC22BE69B28632DB157085B61B31010F00B38B53B657ED4F837B87B324A"
     },
     {
       "path": "SRC/neothd/src/profile/communication_session_tests.rs",
@@ -34,7 +34,7 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "04344E36554F17509BD9975C9F0B126CDEFC79B9DBE18733082FE036CB6F4322"
+      "sha256": "B41B3C817B3A8734F1913CAE2F29491DDB0F9821810F919B81B72F9BE0B34C71"
     },
     {
       "path": "SRC/neothd/src/recall/reconstruct.rs",

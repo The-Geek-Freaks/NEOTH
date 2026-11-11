@@ -3766,6 +3766,30 @@ Store an explicit operator declaration. This is never an inferred diagnosis
 
 Show the current operator declaration, including cleared declarations
 
+#### `neoth profile communication device`
+
+Inspect or override presentation for one currently paired device
+
+- `<DEVICE_ID>` — Canonical device UUID from companion devices list; revision is resolved by the daemon
+- `--revision <REVISION>` — Inspect or clear an old pairing revision locally; cannot be used with set
+
+##### `neoth profile communication device reset`
+
+Clear this session's dimension and reveal the underlying preference
+
+- `<DIMENSION>`
+
+##### `neoth profile communication device set`
+
+Pin a presentation value for this session, without replacing the global pin
+
+- `<DIMENSION>`
+- `<VALUE>`
+
+##### `neoth profile communication device show`
+
+Show only this session's explicit overrides
+
 #### `neoth profile communication disable`
 
 Disable all automatic communication-profile reads and writes

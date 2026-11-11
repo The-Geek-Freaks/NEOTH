@@ -1032,6 +1032,7 @@ mod tests {
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "content": [{ "type": "text", "text": "pong" }],
+                "stop_reason": "end_turn",
                 "usage": { "input_tokens": 3, "output_tokens": 1 }
             })))
             .mount(&mock)
@@ -1063,7 +1064,8 @@ mod tests {
                 "messages": [ { "role": "user", "content": "hi" } ],
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "content": [{ "type": "text", "text": "yo" }]
+                "content": [{ "type": "text", "text": "yo" }],
+                "stop_reason": "end_turn"
             })))
             .mount(&mock)
             .await;

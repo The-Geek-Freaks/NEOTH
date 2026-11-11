@@ -57,6 +57,9 @@ fn source_repo(repo: &Path) {
     .unwrap();
     std::fs::write(repo.join("src/cli/dummy.rs"), "fn dummy() {}\n").unwrap();
     git(repo, &["init", "-q"]);
+    // Byte-exact assertions below must not depend on the host's line-ending
+    // conversion (Windows runners default to core.autocrlf=true).
+    git(repo, &["config", "core.autocrlf", "false"]);
     git(repo, &["config", "user.email", "neoth-test@example.com"]);
     git(repo, &["config", "user.name", "neoth-test"]);
     git(repo, &["add", "."]);

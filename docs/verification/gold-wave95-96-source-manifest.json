@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-05T22:12:55.7361488Z",
-  "validationStatus": "W2713 exact39-case combined hosted selection prepared; runtime pending",
+  "capturedUtc": "2026-11-11T15:18:15.7576470Z",
+  "validationStatus": "Claude lane: exact-head CI repair of 7b2b7fbe (clippy, 7 fixture drifts, CLI reference, Bedrock/Cohere terminals); hosted runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -713,8 +713,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 269905,
-      "sha256": "C1E6939E84A71D7804309777795BFDAFC271F0A9B25D3B68449AE7FA91824AD2"
+      "bytes": 270609,
+      "sha256": "C0B0DBA7413E6FEA91581C1D706C9A4163AE4185D87967C4D2DEDBC63D0EDD21"
     },
     {
       "path": "docs/cli-reference.md",
@@ -4869,7 +4869,7 @@
     {
       "path": "docs/verification/gold-wave2676-native-provider-tool-rejection.json",
       "bytes": 4965,
-      "sha256": "9DC99C62E88ECA802D41D0A60DD3195EF055260210B11C20531D79326E0A948B"
+      "sha256": "304D1BB72B817036C06A5E3AA5D385A15E387D7CBE156149A53BFC05BCBD4B4A"
     },
     {
       "path": "docs/verification/gold-wave2677-paperless-principal.json",
@@ -4949,12 +4949,12 @@
     {
       "path": "docs/verification/gold-wave2694-dispatcher-self-edit-council.json",
       "bytes": 6727,
-      "sha256": "6FF4C5CA574F9CAAD296C0E47094FD3BF093914CFCDE73D6D8524F96AEE3333D"
+      "sha256": "4A54F0B3B67AA2C8EDF067DF5D53B823C28029FD6E0187F16184ABB6EE7D2D5B"
     },
     {
       "path": "docs/verification/gold-wave2697-partial-tool-origin.json",
       "bytes": 7350,
-      "sha256": "B81CCD739E434035D4C0755A81ED8B26D58278824AEECA9B25FB2886DF61DCC5"
+      "sha256": "4B459A2BDEE707CDC79DCB54710A25694D2C2CF464EC7CB0A1D3F8175EEAC11B"
     },
     {
       "path": "docs/verification/gold-wave2699-mobile-startup-recovery.json",
@@ -4984,7 +4984,7 @@
     {
       "path": "docs/verification/gold-wave2710-device-presentation.json",
       "bytes": 9333,
-      "sha256": "F9E16625AFF388C1465F1FAD2436177E031DFF85D4049C6ACA92212FD2B9AD40"
+      "sha256": "B3DFE0BAD5DEB3CA82A57EEBD9B433D524D98CC7FEB7D74387F50578CEB18EE4"
     },
     {
       "path": "docs/verification/gold-wave2711-mixed-email-recovery.json",
@@ -4994,12 +4994,12 @@
     {
       "path": "docs/verification/gold-wave2712-anthropic-terminal-contract.json",
       "bytes": 2484,
-      "sha256": "D95CD7859B6C3B35DE9C7B22EA4C7E969B1435A6BC2E5771DB64898791375977"
+      "sha256": "AFA9D596D0EA3E4E7D2D0FF10143056FB5B68D64034652016F4D8499FB645869"
     },
     {
       "path": "docs/verification/gold-wave2713-provider-contract-selection.json",
       "bytes": 2955,
-      "sha256": "BA52E5A7324B74A11CF1C0CAA3D4C6AD6D610BBA4C4EF686114BA38966DD634C"
+      "sha256": "DD9FED16CA78CFBC16FFA356E6B13B1E5B5D2B7242FE360A6D74582A0003C066"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -7233,8 +7233,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1277440,
-      "sha256": "04344E36554F17509BD9975C9F0B126CDEFC79B9DBE18733082FE036CB6F4322"
+      "bytes": 1277659,
+      "sha256": "B41B3C817B3A8734F1913CAE2F29491DDB0F9821810F919B81B72F9BE0B34C71"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -7958,8 +7958,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council_tests.rs",
-      "bytes": 11271,
-      "sha256": "7EC17243EC28EE138AA8BFEDC9F817754CC73A9DFC46A8A2FB2FAA29E4AB482D"
+      "bytes": 11469,
+      "sha256": "FECFB7D2B7BEEA8A28AF594C3650ABE78E8D10F04B93CCAB3FB5C0A7C286019D"
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher_council.rs",
@@ -9618,8 +9618,8 @@
     },
     {
       "path": "SRC/neothd/src/profile/communication_device_tests.rs",
-      "bytes": 8951,
-      "sha256": "79033D5818A2E8DEC35D0CC02AD89D9F7790FE8EFF68C5F0F199A4B715765336"
+      "bytes": 9305,
+      "sha256": "E8D0FEC22BE69B28632DB157085B61B31010F00B38B53B657ED4F837B87B324A"
     },
     {
       "path": "SRC/neothd/src/profile/communication_device.rs",
@@ -9658,13 +9658,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 53297,
-      "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD"
+      "bytes": 53383,
+      "sha256": "00CBB667A816FE0000EFA23A81C1C1856A392F699F1D9151009247E99849A1B8"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",
-      "bytes": 43704,
-      "sha256": "2E43EC78953EA6A42533EF627C0859EBF0D14E25E4DE1BE617D5EA74F3BFE977"
+      "bytes": 46102,
+      "sha256": "DB9A261D48B51F633C4956A61C2BA5BE1BD759EC07E6AEFC74954F421AFBBAAA"
     },
     {
       "path": "SRC/neothd/src/providers/azure_openai.rs",
@@ -9698,8 +9698,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cohere_api.rs",
-      "bytes": 34048,
-      "sha256": "67FC3E78FDE4BC424BA5AAA414720BED93D6132005E812A8CB85D282AEFC6105"
+      "bytes": 38927,
+      "sha256": "A1B3548F5FB7FDB4ACA9855C790E545BB341D67C929F64D97AB22053E77086FA"
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
@@ -9714,7 +9714,7 @@
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
       "bytes": 436901,
-      "sha256": "4E95C4AF75A6D5DAC1199FAB1F04E625589D8B4EF59141C5A14DC01747A3B8DF"
+      "sha256": "2F8036E50E3F00AE4930B95AC6E17557D2EABF8C2C2749504165F05FA856088C"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",

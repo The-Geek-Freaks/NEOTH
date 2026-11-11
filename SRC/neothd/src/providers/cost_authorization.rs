@@ -10913,7 +10913,7 @@ mod tests {
                 // default delegates to complete; the CLI override keeps the
                 // existing cost-authorized provider. Compaction still calls
                 // the same driver directly, without tool-result attribution.
-                "95a19f8699046ba1e7ba203a533cdaa895c588f681157ebbd622610d12a092c8",
+                "9ea36cfd55a326409d4ea5ed8c15dd2a4e9048831602fc3fe834f5d08cdb37a4",
             ),
             (
                 "mcp/goal_judge.rs",

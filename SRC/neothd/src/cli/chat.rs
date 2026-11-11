@@ -10918,8 +10918,8 @@ async fn name_session_best_effort(
     let Some(card_id) = saved_card.file_stem().and_then(|value| value.to_str()) else {
         return;
     };
-    if !crate::memory::hindsight::load_card(home, card_id)
-        .is_some_and(|card| card.session_id == card_id)
+    if crate::memory::hindsight::load_card(home, card_id)
+        .is_none_or(|card| card.session_id != card_id)
     {
         return;
     }
@@ -26900,7 +26900,12 @@ template = "[REDACTED]"
                 dir.path(),
                 writer,
                 dir.path().join("quota.json"),
-                None,
+                Some(
+                    crate::providers::quota::QuotaTracker::load_from(
+                        &dir.path().join("quota.json"),
+                    )
+                    .expect("load test quota state"),
+                ),
                 config.tokens.max_per_request,
                 &crate::mcp::McpServers::default(),
                 crate::mcp::McpToolScope::default(),

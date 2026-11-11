@@ -267,11 +267,7 @@ impl Provider for CohereAdapter {
                 })
                 .unwrap_or_default();
             if text.is_empty() {
-                anyhow::bail!(
-                    "cohere_api returned 200 OK but no text content (finish_reason {:?}) — \
-                     likely a refusal or non-text reply. Inspect the raw body via NEOTH_LOG=debug.",
-                    parsed.finish_reason
-                );
+                anyhow::bail!("cohere_api returned 200 OK but no text content");
             }
 
             let (input_tokens, output_tokens) = parsed
@@ -338,12 +334,19 @@ fn reject_unsupported_native_tools(response: &CohereResponse) -> Result<()> {
 }
 
 fn cohere_termination(finish_reason: Option<String>) -> Result<ProviderTermination> {
-    if let Some(reason) = finish_reason.as_deref()
-        && matches!(reason.to_ascii_uppercase().as_str(), "ERROR" | "TIMEOUT")
-    {
-        anyhow::bail!("cohere_api returned 200 OK with non-success finish_reason `{reason}`");
+    let normalized = finish_reason.as_deref().map(str::to_ascii_uppercase);
+    match normalized.as_deref() {
+        Some("COMPLETE" | "MAX_TOKENS" | "STOP_SEQUENCE") => {
+            Ok(ProviderTermination::finished(finish_reason))
+        }
+        Some("ERROR") => {
+            anyhow::bail!("cohere_api returned 200 OK with non-success finish_reason `ERROR`")
+        }
+        Some("TIMEOUT") => {
+            anyhow::bail!("cohere_api returned 200 OK with non-success finish_reason `TIMEOUT`")
+        }
+        _ => anyhow::bail!("cohere_api response lacks a supported terminal finish reason"),
     }
-    Ok(ProviderTermination::finished(finish_reason))
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -666,6 +669,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unconfirmed_terminals_reject_complete_and_buffered_stream_without_raw_fields() {
+        for (reason, empty_text, expected) in [
+            (
+                None,
+                false,
+                "cohere_api response lacks a supported terminal finish reason",
+            ),
+            (
+                Some(serde_json::Value::Null),
+                false,
+                "cohere_api response lacks a supported terminal finish reason",
+            ),
+            (
+                Some(serde_json::json!("")),
+                false,
+                "cohere_api response lacks a supported terminal finish reason",
+            ),
+            (
+                Some(serde_json::json!("private-stop-marker")),
+                false,
+                "cohere_api response lacks a supported terminal finish reason",
+            ),
+            (
+                Some(serde_json::json!("future_terminal")),
+                false,
+                "cohere_api response lacks a supported terminal finish reason",
+            ),
+            (
+                Some(serde_json::json!("ERROR")),
+                false,
+                "cohere_api returned 200 OK with non-success finish_reason `ERROR`",
+            ),
+            (
+                Some(serde_json::json!("TIMEOUT")),
+                false,
+                "cohere_api returned 200 OK with non-success finish_reason `TIMEOUT`",
+            ),
+            (
+                Some(serde_json::json!("COMPLETE")),
+                true,
+                "cohere_api returned 200 OK but no text content",
+            ),
+        ] {
+            let mock = MockServer::start().await;
+            let mut body = serde_json::json!({
+                "message": {"content": if empty_text { serde_json::json!([]) } else {
+                    serde_json::json!([{"type":"text","text":"private-prose-marker"}])
+                }},
+                "usage": {"tokens":{"input_tokens":9,"output_tokens":4}}
+            });
+            if let Some(reason) = reason {
+                body["finish_reason"] = reason;
+            }
+            Mock::given(method("POST"))
+                .and(path("/chat"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .mount(&mock)
+                .await;
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(format!("{error:#}"), expected);
+            let error = match build_adapter_against(&mock.uri())
+                .stream(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(_) => panic!("unconfirmed completion must not produce a stream"),
+                Err(error) => error,
+            };
+            assert_eq!(format!("{error:#}"), expected);
+            assert!(!format!("{error:#}").contains("private-"));
+            assert_eq!(mock.received_requests().await.unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn supported_terminals_preserve_text_usage_and_original_case() {
+        for reason in [
+            "COMPLETE",
+            "MAX_TOKENS",
+            "STOP_SEQUENCE",
+            "complete",
+            "max_tokens",
+            "stop_sequence",
+        ] {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "finish_reason":reason,
+                    "message":{"content":[{"type":"text","text":"observed text"}]},
+                    "usage":{"tokens":{"input_tokens":9,"output_tokens":4}}
+                })))
+                .mount(&mock)
+                .await;
+            let completion = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(completion.text, "observed text");
+            assert_eq!(completion.input_tokens, Some(9));
+            assert_eq!(completion.output_tokens, Some(4));
+            assert_eq!(
+                completion.termination.finish_reason.as_deref(),
+                Some(reason)
+            );
+            assert!(!completion.termination.is_refusal());
+            assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn mock_request_has_system_as_message_role_stream_false_and_max_tokens() {
         // Pins the Cohere envelope: system is a messages[] ROLE (NOT a
         // top-level field), stream=false, max_tokens present, model from
@@ -683,6 +808,7 @@ mod tests {
                 "max_tokens": DEFAULT_MAX_TOKENS,
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "finish_reason": "COMPLETE",
                 "message": { "content": [{ "type": "text", "text": "pong" }] }
             })))
             .mount(&mock)
@@ -786,7 +912,7 @@ mod tests {
 
     #[test]
     fn finish_reason_table_preserves_success_and_rejects_terminal_errors() {
-        for reason in ["COMPLETE", "MAX_TOKENS", "STOP_SEQUENCE", "TOOL_CALL"] {
+        for reason in ["COMPLETE", "MAX_TOKENS", "STOP_SEQUENCE"] {
             let termination =
                 cohere_termination(Some(reason.into())).expect("successful finish reason");
             assert_eq!(termination.finish_reason.as_deref(), Some(reason));
@@ -794,7 +920,7 @@ mod tests {
         }
         for reason in ["ERROR", "TIMEOUT", "error", "timeout"] {
             let error = cohere_termination(Some(reason.into())).expect_err("must be non-success");
-            assert!(error.to_string().contains(reason));
+            assert!(error.to_string().contains(&reason.to_ascii_uppercase()));
         }
     }
 

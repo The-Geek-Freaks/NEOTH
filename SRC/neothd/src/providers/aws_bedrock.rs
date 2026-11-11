@@ -428,7 +428,7 @@ fn completion_content(response: &ConverseResponse) -> Result<(String, ProviderTe
     if tool_payload || response.stop_reason.as_deref() == Some("tool_use") {
         anyhow::bail!("aws_bedrock returned an unsupported native tool exchange");
     }
-    let termination = bedrock_termination(response.stop_reason.clone());
+    let termination = bedrock_termination(response.stop_reason.clone())?;
     let text = message
         .map(|message| {
             message
@@ -440,18 +440,14 @@ fn completion_content(response: &ConverseResponse) -> Result<(String, ProviderTe
         .unwrap_or_default();
     if text.is_empty() && !termination.is_refusal() {
         anyhow::bail!(
-            "aws_bedrock returned 200 OK but the response has no \
-             output.message.content[].text and stopReason {:?} is not a \
-             guardrail/content-filter refusal. Inspect the raw HTTP body via \
-             NEOTH_LOG_LEVEL=debug.",
-            termination.finish_reason
+            "aws_bedrock returned 200 OK but no output text and no guardrail/content-filter refusal"
         );
     }
     Ok((text, termination))
 }
 
-fn bedrock_termination(stop_reason: Option<String>) -> ProviderTermination {
-    match stop_reason.as_deref() {
+fn bedrock_termination(stop_reason: Option<String>) -> Result<ProviderTermination> {
+    Ok(match stop_reason.as_deref() {
         Some(reason @ ("guardrail_intervened" | "content_filtered")) => {
             ProviderTermination::refused(
                 stop_reason.clone(),
@@ -460,8 +456,11 @@ fn bedrock_termination(stop_reason: Option<String>) -> ProviderTermination {
                 None,
             )
         }
-        _ => ProviderTermination::finished(stop_reason),
-    }
+        Some("end_turn" | "max_tokens" | "stop_sequence" | "model_context_window_exceeded") => {
+            ProviderTermination::finished(stop_reason)
+        }
+        _ => anyhow::bail!("aws_bedrock response lacks a supported terminal stop reason"),
+    })
 }
 
 /// Map a non-success Bedrock response into a tighter, actionable
@@ -1062,13 +1061,69 @@ mod tests {
                 "output": {"message": {"content": []}}
             }))
             .expect("valid Converse fixture");
-            let termination = bedrock_termination(parsed.stop_reason);
+            let termination = bedrock_termination(parsed.stop_reason).expect("supported terminal");
             assert_eq!(termination.finish_reason.as_deref(), Some(reason));
             assert_eq!(termination.is_refusal(), refused, "reason={reason}");
             if let Some(refusal) = termination.refusal {
                 assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
                 assert_eq!(refusal.reason, reason);
             }
+        }
+    }
+
+    #[test]
+    fn unconfirmed_and_malformed_terminals_cannot_project_bedrock_text() {
+        for reason in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!("")),
+            Some(serde_json::json!("private-stop-marker")),
+            Some(serde_json::json!("future_terminal")),
+            Some(serde_json::json!("malformed_model_output")),
+            Some(serde_json::json!("malformed_tool_use")),
+        ] {
+            let mut body = serde_json::json!({
+                "output":{"message":{"content":[{"text":"private-prose-marker"}]}}
+            });
+            if let Some(reason) = reason {
+                body["stopReason"] = reason;
+            }
+            let parsed: ConverseResponse = serde_json::from_value(body).unwrap();
+            let error = completion_content(&parsed).unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                "aws_bedrock response lacks a supported terminal stop reason"
+            );
+            assert!(!format!("{error:#}").contains("private-"));
+        }
+        let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+            "stopReason":"end_turn","output":{"message":{"content":[]}}
+        }))
+        .unwrap();
+        assert_eq!(
+            format!("{:#}", completion_content(&parsed).unwrap_err()),
+            "aws_bedrock returned 200 OK but no output text and no guardrail/content-filter refusal"
+        );
+    }
+
+    #[test]
+    fn supported_bedrock_terminals_preserve_text_limits_and_refusal() {
+        for (reason, refused) in [
+            ("end_turn", false),
+            ("max_tokens", false),
+            ("stop_sequence", false),
+            ("model_context_window_exceeded", false),
+            ("guardrail_intervened", true),
+            ("content_filtered", true),
+        ] {
+            let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+                "stopReason":reason,"output":{"message":{"content":[{"text":"observed text"}]}}
+            }))
+            .unwrap();
+            let (text, termination) = completion_content(&parsed).unwrap();
+            assert_eq!(text, "observed text");
+            assert_eq!(termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(termination.is_refusal(), refused);
         }
     }
 

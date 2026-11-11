@@ -19,7 +19,7 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "sha256": "C00A30BF53F5FFF8D10D7300138C6154D00C113767CF2E5CE3BD096833FE35AD"
+      "sha256": "00CBB667A816FE0000EFA23A81C1C1856A392F699F1D9151009247E99849A1B8"
     }
   ],
   "tests": [

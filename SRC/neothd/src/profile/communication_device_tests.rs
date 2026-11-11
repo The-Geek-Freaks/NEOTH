@@ -128,13 +128,20 @@ fn device_pin_preserves_session_precedence_epoch_isolation_and_generic_export() 
 #[test]
 fn device_pin_old_epoch_reset_reclaims_capacity_without_transferring_preferences() {
     let dir = tempdir().unwrap();
+    // The smallest capacity the policy validator admits; the old epoch plus
+    // seven unrelated devices fill it exactly.
     let policy = CommunicationProfileConfig {
-        max_evidence_per_dimension: 1,
+        max_evidence_per_dimension: 8,
+        full_auto_min_observations: 8,
         ..Default::default()
     };
     let first = epoch(1);
     let next = epoch(2);
     pin(dir.path(), &policy, &first, compact(), 1);
+    for filler in 0..7u8 {
+        let other = scope_id(uuid::Uuid::from_u128(200 + u128::from(filler)), 1).unwrap();
+        pin(dir.path(), &policy, &other, compact(), 10 + filler);
+    }
     assert!(prompt(dir.path(), &policy, "continued", &next).is_none());
     let before = std::fs::read(state_path(dir.path())).unwrap();
     assert!(

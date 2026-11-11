@@ -46,7 +46,7 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sha256": "4E95C4AF75A6D5DAC1199FAB1F04E625589D8B4EF59141C5A14DC01747A3B8DF"
+      "sha256": "2F8036E50E3F00AE4930B95AC6E17557D2EABF8C2C2749504165F05FA856088C"
     },
     {
       "path": "SRC/neothd/src/tokens/mod.rs",
