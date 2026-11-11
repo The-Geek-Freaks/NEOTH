@@ -295,6 +295,16 @@ Missing, null, empty, and unknown reasons fail with a fixed diagnostic that
 does not reflect response fields. Native tool exchanges and paused turns
 remain unsupported. An empty non-refusal text response still fails.
 
+The AWS Bedrock Converse and Cohere v2 chat adapters apply the same rule.
+Bedrock returns text only for `end_turn`, `max_tokens`, `stop_sequence` or
+`model_context_window_exceeded`; `guardrail_intervened` and `content_filtered`
+are reported as refusals. Cohere returns text only for `COMPLETE`,
+`MAX_TOKENS` or `STOP_SEQUENCE` (matched case-insensitively, original spelling
+retained); `ERROR` and `TIMEOUT` fail as named non-success terminals. In both
+adapters a missing, null, empty or unknown reason fails with a fixed
+diagnostic that reflects no response field, and native tool exchanges are
+rejected before the terminal reason is evaluated.
+
 Retained quota evidence (`Retry-After` bookkeeping) is now a digest for every
 one of those adapters. That replaces the previous substring scrub of the API
 key, which only removed the key in the exact encoding the endpoint happened to

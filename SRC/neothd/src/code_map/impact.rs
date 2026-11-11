@@ -1722,6 +1722,56 @@ mod tests {
     }
 
     #[test]
+    fn direction_semantics_separate_callers_callees_and_their_union() {
+        // caller -> mid -> callee, seeded at `mid`: each direction sees only
+        // its own neighborhood and `both` is exactly their union per hop.
+        let fixture = fixture(
+            &[
+                ("caller.rs", "fn caller() {}\n"),
+                ("mid.rs", "fn mid() {}\n"),
+                ("callee.rs", "fn callee() {}\n"),
+            ],
+            vec![
+                calls("caller.rs", "caller", "mid"),
+                calls("mid.rs", "mid", "callee"),
+            ],
+        );
+        let reached = |direction: ImpactDirection| {
+            let mut nodes = impact_radius(
+                &fixture.conn,
+                &fixture.root,
+                &[ImpactSeed::symbol("mid.rs", "mid")],
+                ImpactOptions {
+                    direction,
+                    max_depth: 4,
+                    max_nodes: 50,
+                    allow_stale: false,
+                },
+            )
+            .unwrap()
+            .impacted_nodes
+            .into_iter()
+            .map(|node| (node.node.symbol, node.distance))
+            .collect::<Vec<_>>();
+            nodes.sort();
+            nodes
+        };
+
+        assert_eq!(
+            reached(ImpactDirection::Callers),
+            [("caller".to_string(), 1)]
+        );
+        assert_eq!(
+            reached(ImpactDirection::Callees),
+            [("callee".to_string(), 1)]
+        );
+        assert_eq!(
+            reached(ImpactDirection::Both),
+            [("callee".to_string(), 1), ("caller".to_string(), 1)]
+        );
+    }
+
+    #[test]
     fn duplicate_target_names_are_explicit_and_never_traversed() {
         let fixture = fixture(
             &[

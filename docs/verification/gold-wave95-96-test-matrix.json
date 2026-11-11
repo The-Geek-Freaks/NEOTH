@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Claude lane: advisory remediation (wasmtime, cap-std family, rustix, tokio, pulldown-cmark, yanked crates) with advisory pin successor; hosted Security and CI pending",
+  "status": "Claude lane: plan-leaf parent guard (GOLD-LF-P1-23), codegraph reference drift test, impact direction semantics test; hosted CI pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477640,
-    "sha256": "2D10C0C990B91F0FD56F11899F5A561BED0C8BDD519A844064AB4C75C178B72F"
+    "bytes": 477609,
+    "sha256": "B0E23D21C7A198CAB1E9B98EFF0D5B62E5075440826DE0DF7111B84CF9C9C3EE"
   },
   "sourceInputs": 2605,
   "requiredNativeTests": [
@@ -456,7 +456,7 @@
     {
       "test": "cli::docgen::tests::cli_commands_md_is_up_to_date",
       "sourcePath": "SRC/neothd/src/cli/docgen.rs",
-      "sourceSha256": "63EEDCFA5868E5C0BA3E6117CBCCFE93F90052FF0DD815DC41FB5CCC6A4F7E66",
+      "sourceSha256": "C7ED67A23CD388DB431D02E36B40B249DA4E25EE615089780B0EAC0C9F5FDF9F",
       "junitClass": "neoth"
     },
     {

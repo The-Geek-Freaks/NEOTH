@@ -234,6 +234,28 @@ mod tests {
         );
     }
 
+    /// GOLD-R3-13b: the operator reference and the runtime registry must
+    /// name the same codegraph tools — no documented tool the server does not
+    /// serve, and no served tool the reference omits.
+    #[test]
+    fn reference_names_exactly_the_runtime_codegraph_tools() {
+        let md = reference();
+        let documented = md
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|token| token.starts_with("codegraph_"))
+            .collect::<std::collections::BTreeSet<_>>();
+        let runtime = crate::mcp::codegraph_server::TOOL_NAMES
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            runtime.len(),
+            crate::mcp::codegraph_server::TOOL_NAMES.len(),
+            "runtime registry lists a duplicate tool"
+        );
+        assert_eq!(documented, runtime);
+    }
+
     #[test]
     fn reference_keeps_private_release_helper_schema_cross_platform() {
         // Hidden machine-only commands are still part of the generated

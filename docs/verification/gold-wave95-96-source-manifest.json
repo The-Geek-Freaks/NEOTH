@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T15:39:30.8045850Z",
-  "validationStatus": "Claude lane: advisory remediation (wasmtime, cap-std family, rustix, tokio, pulldown-cmark, yanked crates) with advisory pin successor; hosted Security and CI pending",
+  "capturedUtc": "2026-11-11T15:53:49.0346180Z",
+  "validationStatus": "Claude lane: plan-leaf parent guard (GOLD-LF-P1-23), codegraph reference drift test, impact direction semantics test; hosted CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1913,8 +1913,8 @@
     },
     {
       "path": "docs/providers.md",
-      "bytes": 23359,
-      "sha256": "D1E19FEFC82804166640814B47216E1535424829385E785532F34A128FEB3E33"
+      "bytes": 24005,
+      "sha256": "9002E009E18D7E4DE27D08BE43C6E1C35BBE7A222B8F7415BFC47A40C11B4DF8"
     },
     {
       "path": "docs/reflection-yearly.md",
@@ -6263,8 +6263,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2826756,
-      "sha256": "20A19FD1A86DB4409B3E900F24AFD7D47F6007EA8E81AE1C9179E998184B852B"
+      "bytes": 2827221,
+      "sha256": "AFFCBD89D5ACE4D9D12460E797461633C3223FB67B39166F047F2A7460902156"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7328,8 +7328,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/docgen.rs",
-      "bytes": 10245,
-      "sha256": "63EEDCFA5868E5C0BA3E6117CBCCFE93F90052FF0DD815DC41FB5CCC6A4F7E66"
+      "bytes": 11183,
+      "sha256": "C7ED67A23CD388DB431D02E36B40B249DA4E25EE615089780B0EAC0C9F5FDF9F"
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
@@ -7873,8 +7873,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/impact.rs",
-      "bytes": 81757,
-      "sha256": "E64955918BC4E2EBEE6093A6EC8FCAAD63089D615DC1B7FB2E6270DC58B4239F"
+      "bytes": 83377,
+      "sha256": "C7627CDB72C2426D76EAEBC66FA70484FD142A9E9FF508064F296E69E4B49747"
     },
     {
       "path": "SRC/neothd/src/code_map/imports.rs",

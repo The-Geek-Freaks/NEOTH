@@ -69,6 +69,18 @@ GUI_TRACKED_ANCHORS = {
     "LF-CAND-077": ("H6", "H6"),
     "LF-CAND-078": ("H11", "H11"),
 }
+# GOLD-LF-P1-23: the 65 plan Definition-of-Done leaves and the WS-R4 rollups
+# that may not close ahead of them. plans/001 names GOLD-R4-07 as its primary
+# release gate; plans/003 owns GOLD-R4-04/05/06/09 and declares plans/001 and
+# plans/002 as dependencies, so an open leaf of any plan keeps those four open.
+PLAN_LEAF_COUNTS = {"001": 19, "002": 22, "003": 24}
+PLAN_LEAF_PARENTS = {
+    "001": ("GOLD-R4-04", "GOLD-R4-05", "GOLD-R4-06", "GOLD-R4-07", "GOLD-R4-09"),
+    "002": ("GOLD-R4-04", "GOLD-R4-05", "GOLD-R4-06", "GOLD-R4-09"),
+    "003": ("GOLD-R4-04", "GOLD-R4-05", "GOLD-R4-06", "GOLD-R4-09"),
+}
+PLAN_LEAF_EVIDENCE_RE = re.compile(r"docs/verification/[A-Za-z0-9_.-]+\.json")
+PLAN_LEAF_ACCEPTANCE_RE = re.compile(r"\bAccepted \d{4}-\d{2}-\d{2}\b")
 EVIDENCE_PATH_RE = re.compile(
     r"\b(?:PLAN/[A-Za-z0-9_./-]+\.md|SRC/[A-Za-z0-9_./-]+\.(?:rs|yaml))"
     r"(?![A-Za-z0-9_.-])"
@@ -555,6 +567,60 @@ def validate_road(road: str) -> dict[str, list[str]]:
     return by_priority
 
 
+def validate_plan_leaves(road: str, *, evidence_root: Path = REPO_ROOT) -> None:
+    """Keep every plan leaf tracked, evidence-backed and ahead of its parent."""
+
+    rows = re.findall(
+        r"(?m)^-\s+\[([^\]])\]\s+\*\*GOLD-LF-(00[123])-(\d{2})\b([^\n]*)$",
+        ws_lf_section(road),
+    )
+    by_plan: dict[str, list[tuple[str, str, str]]] = {plan: [] for plan in PLAN_LEAF_COUNTS}
+    for mark, plan, number, rest in rows:
+        by_plan[plan].append((mark, number, rest))
+
+    open_plans: list[str] = []
+    for plan, expected in PLAN_LEAF_COUNTS.items():
+        leaves = by_plan[plan]
+        numbers = [number for _, number, _ in leaves]
+        require(
+            numbers == [f"{index:02d}" for index in range(1, expected + 1)],
+            f"Plan {plan} must keep exactly {expected} individually tracked leaves "
+            f"in order; got {numbers!r}",
+        )
+        for mark, number, rest in leaves:
+            leaf_id = f"GOLD-LF-{plan}-{number}"
+            require(
+                mark in {" ", "x", "X"},
+                f"{leaf_id} may only be open or done, not {mark!r}",
+            )
+            if mark == " ":
+                continue
+            evidence = PLAN_LEAF_EVIDENCE_RE.findall(rest)
+            require(
+                PLAN_LEAF_ACCEPTANCE_RE.search(rest) is not None and bool(evidence),
+                f"{leaf_id} is closed without a dated acceptance and a "
+                "docs/verification evidence path",
+            )
+            missing = sorted(
+                path for path in set(evidence) if not (evidence_root / path).is_file()
+            )
+            require(not missing, f"{leaf_id} cites missing evidence: {missing!r}")
+        if any(mark == " " for mark, _, _ in leaves):
+            open_plans.append(plan)
+
+    for plan in open_plans:
+        for parent in PLAN_LEAF_PARENTS[plan]:
+            marks = checkbox_marks(road, parent, bold=True)
+            require(
+                len(marks) == 1,
+                f"Plan {plan} parent {parent} must resolve to exactly one ROAD checkbox",
+            )
+            require(
+                marks[0] == " ",
+                f"{parent} cannot be done or partial while Plan {plan} leaves remain open",
+            )
+
+
 def validate_progress(progress: str, road: str) -> None:
     sections = re.findall(
         r"(?ms)^> \*\*Current WS-LF inventory integrity\b.*?(?=^>\s*$|\Z)",
@@ -694,6 +760,7 @@ def validate_contract(
     source_ids = validate_source(source)
     archive = source_archive_dispositions(source)
     road_ids = validate_road(road)
+    validate_plan_leaves(road)
     validate_progress(progress, road)
     validate_tracked_evidence(by_id, road, gui_plan)
     for priority in EXPECTED_PRIORITIES:
@@ -1047,9 +1114,45 @@ class LostFeatureIntegrityTests(unittest.TestCase):
             gui_plan=mutated_gui,
         )
 
+    def complete_plan_leaves(self, road: str, progress: str) -> tuple[str, str]:
+        """Close every plan leaf with evidence and keep both count mirrors exact."""
+
+        evidence = "docs/verification/gold-wave1823-custody48-admission.json"
+        road = re.sub(
+            r"(?m)^(-\s+\[) (\]\s+\*\*GOLD-LF-00[123]-\d{2}\b[^\n]*)$",
+            rf"\g<1>x\g<2> Accepted 2026-01-01: `{evidence}`.",
+            road,
+        )
+        _, open_count, done_count = ws_lf_task_counts(road)
+        road, dashboard_rows = re.subn(
+            r"(?m)^(\|\s*WS-LF\s+Confirmed lost-feature recovery[^|]*\|[^|]*\|\s*\*\*)\d+"
+            r"(\*\*\s*\|\s*\*\*)\d+(\*\*\s*\|\s*)$",
+            rf"\g<1>{open_count}\g<2>{done_count}\g<3>",
+            road,
+        )
+        self.assertEqual(dashboard_rows, 1)
+        section = re.search(
+            r"(?ms)^> \*\*Current WS-LF inventory integrity\b.*?(?=^>\s*$|\Z)",
+            progress,
+        )
+        self.assertIsNotNone(section)
+        rewritten, pairs = re.subn(
+            r"\*\*\d+(\s+done\s*/\s*)\d+",
+            rf"**{done_count}\g<1>{open_count}",
+            section.group(0),
+            count=1,
+        )
+        self.assertEqual(pairs, 1)
+        return road, progress[: section.start()] + rewritten + progress[section.end() :]
+
     def test_gui_parent_and_all_linked_children_may_complete(self) -> None:
+        # GOLD-R4-05 is also held by the plan leaves (GOLD-LF-P1-23), so the
+        # legitimate completion fixture closes those together with the GUI rows.
+        completed_road, completed_progress = self.complete_plan_leaves(
+            self.road, self.progress
+        )
         mutated_road = self.set_checkbox_mark(
-            self.road,
+            completed_road,
             "GOLD-R4-05",
             "x",
             bold=True,
@@ -1067,8 +1170,83 @@ class LostFeatureIntegrityTests(unittest.TestCase):
             self.source,
             mutated_road,
             mutated_gui,
-            self.progress,
+            completed_progress,
         )
+
+    def test_plan_parent_cannot_close_before_its_plan_leaves(self) -> None:
+        for parents in PLAN_LEAF_PARENTS.values():
+            for parent in parents:
+                with self.subTest(parent=parent):
+                    mutated_road = self.set_checkbox_mark(self.road, parent, "x", bold=True)
+                    self.assert_contract_fails(
+                        self.inventory,
+                        self.source,
+                        mutated_road,
+                        f"{parent} cannot be done or partial",
+                    )
+        with self.assertRaisesRegex(ContractError, "GOLD-R4-07 cannot be done or partial"):
+            validate_plan_leaves(
+                self.set_checkbox_mark(self.road, "GOLD-R4-07", "~", bold=True)
+            )
+
+    def test_plan_parent_follows_only_its_own_plan(self) -> None:
+        evidence = "docs/verification/gold-wave1823-custody48-admission.json"
+        closed_001 = re.sub(
+            r"(?m)^(-\s+\[)[^\]](\]\s+\*\*GOLD-LF-001-\d{2}\b[^\n]*)$",
+            rf"\g<1>x\g<2> Accepted 2026-01-01: `{evidence}`.",
+            self.road,
+        )
+        # Plan 001 complete: its primary gate is no longer held by plan leaves,
+        # while the gates plans/003 owns stay bound to the still-open plans.
+        validate_plan_leaves(self.set_checkbox_mark(closed_001, "GOLD-R4-07", "x", bold=True))
+        with self.assertRaisesRegex(ContractError, "GOLD-R4-05 cannot be done or partial"):
+            validate_plan_leaves(
+                self.set_checkbox_mark(closed_001, "GOLD-R4-05", "x", bold=True)
+            )
+
+    def test_all_plan_leaves_done_release_every_parent(self) -> None:
+        evidence = "docs/verification/gold-wave1823-custody48-admission.json"
+        mutated = re.sub(
+            r"(?m)^(-\s+\[)[^\]](\]\s+\*\*GOLD-LF-00[123]-\d{2}\b[^\n]*)$",
+            rf"\g<1>x\g<2> Accepted 2026-01-01: `{evidence}`.",
+            self.road,
+        )
+        for parent in sorted({p for parents in PLAN_LEAF_PARENTS.values() for p in parents}):
+            mutated = self.set_checkbox_mark(mutated, parent, "x", bold=True)
+        validate_plan_leaves(mutated)
+
+    def test_closed_plan_leaf_requires_dated_existing_evidence(self) -> None:
+        without_evidence = self.set_checkbox_mark(self.road, "GOLD-LF-001-03", "x", bold=True)
+        with self.assertRaisesRegex(ContractError, "GOLD-LF-001-03 is closed without"):
+            validate_plan_leaves(without_evidence)
+        undated = without_evidence.replace(
+            "**GOLD-LF-001-03 —",
+            "**GOLD-LF-001-03 — docs/verification/gold-wave1823-custody48-admission.json",
+            1,
+        )
+        with self.assertRaisesRegex(ContractError, "GOLD-LF-001-03 is closed without"):
+            validate_plan_leaves(undated)
+        dangling = self.road.replace(
+            "docs/verification/gold-wave1823-custody48-admission.json",
+            "docs/verification/gold-wave1823-absent.json",
+        )
+        with self.assertRaisesRegex(ContractError, "GOLD-LF-001-01 cites missing evidence"):
+            validate_plan_leaves(dangling)
+
+    def test_plan_leaf_inventory_drift_fails_closed(self) -> None:
+        removed = re.sub(r"(?m)^-\s+\[[^\]]\]\s+\*\*GOLD-LF-002-05\b[^\n]*\n", "", self.road)
+        with self.assertRaisesRegex(ContractError, "Plan 002 must keep exactly 22"):
+            validate_plan_leaves(removed)
+        duplicated = re.sub(
+            r"(?m)^(-\s+\[[^\]]\]\s+\*\*GOLD-LF-003-01\b[^\n]*\n)",
+            r"\g<1>\g<1>",
+            self.road,
+        )
+        with self.assertRaisesRegex(ContractError, "Plan 003 must keep exactly 24"):
+            validate_plan_leaves(duplicated)
+        partial = self.set_checkbox_mark(self.road, "GOLD-LF-003-02", "~", bold=True)
+        with self.assertRaisesRegex(ContractError, "GOLD-LF-003-02 may only be open or done"):
+            validate_plan_leaves(partial)
 
 
 if __name__ == "__main__":
