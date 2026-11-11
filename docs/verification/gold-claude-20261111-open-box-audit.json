@@ -1,0 +1,1860 @@
+{
+  "schema": "neoth.open-roadmap-box-clause-audit.v1",
+  "reviewedAt": "2026-11-11",
+  "reviewedProducer": "36956f07",
+  "method": "Four sequential read-only auditors split each box into atomic clauses and named implementing code and asserting tests per clause; closable only when no clause lacks code, lacks a test or needs non-CI evidence.",
+  "limits": [
+    "Static reading only; nothing was compiled or run.",
+    "Python contract tests under packaging/tests were not in the auditors' search scope; GOLD-DEP-RUSSH-01's feature/leaf clauses are in fact pinned by test_release_capability_contract.py."
+  ],
+  "closable": [
+    "ADOPT31-W1"
+  ],
+  "items": [
+    {
+      "id": "GOLD-R4-15k1",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "OpenAI-compatible leaf (OpenAI/OpenRouter/DeepSeek/Kimi/Qwen/custom/Copilot chat): successful JSON read incrementally under an 8 MiB cap before serde; oversize and malformed 2xx fail with digest-only evidence",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/response_bounds.rs:118 - decode_json reads bytes_stream, bails with 'successful response body exceeded' when chunk > remaining, parses only after the capped read",
+            "SRC/neothd/src/providers/openai_api.rs:619 - complete path calls response_bounds::decode_json"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/openai_api.rs:3293 - mock_oversized_200_policy_and_refusal_bodies_fail_before_json_allocation: two 200 bodies (choices[].error with huge debug_echo, message.refusal) > 8 MiB; asserts 'successful response body exceeded', body_sha256=, truncated=true, no secret",
+            "SRC/neothd/src/providers/openai_api.rs:3349 - mock_malformed_200_body_reports_only_digest_evidence"
+          ],
+          "note": "Covers the box's 'huge choices[].error, refusal and malformed 2xx' fixtures. Bodies are finite (cap+1), which is sufficient for a size-cap assertion."
+        },
+        {
+          "clause": "OpenAI-compatible: adjacent non-2xx error bodies (complete and stream handshake) capped at 64 KiB with digest evidence; typed QuotaError/Retry-After preserved",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/openai_api.rs:87 - read_bounded_provider_error_body caps at MAX_PROVIDER_ERROR_BODY_BYTES, reports input_truncated into digest evidence",
+            "SRC/neothd/src/providers/openai_api.rs:558 and :853 - both call sites (complete, stream)"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/openai_api.rs:3411 - mock_stream_500_caps_and_redacts_oversized_body: 2x cap body, asserts HTTP 500, body_sha256=, truncated=true, no secret",
+            "SRC/neothd/src/providers/openai_api.rs:3375 - mock_stream_429_preserves_retry_after_without_raw_body",
+            "SRC/neothd/src/providers/openai_api.rs:3268 - mock_500_transient_returns_status_in_error (small body only on complete path)"
+          ],
+          "note": "The complete() non-2xx path shares the same function but has no dedicated oversize fixture; only the stream-handshake path is exercised with a 2x-cap body."
+        },
+        {
+          "clause": "OpenAI-compatible SSE: raw-byte framing with 1 MiB line/residual/joined-event cap; newline-free and multi-data events fail closed; UTF-8 split across chunks accepted; malformed frame and truncated transport are digest-only",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/openai_api.rs:905-1033 - bytes_stream loop with append_frame_segment / frame_utf8 and EOF residual handling",
+            "SRC/neothd/src/providers/openai_api.rs:1286-1315 - joined multi-data event capped via append_frame_segment",
+            "SRC/neothd/src/providers/response_bounds.rs:247-271 - append_frame_segment, frame_utf8"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/openai_api.rs:3440 - mock_newline_free_sse_frame_is_bounded_and_secret_safe (cap+1 newline-free data frame)",
+            "SRC/neothd/src/providers/openai_api.rs:3741 - mock_sse_multiline_event_is_cumulatively_bounded_without_echo",
+            "SRC/neothd/src/providers/openai_api.rs:3702 - mock_sse_joins_multiple_data_fields_before_decoding_event",
+            "SRC/neothd/src/providers/openai_api.rs:4249 - mock_malformed_sse_frame_reports_only_digest_evidence",
+            "SRC/neothd/src/providers/openai_api.rs:4280 - truncated_sse_transport_error_drops_source_and_body_details (raw TCP fixture)",
+            "SRC/neothd/src/providers/openai_api.rs:3924 - mock_sse_eof_after_newline_less_finish_reason_completes",
+            "SRC/neothd/src/providers/response_bounds.rs:292 - frame_utf8_allows_codepoint_split_across_transport_chunks (primitive-level; no OpenAI-specific chunk-split fixture)"
+          ],
+          "note": "UTF-8 chunk-split is proven at primitive level for OpenAI and end-to-end (raw chunked HTTP) only for Ollama."
+        },
+        {
+          "clause": "OpenAI-compatible: cumulatively retained streaming and non-stream refusal metadata capped at 1 MiB; ordinary visible refusal/completion text stays visible",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/openai_api.rs:1577-1620 - bound_refusal_message / append_bounded_refusal with MAX_PROVIDER_REFUSAL_MESSAGE_BYTES"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/openai_api.rs:2886 - mock_nonstream_refusal_metadata_accepts_exact_limit_for_both_wire_shapes (exact limit accepted, completion.text == refusal, typed refusal retained)",
+            "SRC/neothd/src/providers/openai_api.rs:2944 - mock_nonstream_refusal_metadata_rejects_one_byte_over_without_echo",
+            "SRC/neothd/src/providers/openai_api.rs:4063 - mock_many_small_refusal_frames_cannot_grow_termination_without_bound (16 fragments pass, 17th fails with stream_sha256=)"
+          ],
+          "note": "A refusal larger than 1 MiB is rejected, not shown; the box text itself states the 1 MiB retained-metadata cap, so this is consistent."
+        },
+        {
+          "clause": "Ollama native leaf: successful JSON capped at 8 MiB; non-2xx complete and stream-handshake bodies capped at 64 KiB; NDJSON framed from raw bytes with 1 MiB line/EOF-residual cap; malformed/invalid-UTF-8 frame fails closed without synthetic done; UTF-8 split across transfer chunks",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/ollama_api.rs:179-214 - complete: error_body_evidence + decode_json",
+            "SRC/neothd/src/providers/ollama_api.rs:286-404 - stream: capped handshake error body, append_frame_segment per chunk, EOF residual",
+            "SRC/neothd/src/providers/ollama_api.rs:557-564 - decode_ndjson_frame: frame_utf8 then digest-only malformed error"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/ollama_api.rs:1309 - oversized_success_body_fails_before_json_allocation",
+            "SRC/neothd/src/providers/ollama_api.rs:1338 - malformed_success_body_reports_only_digest_evidence",
+            "SRC/neothd/src/providers/ollama_api.rs:1364 - oversized_http_error_bodies_report_status_and_digest_only (complete and stream)",
+            "SRC/neothd/src/providers/ollama_api.rs:1404 - newline_free_ndjson_frame_is_bounded_and_secret_safe",
+            "SRC/neothd/src/providers/ollama_api.rs:1438 - malformed_ndjson_line_fails_closed_without_synthetic_done",
+            "SRC/neothd/src/providers/ollama_api.rs:1471 - malformed_eof_residual_fails_closed_without_synthetic_done",
+            "SRC/neothd/src/providers/ollama_api.rs:1499 - invalid_utf8_ndjson_line_reports_only_digest_evidence",
+            "SRC/neothd/src/providers/ollama_api.rs:1584 - chunked_transport_reassembles_codepoint_split_across_chunks (raw HTTP/1.1 chunked fixture)"
+          ],
+          "note": "Strongest-covered adapter."
+        },
+        {
+          "clause": "Anthropic, Gemini, Cohere: successful body 8 MiB cap, malformed 2xx digest-only, every non-2xx body capped 64 KiB, 429 keeps typed QuotaError with digest evidence",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/anthropic_api.rs:267,279,301 - error_body_evidence (429 and generic) and decode_json",
+            "SRC/neothd/src/providers/gemini_api.rs:186,198,217 - same three sites",
+            "SRC/neothd/src/providers/cohere_api.rs:214,226,245 - same three sites"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/anthropic_api.rs:1279,1297,1309,1330 - oversized success, malformed success, oversized 500 body, oversized 429 body with Retry-After",
+            "SRC/neothd/src/providers/gemini_api.rs:996,1014,1026,1048 - oversized success, malformed success, oversized 500, 429 quota digest",
+            "SRC/neothd/src/providers/cohere_api.rs:975,993,1005,1024 - oversized success, malformed success, oversized 500, 429 quota digest"
+          ],
+          "note": "Single-shot JSON transports; no independent streaming HTTP read exists in these files (bytes_stream only occurs in openai/ollama/response_bounds)."
+        },
+        {
+          "clause": "Azure OpenAI: successful body 8 MiB cap, non-2xx bodies capped while still classifying policy/error envelopes, quota digest evidence",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/azure_openai.rs:294,309,352 - error_body_evidence, error_body_with_evidence, decode_json"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/azure_openai.rs:1120 - oversized_success_body_fails_before_json_allocation",
+            "SRC/neothd/src/providers/azure_openai.rs:1141 - error_classification_survives_bounding_without_echoing_the_body (404 body 2x cap)",
+            "SRC/neothd/src/providers/azure_openai.rs:1165 - http_policy_refusal_stays_a_typed_completion_on_a_bounded_body",
+            "SRC/neothd/src/providers/azure_openai.rs:1214 - quota_body_retains_digest_evidence_only"
+          ],
+          "note": "No malformed-2xx fixture exists for Azure (gap in fixture symmetry, not in code: same decode_json)."
+        },
+        {
+          "clause": "AWS Bedrock Converse: successful body 8 MiB cap, malformed 2xx digest-only, non-2xx bodies capped (classification under cap), 429 digest evidence",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/aws_bedrock.rs:331 - error_body_evidence on 429",
+            "SRC/neothd/src/providers/aws_bedrock.rs:346 - error_body_with_evidence on other non-2xx, passed to map_bedrock_error",
+            "SRC/neothd/src/providers/aws_bedrock.rs:367 - decode_json with MAX_SUCCESS_BODY_BYTES"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/aws_bedrock.rs:1195 - error_classification_never_echoes_the_envelope (pure map_bedrock_error with a fake evidence string; no HTTP, no cap exercised)",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:197 - single_shot_json_transports_stay_bounded (string-level pin only: decode_json call, 2 capped reads, constants)"
+          ],
+          "note": "Searched aws_bedrock.rs test module (750-1232), tests/ dir (only no_outbound_network.rs and the source gate mention bedrock), no wiremock seam (endpoint is region-bound). No behavioural oversized/malformed/oversized-error fixture exists, contrary to the checkpoint's 'adversarial tests' requirement."
+        },
+        {
+          "clause": "GitHub Copilot token exchange bounded at 64 KiB on success and error paths",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/copilot.rs:185 - error_body_evidence; :199 - decode_json"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/copilot.rs:534 - oversized_token_body_fails_before_json_allocation",
+            "SRC/neothd/src/providers/copilot.rs:561 - token_error_body_reports_status_and_digest_only",
+            "SRC/neothd/src/providers/copilot.rs:514 - token_refresh_succeeds_through_the_bounded_reader"
+          ],
+          "note": "Copilot chat delegates to the bounded OpenAI-compatible transport (copilot.rs inner.complete_raw / stream_raw)."
+        },
+        {
+          "clause": "Shared primitives: evidence is domain-separated digest only; exact-limit accepted, one byte over rejected without echo; endless newline-free line rejected; draining reader keeps pipe moving",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/response_bounds.rs:20-56 - byte/frame/stream evidence via bounded_audit_digest_bytes",
+            "SRC/neothd/src/providers/response_bounds.rs:174-203 - read_bounded retains cap, drains remainder",
+            "SRC/neothd/src/providers/response_bounds.rs:210-245 - read_bounded_line"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/response_bounds.rs:277 - bounded_frame_accepts_exact_limit_and_rejects_next_byte_without_echo",
+            "SRC/neothd/src/providers/response_bounds.rs:292 - frame_utf8_allows_codepoint_split_across_transport_chunks",
+            "SRC/neothd/src/providers/response_bounds.rs:305 - read_bounded_drains_past_the_cap_so_a_writer_never_blocks",
+            "SRC/neothd/src/providers/response_bounds.rs:353 - read_bounded_keeps_the_cap_and_reports_truncation",
+            "SRC/neothd/src/providers/response_bounds.rs:366 - bounded_lines_split_on_newline_and_reject_an_endless_one",
+            "SRC/neothd/src/providers/response_bounds.rs:400 - invalid_utf8_error_contains_only_digest_evidence"
+          ],
+          "note": "decode_json and error_body_* are not unit-tested in this file; they are exercised through the adapter fixtures above."
+        },
+        {
+          "clause": "Claude CLI: stdout read under 8 MiB and stderr under 64 KiB (no read_to_end), stream-json framed by 1 MiB-capped line reader, retained visible/refusal copy capped at 1 MiB while every delta still reaches caller, stderr quoted at most 400 chars",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/claude_cli.rs:63-69 - MAX_CLI_STDOUT_BYTES, MAX_CLI_STDERR_BYTES, MAX_CLI_STREAM_LINE_BYTES, MAX_RETAINED_VISIBLE_BYTES",
+            "SRC/neothd/src/providers/claude_cli.rs:667,686 - read_bounded on stdout/stderr; truncated stdout fails the call (:670-679)",
+            "SRC/neothd/src/providers/claude_cli.rs:1308,1518 - read_bounded_line + frame_utf8 in both stream paths",
+            "SRC/neothd/src/providers/claude_cli.rs:1332,1359 - retained-copy guard; :80 quoted_stderr"
+          ],
+          "tests": [
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:288 - subprocess_transports_stay_bounded (string contains/not-contains pins on claude_cli source only)",
+            "SRC/neothd/src/providers/response_bounds.rs:366 - bounded_lines_split_on_newline_and_reject_an_endless_one (primitive, not the CLI integration)"
+          ],
+          "note": "Searched claude_cli.rs test module (2711-3936, ~90 fns) for MAX_CLI_*, repeat(, read_bounded, quoted_stderr: none. No fixture drives an oversize stdout, newline-free stream line, retained-copy cap or truncated-stdout failure. The checkpoint's 'claude_cli 69/69' proves nothing about these bounds."
+        },
+        {
+          "clause": "Tmux capture-pane: keep newest 4 MiB of pane stdout; stderr retained 64 KiB and fully drained; truncation visible in diagnostics",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/tmux_session.rs:64-67 - MAX_CAPTURE_BYTES, MAX_CAPTURE_STDERR_BYTES",
+            "SRC/neothd/src/providers/tmux_session.rs:94-131 - read_capture_streams: stdout fold-back loop at >2x window (:116-119), stderr via read_bounded"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/tmux_session.rs:614 - capture_streams_bound_and_fully_drain_large_stderr: stderr cap+32 KiB, asserts len==cap, truncated, fully drained (covers the stderr half)",
+            "SRC/neothd/src/providers/tmux_session.rs:606 - capture_keeps_the_newest_bytes_under_the_cap: tests only the final keep_newest_bytes trim",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:311 - string pins incl. 'captured.len() > MAX_CAPTURE_BYTES * 2'"
+          ],
+          "note": "stderr half is covered. The stdout half (streamed fold-back with an over-4-MiB or over-8-MiB pane) is never fed an oversize input: the only read_capture_streams test passes 13 bytes of stdout. Marked code_without_test because the clause as a whole (stdout AND stderr) is not asserted."
+        },
+        {
+          "clause": "PTY read_until: 4 MiB byte bound in addition to the deadline",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/pty_session.rs:41 - MAX_PTY_READ_BYTES (cfg feature pty-subprocess)",
+            "SRC/neothd/src/providers/pty_session.rs:275-291 - cap check, truncated copy, kills child, returns PtyReadOutcome::LimitExceeded"
+          ],
+          "tests": [
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:341 - pins 'const MAX_PTY_READ_BYTES' and 'if buf.len() >= MAX_PTY_READ_BYTES' strings only",
+            "SRC/neothd/src/providers/pty_session.rs:558 - real_spawn_echo_roundtrip (cfg pty-subprocess; echo only, no cap)"
+          ],
+          "note": "No test produces >4 MiB or observes LimitExceeded. The module is behind the pty-subprocess feature, a source-build opt-in (Cargo.toml:187-193); no workflow in .github/workflows names it, so the code is not even compiled in CI."
+        },
+        {
+          "clause": "RecursiveMAS sidecar: line reader capped at 1 MiB (replaces read_line), oversize/unparseable reply resets the child",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/recursive_mas_adapter.rs:42 - MAX_SIDECAR_LINE_BYTES",
+            "SRC/neothd/src/providers/recursive_mas_adapter.rs:411-420 - take(cap+1).read_until, bails 'sidecar response line exceeded'",
+            "SRC/neothd/src/providers/recursive_mas_adapter.rs:602,628 - kill_sidecar on framing failure and unparseable reply"
+          ],
+          "tests": [
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:348 - string pins (constant, 2 kill_sidecar calls, no read_line(&mut buf))"
+          ],
+          "note": "Test module (652-) has 6 tests (spawn, encode, output-cap reject, parse, W41 ack); none drives an oversize line. Module is #[cfg(feature = \"recursive-mas\")] (providers/mod.rs:60) and no CI workflow enables that feature, so the checkpoint's 'recursive_mas 11/11' is not produced by the default CI run."
+        },
+        {
+          "clause": "Static no-bypass gate: adopted transports cannot reintroduce unbounded .json()/.text()/.bytes()/.chunk(), body-in-tracing, skip-and-synthesize frame paths; gate has a negative test",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:37-120 - assert_no_unbounded_response_reads and assert_no_body_in_tracing"
+          ],
+          "tests": [
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:122 - shared_primitives_pin_their_caps",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:139 - openai_compatible_transport_stays_bounded",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:152 - ollama_transport_stays_bounded",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:172 - ollama_malformed_frames_fail_closed_instead_of_skipping",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:196 - single_shot_json_transports_stay_bounded",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:274 - copilot_token_exchange_stays_bounded",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:287 - subprocess_transports_stay_bounded",
+            "SRC/neothd/tests/provider_response_bounds_source_gate.rs:367 - tracing_check_rejects_a_leak_and_accepts_a_measurement"
+          ],
+          "note": "Eight tests (8 #[test] counted), not the 7 the checkpoint states. Gate is textual; it proves shape, not behaviour."
+        },
+        {
+          "clause": "Box closes only after 'the release-candidate workspace/CI pass' (explicit residual in the subprocess checkpoint)",
+          "status": "needs_non_ci_evidence",
+          "code": [],
+          "tests": [],
+          "note": "Quoted: 'Closing this box still needs the release-candidate workspace/CI pass.' Whether that means ordinary green CI on the commit or a separate RC run is not defined in the box; main session must decide. Does not by itself block a green-CI close if interpreted as CI."
+        }
+      ],
+      "requiredTestIdentities": [
+        "neoth providers::response_bounds::tests::bounded_frame_accepts_exact_limit_and_rejects_next_byte_without_echo",
+        "neoth providers::response_bounds::tests::frame_utf8_allows_codepoint_split_across_transport_chunks",
+        "neoth providers::response_bounds::tests::read_bounded_drains_past_the_cap_so_a_writer_never_blocks",
+        "neoth providers::response_bounds::tests::read_bounded_keeps_the_cap_and_reports_truncation",
+        "neoth providers::response_bounds::tests::bounded_lines_split_on_newline_and_reject_an_endless_one",
+        "neoth providers::response_bounds::tests::invalid_utf8_error_contains_only_digest_evidence",
+        "neoth providers::openai_api::tests::mock_oversized_200_policy_and_refusal_bodies_fail_before_json_allocation",
+        "neoth providers::openai_api::tests::mock_malformed_200_body_reports_only_digest_evidence",
+        "neoth providers::openai_api::tests::mock_stream_500_caps_and_redacts_oversized_body",
+        "neoth providers::openai_api::tests::mock_stream_429_preserves_retry_after_without_raw_body",
+        "neoth providers::openai_api::tests::mock_newline_free_sse_frame_is_bounded_and_secret_safe",
+        "neoth providers::openai_api::tests::mock_sse_multiline_event_is_cumulatively_bounded_without_echo",
+        "neoth providers::openai_api::tests::mock_sse_joins_multiple_data_fields_before_decoding_event",
+        "neoth providers::openai_api::tests::mock_malformed_sse_frame_reports_only_digest_evidence",
+        "neoth providers::openai_api::tests::truncated_sse_transport_error_drops_source_and_body_details",
+        "neoth providers::openai_api::tests::mock_nonstream_refusal_metadata_accepts_exact_limit_for_both_wire_shapes",
+        "neoth providers::openai_api::tests::mock_nonstream_refusal_metadata_rejects_one_byte_over_without_echo",
+        "neoth providers::openai_api::tests::mock_many_small_refusal_frames_cannot_grow_termination_without_bound",
+        "neoth providers::ollama_api::tests::oversized_success_body_fails_before_json_allocation",
+        "neoth providers::ollama_api::tests::malformed_success_body_reports_only_digest_evidence",
+        "neoth providers::ollama_api::tests::oversized_http_error_bodies_report_status_and_digest_only",
+        "neoth providers::ollama_api::tests::newline_free_ndjson_frame_is_bounded_and_secret_safe",
+        "neoth providers::ollama_api::tests::malformed_ndjson_line_fails_closed_without_synthetic_done",
+        "neoth providers::ollama_api::tests::malformed_eof_residual_fails_closed_without_synthetic_done",
+        "neoth providers::ollama_api::tests::invalid_utf8_ndjson_line_reports_only_digest_evidence",
+        "neoth providers::ollama_api::tests::chunked_transport_reassembles_codepoint_split_across_chunks",
+        "neoth providers::anthropic_api::tests::oversized_success_body_fails_before_json_allocation",
+        "neoth providers::anthropic_api::tests::malformed_success_body_reports_only_digest_evidence",
+        "neoth providers::anthropic_api::tests::oversized_http_error_body_reports_status_and_digest_only",
+        "neoth providers::anthropic_api::tests::oversized_quota_body_keeps_typed_retry_after_without_raw_bytes",
+        "neoth providers::gemini_api::tests::oversized_success_body_fails_before_json_allocation",
+        "neoth providers::gemini_api::tests::malformed_success_body_reports_only_digest_evidence",
+        "neoth providers::gemini_api::tests::oversized_http_error_body_reports_status_and_digest_only",
+        "neoth providers::gemini_api::tests::quota_body_keeps_typed_retry_after_without_raw_bytes_or_key",
+        "neoth providers::cohere_api::tests::oversized_success_body_fails_before_json_allocation",
+        "neoth providers::cohere_api::tests::malformed_success_body_reports_only_digest_evidence",
+        "neoth providers::cohere_api::tests::oversized_http_error_body_reports_status_and_digest_only",
+        "neoth providers::cohere_api::tests::quota_body_retains_digest_evidence_only",
+        "neoth providers::azure_openai::tests::oversized_success_body_fails_before_json_allocation",
+        "neoth providers::azure_openai::tests::error_classification_survives_bounding_without_echoing_the_body",
+        "neoth providers::azure_openai::tests::http_policy_refusal_stays_a_typed_completion_on_a_bounded_body",
+        "neoth providers::azure_openai::tests::quota_body_retains_digest_evidence_only",
+        "neoth providers::copilot::tests::oversized_token_body_fails_before_json_allocation",
+        "neoth providers::copilot::tests::token_error_body_reports_status_and_digest_only",
+        "neoth providers::tmux_session::tests::capture_streams_bound_and_fully_drain_large_stderr",
+        "neoth::provider_response_bounds_source_gate shared_primitives_pin_their_caps",
+        "neoth::provider_response_bounds_source_gate openai_compatible_transport_stays_bounded",
+        "neoth::provider_response_bounds_source_gate ollama_transport_stays_bounded",
+        "neoth::provider_response_bounds_source_gate ollama_malformed_frames_fail_closed_instead_of_skipping",
+        "neoth::provider_response_bounds_source_gate single_shot_json_transports_stay_bounded",
+        "neoth::provider_response_bounds_source_gate copilot_token_exchange_stays_bounded",
+        "neoth::provider_response_bounds_source_gate subprocess_transports_stay_bounded",
+        "neoth::provider_response_bounds_source_gate tracing_check_rejects_a_leak_and_accepts_a_measurement"
+      ],
+      "boxTextCorrections": [
+        "Checkpoint says 'response bounds 5/5': SRC/neothd/src/providers/response_bounds.rs:277-409 now contains 6 tests.",
+        "Checkpoint says 'source gate 7/7': SRC/neothd/tests/provider_response_bounds_source_gate.rs contains 8 #[test] fns (lines 122-367).",
+        "Checkpoint says every stream in the inventory 'has an assertion' and cites claude_cli 69/69 and recursive_mas 11/11: the assertions for claude_cli, PTY and RecursiveMAS are string pins in the source gate (lines 288-361), not behavioural tests; claude_cli.rs tests (2711-3936) and recursive_mas_adapter.rs tests (652-) contain no bounds fixture, and recursive_mas_adapter.rs is cfg(feature = recursive-mas) (providers/mod.rs:60), never enabled in .github/workflows.",
+        "Checkpoint implies Bedrock has 'equivalent bounded readers and adversarial tests' (bedrock 34/34): aws_bedrock.rs has no oversized/malformed/oversized-error fixture; only pure map_bedrock_error (line 1195) and the source gate.",
+        "Source gate file header (line 3) says 'Two transports have adopted' the readers; stale, the file now pins thirteen sources."
+      ],
+      "residualScope": [
+        "PTY transport (feature pty-subprocess, source-build opt-in only) must stay explicitly excluded or get a behavioural test and a CI lane.",
+        "RecursiveMAS sidecar (feature recursive-mas) must stay explicitly excluded or get a behavioural test and a CI lane.",
+        "SRC/neothd/src/providers/tmux_sweeper.rs:115-121 runs 'tmux ls' via .output() with no byte cap (local session listing, not model-driven); not in the box inventory and not in the source gate.",
+        "HTTP reads outside providers/ (channels/*, tools/*, models/gguf_variants.rs, security/*) still use .json()/.text() with no cap; the box says 'every provider', so these must be declared out of scope.",
+        "Total-duration bound of read_bounded draining an endless child stream was not checked (it drains until EOF by design, response_bounds.rs:162-173)."
+      ],
+      "smallestMissingWork": "Add behavioural fixtures: (1) Bedrock oversized-success/malformed-2xx/oversized-non-2xx via a test endpoint seam; (2) claude_cli with a fake child emitting >8 MiB stdout, a >1 MiB newline-free stream-json line, and >1 MiB visible text (delta delivered, retained copy capped); (3) read_capture_streams with oversize stdout; and either (4) tests plus a CI feature lane for pty-subprocess and recursive-mas, or an explicit roadmap carve-out excluding them.",
+      "uncertainty": "I did not open every test body in the larger files (openai_api.rs tests 2028-4480 sampled; claude_cli tests listed by name and grepped for bounds keywords, not read line by line). Nextest identity format for integration-test binaries (neoth::provider_response_bounds_source_gate) is inferred. Whether the 'release-candidate run' clause equals ordinary green CI is undefined in the box."
+    },
+    {
+      "id": "GOLD-R4-14a",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "Each concrete leaf advertises a per-request max_output_tokens capability (or explicitly does not) through ProviderRequestControls",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/mod.rs:863-867,882-939 - Request.max_output_tokens, with_output_token_limit, supports_max_output_tokens",
+            "SRC/neothd/src/providers/anthropic_api.rs:187; aws_bedrock.rs:244; azure_openai.rs:205; cohere_api.rs:143; gemini_api.rs:102; copilot.rs:253; openai_api.rs:470; ollama_api.rs:141; local_qwen.rs:573; ouro/adapter.rs:1264 - all declare ...with_output_token_limit()",
+            "SRC/neothd/src/providers/claude_cli.rs:1124 (THINKING_BUDGET only) and recursive_mas_adapter.rs:467 (NONE) - no output-cap capability"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/mod.rs:6011 - output_token_limit_is_strict_and_intersects_projects_and_validates",
+            "SRC/neothd/src/providers/anthropic_api.rs:555, aws_bedrock.rs:782, azure_openai.rs:650, openai_api.rs:2091, copilot.rs:400, ollama_api.rs:1207 - each asserts request_controls().supports_max_output_tokens()"
+          ],
+          "note": "Gemini (597) and Cohere (468) assert serialization via their own tests; capability is covered by mod.rs:6011 generically."
+        },
+        {
+          "clause": "Effective ceiling: requested cap may only narrow and the leaf must prove a matching ceiling; a nominally-capable leaf returning None or a wider ceiling is refused before authorization/I/O",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/mod.rs:3384-3405 - validated_output_token_ceiling",
+            "SRC/neothd/src/providers/mod.rs:2544-2548 - complete_authorized order: validate_request_controls, bind_wire_identity, validated_output_token_ceiling, authorize_leaf",
+            "SRC/neothd/src/providers/mod.rs:1098-1104 - requested cap must be within [1, MAX_REQUEST_OUTPUT_TOKENS]"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/mod.rs:6056 - requested_output_cap_requires_a_matching_proven_effective_ceiling (512 ok; 513 and None rejected)",
+            "SRC/neothd/src/providers/mod.rs:6011 - zero and MAX+1 rejected",
+            "SRC/neothd/src/providers/ollama_api.rs:1243 - remote_requested_output_cap_cannot_widen_the_reviewed_ceiling",
+            "SRC/neothd/src/providers/cohere_api.rs:493 and gemini_api.rs:597 - cannot_widen tests"
+          ],
+          "note": "complete_authorized_direct_retry repeats the same sequence (mod.rs:2621-2625); stream paths at 2803/2887/3014 also call it."
+        },
+        {
+          "clause": "Wire binding, real production builder asserted: requested cap equals the field actually serialized (OpenAI native vs compat field names, Ollama num_predict local vs remote, Bedrock inferenceConfig)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/openai_api.rs:383-410,1132 - chat_request uses effective_output_token_limit; same resolver feeds output_token_ceiling (:491)",
+            "SRC/neothd/src/providers/ollama_api.rs:575-608,636 - build_request num_predict from effective_output_token_cap",
+            "SRC/neothd/src/providers/aws_bedrock.rs:576-578 - build_converse_body max_tokens from effective_output_token_limit"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/openai_api.rs:2091 - requested_output_cap_is_the_exact_native_and_compat_wire_ceiling (calls chat_request, asserts max_completion_tokens==88 / max_tokens==88, other field absent)",
+            "SRC/neothd/src/providers/ollama_api.rs:1207 - requested_output_cap_is_authorized_and_serialized_for_both_endpoint_kinds (calls build_request)",
+            "SRC/neothd/src/providers/aws_bedrock.rs:782 - requested_output_cap_is_the_exact_bedrock_wire_ceiling (calls build_converse_body)"
+          ],
+          "note": "Copilot delegates to OpenAiAdapter (copilot.rs make_inner/inner.complete_raw); its own test (copilot.rs:400) only asserts the ceiling helper."
+        },
+        {
+          "clause": "Wire binding for Anthropic, Azure, Cohere, Gemini, local_qwen and Ouro: the production request body carries the same value that cost authorization proves",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/providers/anthropic_api.rs:227 - max_tokens: self.effective_output_token_limit(&req)",
+            "SRC/neothd/src/providers/azure_openai.rs:265 - max_completion_tokens: effective_output_token_limit(&req)",
+            "SRC/neothd/src/providers/cohere_api.rs:185 - max_tokens: Some(self.effective_output_token_cap(&req))",
+            "SRC/neothd/src/providers/gemini_api.rs:142 - max_output_tokens: effective_output_token_cap(&req)",
+            "SRC/neothd/src/providers/local_qwen.rs:602,659 and ouro/adapter.rs:872,1090 - effective_max_new_tokens at generation"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/anthropic_api.rs:555 - hand-builds MessagesRequest{max_tokens: adapter.effective_output_token_limit(&req)}, not the complete_raw body",
+            "SRC/neothd/src/providers/azure_openai.rs:650 - hand-builds ChatRequest with the helper",
+            "SRC/neothd/src/providers/cohere_api.rs:468,493 and gemini_api.rs:575,597 - hand-built request structs",
+            "SRC/neothd/src/providers/local_qwen.rs:1989 and ouro/adapter.rs:1689 - test effective_max_new_tokens and ceiling only (no model run)"
+          ],
+          "note": "Helper, ceiling and field serialization are tested, but no test captures an actual outbound body for a requested cap (anthropic wiremock body_json fixtures at anthropic_api.rs:1025,1063 only pin the default). A regression that stopped complete_raw from using the helper would not fail these tests."
+        },
+        {
+          "clause": "Cost authorization binding: requested cap and effective ceiling both enter the request binding hash and the paid-gate estimate",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/cost_authorization.rs:479-498 - request binding hashes requested_max_output_tokens(+present) and output_token_ceiling(+present)",
+            "SRC/neothd/src/providers/cost_authorization.rs:3330-3360 - COST_ESTIMATE payload carries requested_max_output_tokens and output_token_ceiling; None ceiling routes to UnboundedPaidProviderCall"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/cost_authorization.rs:9638 - request_binding_sha256_covers_wire_mode_and_request_controls (changing max_output_tokens alone changes the binding)",
+            "SRC/neothd/src/providers/cost_authorization.rs:10082 - wal_and_paid_gate_use_each_leaf_output_ceiling (ceiling in WAL and price bound; exercised with thinking_budget, not max_output_tokens)",
+            "SRC/neothd/src/n8n_api/handlers.rs:1695 - provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding (estimate requested 321, ceiling 320)"
+          ],
+          "note": "Tested against probe/counting providers, not against each concrete leaf."
+        },
+        {
+          "clause": "WAL request binding: PROVIDER_REQUEST and COST_ESTIMATE_SHOWN carry the requested cap and the same 64-hex request binding",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/cost_authorization.rs:3305,3349,3343,3365 - requested_max_output_tokens and request_binding_sha256 in ticket, payload, and PaidProviderCall action"
+          ],
+          "tests": [
+            "SRC/neothd/src/n8n_api/handlers.rs:1570 - provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding (asserts payloads[0] requested 321, null for legacy, equal 64-hex binding across both events)",
+            "SRC/neothd/src/n8n_api/handlers.rs:1695 - same assertions through AuthorizedProvider directly"
+          ],
+          "note": "Same caveat: asserted through the n8n fixture leaf only."
+        },
+        {
+          "clause": "Unsupported leaves reject rather than silently drop a ceiling (direct leaf validation, decorator intersection, cross-provider shadow projection)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/providers/mod.rs:1012-1019 - ProviderRequestControls::validate bails 'does not support request control(s): max_output_tokens'",
+            "SRC/neothd/src/providers/mod.rs:978-991 and fallback.rs:524-549 - fallback chain validates the intersection and every candidate",
+            "SRC/neothd/src/security/refusal_abliterated.rs:146-150 - project_local_shadow_request refuses instead of dropping; mod.rs:970-973 (project_compatible_controls can drop) is therefore unreachable for an output cap"
+          ],
+          "tests": [
+            "SRC/neothd/src/providers/mod.rs:6011 - sampling-only leaf rejects 512 cap",
+            "SRC/neothd/src/providers/claude_cli.rs:3513 - explicit_output_cap_is_rejected_without_claiming_a_fake_ceiling",
+            "SRC/neothd/src/providers/recursive_mas_adapter.rs:702 - explicit_output_cap_is_rejected_for_unbounded_sidecar_invocations (calls ProviderRequestControls::NONE.validate, cfg recursive-mas)",
+            "SRC/neothd/src/security/refusal_abliterated.rs:662 - local_shadow_projection_rejects_unsupported_output_cap",
+            "SRC/neothd/src/cron/runner.rs:3236 and n8n_api/handlers.rs:1513,1643 - caller-level rejection"
+          ],
+          "note": "The recursive_mas test only runs with the non-default recursive-mas feature; the generic NONE-validate path is covered by mod.rs:6011 on default features. No direct fallback-chain test for output cap was opened."
+        },
+        {
+          "clause": "n8n caller: provider_call accepts optional max_output_tokens, binds it into the final request, returns requested and effective ceiling; legacy shape unchanged; invalid/unsupported/unproven refused with zero leaf calls and no provider WAL",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/n8n_api/handlers.rs:518-540 - n8n_output_ceiling_preflight",
+            "SRC/neothd/src/n8n_api/handlers.rs:800-826 - handler wiring and response fields"
+          ],
+          "tests": [
+            "SRC/neothd/src/n8n_api/handlers.rs:1464 - provider_call_output_ceiling_json_reaches_exact_final_request_and_response",
+            "SRC/neothd/src/n8n_api/handlers.rs:1497 - provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape",
+            "SRC/neothd/src/n8n_api/handlers.rs:1513 - provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete",
+            "SRC/neothd/src/n8n_api/handlers.rs:1570 - provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding",
+            "SRC/neothd/src/n8n_api/handlers.rs:1643 - provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal",
+            "SRC/neothd/src/n8n_api/handlers.rs:1695 - provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding"
+          ],
+          "note": "Tests use an N8nCeilingProbe provider, not a real adapter, which is appropriate for the caller contract."
+        },
+        {
+          "clause": "Cron caller: execution.max_output_tokens validated in YAML, settable via Add/Edit/Clear/List JSON, survives the final Request and briefing retry, JOB_FIRED carries policy, terminal separates requested vs effective, unsupported provider fails before any call",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/cron/schema.rs:205,857-866 - field and 1..=MAX validation",
+            "SRC/neothd/src/cron/runner.rs:187-198 - pre-dispatch capability refusal; :927-956 request build and effective ceiling; :1305 terminal payload",
+            "SRC/neothd/src/cli/cron.rs:138,213,869 - CLI add/edit/clear plumbing"
+          ],
+          "tests": [
+            "SRC/neothd/src/cron/schema.rs:1468 - execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values",
+            "SRC/neothd/src/cron/runner.rs:3193 - cron_output_ceiling_reaches_leaf_retry_and_terminal_wal (module cron::runner::workstream_c_tests)",
+            "SRC/neothd/src/cron/runner.rs:3236 - cron_output_ceiling_unsupported_provider_fails_before_any_call",
+            "SRC/neothd/src/cli/cron.rs:1634 - edit_updates_name_and_timeout (sets Some(64))",
+            "SRC/neothd/src/cli/cron.rs:1688 - full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field (4096 round trip, clear)"
+          ],
+          "note": "Cron WAL tests assert JOB_FIRED/JOB_SUCCESS fields; the request binding hash is not asserted in the Cron tests. The W2132 claim that failures before Request construction keep a null effective ceiling was not found asserted."
+        },
+        {
+          "clause": "Cluster caller: delegated-task ceiling travels outbound framing (distinct capped tag), pre-Gate validation, queue, and final authorized request; result projects requested and effective ceiling; unsupported leaf rejected",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/cli/cluster.rs:292 - --max-output-tokens on outbound-dispatch",
+            "SRC/neothd/src/cluster/heartbeat.rs:415,456-460,593-602,658-662 - wire body, validation bounds, result projection",
+            "SRC/neothd/src/cluster/hyperswarm.rs:2698,2906-2912,2977 - admission binding includes cap and presence",
+            "SRC/neothd/src/cluster/executor.rs:512-518,676,892-931 - request carries cap; result carries requested/effective; provider Err becomes Failed with redacted message"
+          ],
+          "tests": [
+            "SRC/neothd/src/cluster/heartbeat.rs:944 - capped_task_delegate_uses_a_distinct_fail_closed_wire_tag",
+            "SRC/neothd/src/cluster/heartbeat.rs:994 - legacy_task_delegate_omits_ceiling_without_inventing_one",
+            "SRC/neothd/src/cluster/heartbeat.rs:1110 - validate_task_delegate_enforces_bounds",
+            "SRC/neothd/src/cluster/outbound_tests.rs:1162 - capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling",
+            "SRC/neothd/src/cluster/hyperswarm.rs:3951 - delegated_task_gate_authenticates_allow_before_queue_effect (job.max_output_tokens == 73)",
+            "SRC/neothd/src/cluster/hyperswarm.rs:4482 - invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
+            "SRC/neothd/src/cluster/executor.rs:2371 - delegated_request_uses_protected_layers_without_private_node_context (final request cap 73, requested 73, effective 73)"
+          ],
+          "note": "Schema/status contract is covered (wire, admission, executor, result). Not found: any cluster-level test where the worker leaf lacks the capability and the task result is Failed, and no CLI parse test for --max-output-tokens (searched cluster/*.rs and cli/cluster.rs for 'cannot wire', 'does not support request control'). Status given to the whole clause is the weakest sub-claim. Module is cfg(feature = cluster), default-on (Cargo.toml:42)."
+        },
+        {
+          "clause": "Then run whole-surface regression evidence",
+          "status": "needs_non_ci_evidence",
+          "code": [],
+          "tests": [],
+          "note": "Roadmap W2132 (line 17697): 'Hosted regression and whole-surface native qualification remain required before the broader GOLD-R4-14a acceptance claim.' The ordinary workspace nextest run (.github/workflows/ci.yml:471, 741) is a candidate for the regression part; 'native qualification' is not defined and may need platform runs. Main session must decide."
+        }
+      ],
+      "requiredTestIdentities": [
+        "neoth providers::tests::output_token_limit_is_strict_and_intersects_projects_and_validates",
+        "neoth providers::tests::requested_output_cap_requires_a_matching_proven_effective_ceiling",
+        "neoth providers::anthropic_api::tests::requested_output_cap_is_the_exact_anthropic_wire_ceiling",
+        "neoth providers::aws_bedrock::tests::requested_output_cap_is_the_exact_bedrock_wire_ceiling",
+        "neoth providers::azure_openai::tests::requested_output_cap_is_the_exact_azure_wire_ceiling",
+        "neoth providers::cohere_api::tests::requested_output_cap_is_authorized_and_serialized_verbatim",
+        "neoth providers::cohere_api::tests::requested_output_cap_cannot_widen_the_configured_cohere_ceiling",
+        "neoth providers::gemini_api::tests::requested_output_cap_is_authorized_and_serialized_verbatim",
+        "neoth providers::gemini_api::tests::requested_output_cap_cannot_widen_the_reviewed_gemini_ceiling",
+        "neoth providers::copilot::tests::requested_output_cap_delegates_to_the_openai_wire_ceiling",
+        "neoth providers::openai_api::tests::requested_output_cap_is_the_exact_native_and_compat_wire_ceiling",
+        "neoth providers::ollama_api::tests::requested_output_cap_is_authorized_and_serialized_for_both_endpoint_kinds",
+        "neoth providers::ollama_api::tests::remote_requested_output_cap_cannot_widen_the_reviewed_ceiling",
+        "neoth providers::local_qwen::tests::per_request_output_cap_only_narrows_local_generation_and_ceiling",
+        "neoth providers::ouro::adapter::tests::per_request_output_cap_only_narrows_ouro_generation_and_ceiling",
+        "neoth providers::claude_cli::tests::explicit_output_cap_is_rejected_without_claiming_a_fake_ceiling",
+        "neoth providers::cost_authorization::tests::request_binding_sha256_covers_wire_mode_and_request_controls",
+        "neoth providers::cost_authorization::tests::wal_and_paid_gate_use_each_leaf_output_ceiling",
+        "neoth security::refusal_abliterated::tests::local_shadow_projection_rejects_unsupported_output_cap",
+        "neoth security::refusal_abliterated::tests::local_shadow_projection_preserves_supported_output_cap",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_json_reaches_exact_final_request_and_response",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal",
+        "neoth n8n_api::handlers::tests::provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding",
+        "neoth cron::schema::tests::execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values",
+        "neoth cron::runner::workstream_c_tests::cron_output_ceiling_reaches_leaf_retry_and_terminal_wal",
+        "neoth cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call",
+        "neoth cli::cron::tests::edit_updates_name_and_timeout",
+        "neoth cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field",
+        "neoth cluster::heartbeat::tests::capped_task_delegate_uses_a_distinct_fail_closed_wire_tag",
+        "neoth cluster::heartbeat::tests::legacy_task_delegate_omits_ceiling_without_inventing_one",
+        "neoth cluster::heartbeat::tests::validate_task_delegate_enforces_bounds",
+        "neoth cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling",
+        "neoth cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
+        "neoth cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
+        "neoth cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context"
+      ],
+      "boxTextCorrections": [
+        "Box says 'bind each concrete provider leaf's per-request max_output_tokens to ... effective wire ceiling'; for Anthropic, Azure, Cohere, Gemini, local_qwen and Ouro the tests assemble the wire struct by hand or test only the helper (anthropic_api.rs:555, azure_openai.rs:650, cohere_api.rs:468, gemini_api.rs:575), so the claim is proven by code reading, not by a test that observes the outbound body.",
+        "Box says 'unsupported leaves reject'; note ProviderRequestControls::project_compatible_controls (providers/mod.rs:970-973) does drop max_output_tokens by design, but its only caller (security/refusal_abliterated.rs:162) refuses first at :146-150, so no contradiction in current code."
+      ],
+      "residualScope": [
+        "Whole-surface native qualification (roadmap line 17697) and hosted rerun evidence remain explicitly open.",
+        "Leaves without the capability (claude_cli, recursive_mas_adapter) must stay documented as 'reject, no ceiling'; Ollama loopback with no requested cap deliberately claims no ceiling (ollama_api.rs:636-645) and routes to UnboundedPaidProviderCall semantics.",
+        "Other Request constructors that never set max_output_tokens (chat, bg_session, graphify broker, etc.) were not audited for parity; box scope is leaves plus n8n, Cron, Cluster."
+      ],
+      "smallestMissingWork": "Add wiremock body-capture fixtures (max_output_tokens=88 reaching the actual POST body) for Anthropic, Azure, Cohere and Gemini, and one cluster-executor test with a leaf lacking the capability asserting a Failed result with null/absent effective ceiling; then settle what 'whole-surface native qualification' means.",
+      "uncertainty": "I did not open the bodies of cohere_api.rs:468-520 and gemini_api.rs:575-625 beyond grep hits; they are classified as hand-built struct serialization from line context. Test module paths for cluster::outbound_tests (cfg(test) mod in cluster/mod.rs:39-40), cron::runner::workstream_c_tests and ouro::adapter::tests are inferred from mod declarations, not from a nextest listing. No test was run."
+    },
+    {
+      "id": "GOLD-LF-P1-01",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "OsFileWriteIntent/OsFileWriteResult pair exists and wraps the real file-write effect (intent durable before write_file_atomic, one result after)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:204 - OsFileWriteIntent = 0x1C (result 0x1D at :207)",
+            "SRC/neothd/src/os_tools/gate.rs:786-794 - next_intent_id then emit_write_intent(...).permits_effect(); otherwise Denied before any write",
+            "SRC/neothd/src/os_tools/gate.rs:798-815 - write_file_atomic then emit_write_result 'written' or 'failed'",
+            "SRC/neothd/src/os_tools/gate.rs:1290 - contents_sha256 = effect_digest(b\"os-file-write\", contents); contents not carried"
+          ],
+          "tests": [
+            "SRC/neothd/src/os_tools/gate.rs:2447 - write_records_a_durable_intent_before_the_effect_and_pairs_the_result: asserts intent_at < result_at && intent_at < effect_at, equal intent_id, outcome=='written', no 'contents' key, digest equality",
+            "SRC/neothd/src/os_tools/gate.rs:2509 - write_is_refused_when_an_authoritative_sink_cannot_record_the_intent: killed writer => Denied('pre-write audit intent') and target file does not exist"
+          ],
+          "note": "Ordering and pairing are asserted on a real WAL segment. Caveat: the intent is only fail-closed for in-process sinks; for AuditSink::DaemonRpc an unreachable daemon yields ForwardUnavailable and the write still proceeds (gate.rs:1200-1228), and AuditSink::None returns Recorded without writing (gate.rs:1168). Test gate.rs:2546 an_unreachable_audit_forward_still_permits_the_write pins that permissive behaviour. The 'failed' write result branch (gate.rs:804-806) has no test."
+        },
+        {
+          "clause": "OsAppLaunchIntent/OsAppLaunchResult pair exists and wraps the real process spawn (intent before launch_program, result with pid after)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:211 - OsAppLaunchIntent = 0x1E (result 0x1F at :214)",
+            "SRC/neothd/src/os_tools/gate.rs:875-883 - intent emitted after allowlist+autonomy gates, refusal if not permits_effect()",
+            "SRC/neothd/src/os_tools/gate.rs:886-903 - launch_program then emit_launch_result 'launched' with pid or 'failed'"
+          ],
+          "tests": [
+            "SRC/neothd/src/os_tools/gate.rs:2087 - launch_emits_success_frame_via_writer: asserts intent_at < launch_at and equal intent_id with the OsAppLaunchResult frame, pid>0",
+            "SRC/neothd/src/os_tools/gate.rs:2581 - a_refused_launch_leaves_no_orphan_intent: allowlist refusal emits no OsAppLaunchIntent but does emit the denied frame"
+          ],
+          "note": "Both tests use a real arg-free system binary (whoami.exe on Windows, /bin/true on Unix, gate.rs:1950-1967) and silently return early if it is absent, so a host lacking it passes without asserting. Failed-spawn result branch (gate.rs:892-893) is untested."
+        },
+        {
+          "clause": "ChannelEgressIntent/Result pair at the live channel send edge (LiveDelivery::send_new for Telegram/Slack/Discord/Signal/other adapters, unbound, mapped and legacy-singleton provenance)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:220 - ChannelEgressIntent = 0x20 (result 0x21 at :224)",
+            "SRC/neothd/src/channels/live_delivery.rs:410-463 - intent emitted before send_text; missing intent => ChannelError::Transport refusal",
+            "SRC/neothd/src/channels/live_delivery.rs:465-629 - send_text then result on success and on each error kind",
+            "SRC/neothd/src/channels/send_gate.rs:376-419 - emit_egress_intent_inner: recipient and body xxh3-hashed, intent_id, append, None on failure"
+          ],
+          "tests": [
+            "SRC/neothd/src/channels/live_delivery.rs:1503 - mapped_failure_audits_before_its_authenticated_terminal_result: asserts relevant frames == [intent, audit, result], terminal.intent_id == intent.intent_id, outcome=='transport'",
+            "SRC/neothd/src/channels/live_delivery.rs:1448 - mapped_live_delivery_refuses_before_send_when_authenticated_marker_is_unavailable: send count stays 0",
+            "SRC/neothd/src/channels/live_delivery.rs:1295 - mapped_live_intents_keep_accounts_isolated_and_generic_paths_unbound: all five channel sends produce intents, no private chat/body text in payload",
+            "SRC/neothd/src/channels/send_gate.rs:1097 - a_dead_writer_yields_no_intent_so_the_caller_must_refuse_the_send"
+          ],
+          "note": "Strongest-covered edge. Intent-before-effect for the generic (unbound) path is shown by the refusal behaviour and by send_gate tests; the strict ordering assertion with a result is in the mapped-failure test."
+        },
+        {
+          "clause": "ChannelEgress pair at the direct Discord gateway reply and Signal reply edges",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/channels/discord.rs:99-139 - emit_legacy_live_egress_intent then result on both paths",
+            "SRC/neothd/src/channels/signal.rs:232-268 - same pattern, intent refusal, results on Ok and Err"
+          ],
+          "tests": [
+            "SRC/neothd/src/channels/signal.rs:409 - live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect (declaration located by test listing; body not opened by me)",
+            "SRC/neothd/src/channels/discord.rs:588 - gateway_reply_sender_refuses_missing_intent_and_never_retries_adapter_error (declaration located by test listing; body not opened by me)"
+          ],
+          "note": "Test names assert refusal without intent and one terminal per effect; I verified the production call sites by line but did not read these two test bodies, so treat as name-level evidence."
+        },
+        {
+          "clause": "ChannelEgress pair at the WhatsApp Business webhook outbox send edge",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/channels/webhook_listener.rs:2447-2474 - emit_egress_intent before transport; None => DeliveryOutcome::PersistenceRetry, send refused (writer absent => auditing off, intent None)",
+            "SRC/neothd/src/channels/webhook_listener.rs:2150-2157 - emit_egress_result after provider.send with outcome delivered/retry/failed"
+          ],
+          "tests": [],
+          "note": "Searched webhook_listener.rs and SRC/neothd/tests for ChannelEgressIntent/ChannelEgressResult/event_subtype/intent_id: none. Existing webhook tests (e.g. line 4693 line_send_hits_push_api_once_and_audits_without_leaking_pii) read the first frame and assert EVENT_TYPE_CHANNEL_SEND, never the intent/result frames. dispatch_messages (line 3037) is marked test-only dead code and sends without any intent."
+        },
+        {
+          "clause": "ChannelEgress pair at the proactive (daemon-initiated) send edge",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/daemon/proactive_egress.rs:2813-2841 - append_intent (acked, lock held through cancellation) then append_armed (:2843) then append_result (:2875)",
+            "SRC/neothd/src/daemon/channel_transport_evidence.rs:121-129 - consumer pairs ChannelEgressIntent/Result frames"
+          ],
+          "tests": [
+            "SRC/neothd/src/daemon/proactive_egress.rs:6854 - recovery_marks_intent_without_armed_not_attempted_and_keeps_queue (name-level)",
+            "SRC/neothd/src/daemon/proactive_egress.rs:7073 - recovery_replays_terminal_result_without_duplicate_projection_or_budget (name-level)",
+            "SRC/neothd/src/daemon/proactive_egress.rs:8755 - v1_armed_without_result_is_immediately_crash_unknown (name-level)"
+          ],
+          "note": "This path is a richer three-phase (Intent, Armed, Result) protocol and has recovery tests. I did not read the test bodies; classification rests on production code plus test names."
+        },
+        {
+          "clause": "Channel message edit (Channel::edit_message) is an egress effect edge covered by an intent/result pair",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/channels/live_delivery.rs:375-385 - edit_message is called and only afterwards self.emit_edit (0x38) runs; no intent is written before the edit"
+          ],
+          "tests": [],
+          "note": "Searched for ChannelEgressIntent emitters (send_gate.rs and callers): none on the edit path. An edit changes third-party-visible content just like a send. Whether the box intends edits to be in scope is unclear; the box says 'every real effect edge'."
+        },
+        {
+          "clause": "MediaCallIntent/Result pair at the cloud video-frame upload edge",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:230 - MediaCallIntent = 0x22 (result 0x23 at :233)",
+            "SRC/neothd/src/media/video_dispatch.rs:172-214 - intent (provider, frame_count, frames_sha256, prompt_chars) appended before synthesize; append failure => Err('mandatory pre-upload media intent could not be recorded')",
+            "SRC/neothd/src/media/video_dispatch.rs:216-232 - result 'answered'/'failed' after synthesize"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/video_dispatch.rs:651 - media_intent_is_durable_before_the_frames_leave_the_device: asserts intent_at < result_at && intent_at < synth_at, equal intent_id, outcome=='answered', frame_count==2, prompt text absent, frames_sha256 present, session id bound"
+          ],
+          "note": "Only the success path is tested. When writer is None no intent is written (video_dispatch.rs:212-214); the separate preflight (video_dispatch.rs:157, tests :423 and :847) refuses cloud upload without an audit sink, which I did not trace in detail."
+        },
+        {
+          "clause": "MediaCallIntent/Result pair at the cloud STT and cloud TTS egress edges",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:225-229 - doc comment claims MediaCallIntent precedes 'cloud STT/TTS' calls, but no emitter exists",
+            "SRC/neothd/src/media/tts_cloud.rs:458-500 and :1161-1167 - TTS uses its own TtsAuditEvent::Intent/Success/Failure phases under the pre-existing EVENT_TYPE_TTS_SYNTHESIZED (0xCD), not MediaCallIntent",
+            "SRC/neothd/src/media/stt_provider.rs:3524 and :4259 - cloud STT uses a file-based pending-intent replay record plus post-call EVENT_TYPE_STT_TRANSCRIBED (stt_provider.rs:4623), no WAL MediaCallIntent"
+          ],
+          "tests": [],
+          "note": "Grep for MediaCallIntent/MediaCallResult across SRC shows emitters only in video_dispatch.rs (200, 226). TTS has an equivalent WAL intent lifecycle under a different event code; STT has a durable pre-call file intent but only a post-call WAL frame. Neither is the named subtype."
+        },
+        {
+          "clause": "SelfUpdateIntent subtype exists and a pre-effect intent precedes the self-update binary replacement",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/wal/events.rs:331-335 - comment: SelfUpdateIntent is deliberately absent; UpdaterLeafIntent/Result (0x1A/0x1B) are said to cover every updater HTTP, process and verified-stage leaf",
+            "SRC/neothd/src/updater/authority.rs:162-187 - UpdaterLeafEffect variants: metadata/checksum/archive/signature fetch, VerifiedStageWrite, SelfStageOwnedHelper, probes, OsvScan, CliInstall; no binary-replace variant (several marked fail-closed/dead_code)",
+            "SRC/neothd/src/cli/update.rs:358-376 - apply_update performs the swap; comment at :371 says 'The binary swap already succeeded' before the 0xD2 SELF_UPDATE_APPLIED audit",
+            "SRC/neothd/src/cli/update.rs:399-416 - audit acknowledgement is post-effect; failure is reported as 'already applied; audit acknowledgement is indeterminate' (update.rs:515-516)"
+          ],
+          "tests": [
+            "SRC/neothd/src/updater/authority.rs:3354 - intent_failure_prevents_effect (UpdaterLeaf pair, not the binary swap)"
+          ],
+          "note": "No SelfUpdateIntent variant exists. The UpdaterLeaf pair is substantial (fetch/stage/helper) and well tested, but the actual atomic binary replacement in the manual apply path has only the post-effect 0xD2 frame, which is exactly the gap ADR-009 section 4 describes. The in-code claim that UpdaterLeaf already binds 'every' updater edge is contradicted for the swap itself. Not marked not_applicable because the supersession lives in a code comment, not in the roadmap box text."
+        },
+        {
+          "clause": "Updater leaf (self-update fetch/stage/helper) intent/result pairs: intent before effect, exactly one terminal result including on drop/panic, recovery of orphan intents",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/updater/authority.rs:2116 - sink.append_updater_leaf(UpdaterLeafIntent, payload) before effect; :2074 result append",
+            "SRC/neothd/src/updater/reconcile.rs:1167-1188 - recovery decodes Intent and Result frames; :3167 result without intent fails closed"
+          ],
+          "tests": [
+            "SRC/neothd/src/updater/authority.rs:3354 - intent_failure_prevents_effect",
+            "SRC/neothd/src/updater/authority.rs:3837 - dropping_effect_future_appends_exactly_one_cancelled_result",
+            "SRC/neothd/src/updater/authority.rs:3901 - panic_is_converted_to_one_durable_terminal_failure",
+            "SRC/neothd/src/updater/reconcile.rs:2433 - real_wal_recovery_interrupts_every_target_once",
+            "SRC/neothd/src/updater/reconcile.rs:3167 - result_without_intent_fails_closed"
+          ],
+          "note": "This is R3-18 work. It supports the self-update class only partially (see previous clause). Test bodies not opened; name-level."
+        },
+        {
+          "clause": "Focused tests prove 'exactly one terminal result' per intent",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/os_tools/gate.rs:798-815 - one result per branch (written or failed)",
+            "SRC/neothd/src/media/video_dispatch.rs:218-232 - one result per call"
+          ],
+          "tests": [
+            "SRC/neothd/src/os_tools/gate.rs:2447 - uses frames.iter().position(...) so it finds the first result; never counts results",
+            "SRC/neothd/src/media/video_dispatch.rs:651 - same position() pattern; success path only",
+            "SRC/neothd/src/channels/live_delivery.rs:1503 - exactly [intent, audit, result] asserted (channel only)"
+          ],
+          "note": "Exactly-one is asserted only for the channel mapped-failure path (and by name for Signal and updater). OS write, OS launch and media tests assert existence and pairing of the first result, not uniqueness, and failure-path results are untested."
+        },
+        {
+          "clause": "Replayability: a WAL replay/scan can pair every intent with its result and surface unpaired intents",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/daemon/channel_transport_evidence.rs:121-129 - pairs channel egress intents with results",
+            "SRC/neothd/src/updater/reconcile.rs:1167-1188 - recovers updater leaf intents/results",
+            "SRC/neothd/src/wal/events.rs:365-378 - next_intent_id gives a unique correlation id"
+          ],
+          "tests": [
+            "SRC/neothd/src/daemon/channel_transport_evidence.rs:1040 - unknown_unsettled_and_not_attempted_have_their_separate_counter_rules (channel only)",
+            "SRC/neothd/src/wal/events.rs:4148 - extended_event_escape_hatch_registered: name/byte round trip of all new subtypes only"
+          ],
+          "note": "Scanned all SRC/neothd/src for readers of the 'intent_id' payload key: only writers/tests in os_tools/gate.rs, media/video_dispatch.rs, channels/*, plus consumers in channel_transport_evidence.rs, proactive_egress.rs and cli/gui_stream.rs. No reader or unpaired-intent scanner exists for OS file write, OS app launch or media call, although ADR-009 describes a startup scanner for unpaired intents. Replayability is demonstrated for channel egress and updater leaves only."
+        },
+        {
+          "clause": "Secret-safe payloads (no message body, file contents, prompt or frame bytes in intent/result frames)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/os_tools/gate.rs:1286-1292 - path, byte count and domain-separated SHA-256 only",
+            "SRC/neothd/src/channels/send_gate.rs:392-399 - to_hash/message_hash (xxh3), message_bytes",
+            "SRC/neothd/src/media/video_dispatch.rs:189-197 - provider, frame_count, frames_sha256, prompt_chars",
+            "SRC/neothd/src/wal/events.rs:347-356 - effect_digest"
+          ],
+          "tests": [
+            "SRC/neothd/src/os_tools/gate.rs:2447 - asserts no 'contents' key and exact digest",
+            "SRC/neothd/src/channels/send_gate.rs:724 - egress_intent_binds_the_message_by_hash_and_pairs_its_result: recipient and body absent from intent text, exact legacy JSON bytes",
+            "SRC/neothd/src/channels/live_delivery.rs:1295 - asserts rendered intent lacks 'private-chat', 'private-body', 'token'",
+            "SRC/neothd/src/media/video_dispatch.rs:651 - prompt string absent from intent",
+            "SRC/neothd/src/daemon/audit_rpc/tests.rs:1112 - allowlist_contains_exactly_the_oneshot_codes: OS pairs admitted on the RPC, channel/media pairs rejected"
+          ],
+          "note": "OS launch payload carries the program path (not secret); no dedicated secrecy test for it. The OS-write intent carries the full resolved path in clear."
+        }
+      ],
+      "requiredTestIdentities": [
+        "os_tools::gate::tests::write_records_a_durable_intent_before_the_effect_and_pairs_the_result",
+        "os_tools::gate::tests::write_is_refused_when_an_authoritative_sink_cannot_record_the_intent",
+        "os_tools::gate::tests::an_unreachable_audit_forward_still_permits_the_write",
+        "os_tools::gate::tests::intent_ids_differ_for_two_effects_on_one_path_in_the_same_second",
+        "os_tools::gate::tests::launch_emits_success_frame_via_writer",
+        "os_tools::gate::tests::a_refused_launch_leaves_no_orphan_intent",
+        "channels::send_gate::intent_tests::egress_intent_binds_the_message_by_hash_and_pairs_its_result",
+        "channels::send_gate::intent_tests::a_dead_writer_yields_no_intent_so_the_caller_must_refuse_the_send",
+        "channels::live_delivery::tests::mapped_failure_audits_before_its_authenticated_terminal_result",
+        "channels::live_delivery::tests::mapped_live_delivery_refuses_before_send_when_authenticated_marker_is_unavailable",
+        "channels::live_delivery::tests::mapped_live_intents_keep_accounts_isolated_and_generic_paths_unbound",
+        "channels::signal::tests::live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect",
+        "channels::discord::tests::gateway_reply_sender_refuses_missing_intent_and_never_retries_adapter_error",
+        "media::video_dispatch::tests::media_intent_is_durable_before_the_frames_leave_the_device",
+        "wal::events::tests::extended_event_escape_hatch_registered",
+        "daemon::audit_rpc::tests::allowlist_contains_exactly_the_oneshot_codes",
+        "updater::authority::tests::intent_failure_prevents_effect",
+        "updater::authority::tests::dropping_effect_future_appends_exactly_one_cancelled_result",
+        "updater::reconcile::tests::real_wal_recovery_interrupts_every_target_once"
+      ],
+      "boxTextCorrections": [
+        "Box names a SelfUpdateIntent subtype; wal/events.rs:331-335 states it is deliberately absent and replaced by UpdaterLeafIntent/Result, but the swap edge itself (cli/update.rs:358-376, 'The binary swap already succeeded') still has only a post-effect 0xD2 frame.",
+        "wal/events.rs:225-229 doc says MediaCallIntent covers cloud STT/TTS; the only emitter is the video-frame upload (media/video_dispatch.rs:200). TTS uses 0xCD phases (tts_cloud.rs:461-560) and STT a file intent (stt_provider.rs:3524) instead.",
+        "Box says 'at every real effect edge'; channel message edits (live_delivery.rs:375-385) and the daemon-RPC/no-sink OS paths (gate.rs:1168, 1200-1228) can perform the effect with no durable intent."
+      ],
+      "residualScope": [
+        "SelfUpdate binary-swap pre-effect intent (or an explicit ratified supersession by UpdaterLeaf plus a swap leaf)",
+        "MediaCall coverage for cloud STT and TTS under the named subtype, or an explicit statement that 0xCD phases and the STT file intent satisfy it",
+        "Channel edit_message intent",
+        "WhatsApp webhook outbox intent/result test",
+        "Unpaired-intent scanner and replay tests for OsFileWrite, OsAppLaunch and MediaCall",
+        "Exactly-one-result and failure-path tests for OS write, OS launch and media",
+        "Documented permissive behaviour: unreachable audit RPC and AuditSink::None allow the OS effect without an intent"
+      ],
+      "smallestMissingWork": "Add a pre-effect intent/result at the self-update binary swap (or a ratified box-text amendment naming UpdaterLeaf as the self-update pair and excluding the swap), add an intent for edit_message and a test for the webhook outbox pair, and add one unpaired-intent reader with replay tests for OS write/launch/media; otherwise amend the box text to the narrower scope that is actually proven (OS write/launch, video upload, channel send, updater leaves) with explicit exclusions.",
+      "uncertainty": "I did not open the bodies of the signal/discord/proactive/updater tests I list at name level, and did not enumerate every channel adapter's direct send path outside live_delivery (send_text_with_snapshot*, send_canonical and send_proactive have no non-test callers per my grep, so I treated them as unused). Test module paths are derived from file paths and mod blocks (tests, intent_tests); I did not run nextest to confirm printed identities. proactive_egress is a large module; only its intent/armed/result writers were read."
+    },
+    {
+      "id": "GOLD-LF-001-12",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "Converting an OpenClaw iMessage or Google Chat account to NEOTH transport requires an explicit relink command naming the source account, exact outbound target and fresh credentials on private stdin; no credential flags or shortcuts",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/cli/mod.rs:1268-1279 - ChannelAction::RelinkOpenclaw with value_parser limited to imessage_bluebubbles and google_chat, required --config, --source-account, --target",
+            "SRC/neothd/src/cli/channel_relink.rs:24-62 - channel match, empty source/target rejected, credentials read from stdin (read_converted_relink_fields_from), prepare then commit then reload request"
+          ],
+          "tests": [
+            "SRC/neothd/src/cli/mod.rs:3044 - cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials: each missing flag fails to parse; --token/--password/--service-account/--account rejected; 'slack' rejected"
+          ],
+          "note": "Parse-level test only; the stdin envelope reader is exercised elsewhere (not opened by me)."
+        },
+        {
+          "clause": "The OpenClaw source account is selected explicitly and bound as provenance only (schema/inventory pinned, exact source set, values opaque, drift detected); it never supplies credentials",
+          "status": "covered",
+          "code": [
+            "SRC/neoth-openclaw-custody/src/lib.rs:375 and :626-636 - select_converted_relink_account; :753-860 select_converted_relink_from_merged / validate_converted_relink_value",
+            "SRC/neothd/src/cli/channel/converted_relink.rs:215-227 - recheck_source of the exact source binding before pending is created",
+            "SRC/neothd/src/channels/relink.rs:92-96 - redacted provenance record"
+          ],
+          "tests": [
+            "SRC/neoth-openclaw-custody/src/lib.rs:2640 - tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
+            "SRC/neoth-openclaw-custody/src/lib.rs:2679 - tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
+            "SRC/neoth-openclaw-custody/src/lib.rs:2750 - tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
+            "SRC/neothd/src/channels/relink.rs:1414 - channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite"
+          ],
+          "note": "The custody tests live in the separate crate neoth-openclaw-custody; their nextest identity is crate-qualified (binary id neoth-openclaw-custody). Test bodies opened only for headings/assertion lines at lib.rs:2640-2700."
+        },
+        {
+          "clause": "The converted destination stays blocked (no publication, no Ready) unless the authenticated exact-target probe succeeds; failed, expired or drifted probes publish nothing",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/cli/channel/converted_relink.rs:285-305 - 60s-bounded probe; status != 'ok' => bail 'converted relink exact target probe did not pass'",
+            "SRC/neothd/src/cli/channel/converted_relink.rs:341-420 - commit rechecks candidate, raw pair commitment, routing, and probe validity before reserve/publish",
+            "SRC/neothd/src/cli/channel/converted_relink.rs:189-196 - production probe is test_channel_candidate_for_id(..., Some(target))"
+          ],
+          "tests": [
+            "SRC/neothd/src/cli/channel/converted_relink/tests.rs:239 - cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes: freedom/credentials/routing drift, failed probe, expired probe each leave no credentials.yaml/routing and not Ready (iMessage only)",
+            "SRC/neothd/src/cli/channel/converted_relink/tests.rs:501 - cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary (cfg not gchat-product-canary): failed probe error is exactly 'converted relink exact target probe did not pass' with no provider detail",
+            "SRC/neothd/src/cli/channel/converted_relink/tests.rs:463 - cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication (not opened by me)"
+          ],
+          "note": "These tests substitute the transport probe with an injected closure (tests.rs:96-101, comment at converted_relink.rs:200-201), so they prove the gating logic, not the real probe call. After a failed probe the destination remains in the Pending gate state (begin_pending_at runs first, converted_relink.rs:228-236) but the test only asserts !Ready, not Pending."
+        },
+        {
+          "clause": "The exact-target probe is authenticated, read-only and wrong-target-sensitive for BlueBubbles iMessage (configured chat GUID must match exactly)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/channels/imessage_bluebubbles.rs:339-364 - probe_chat_target: GUID validated, GET chat/<guid> with the server password, no message sent",
+            "SRC/neothd/src/cli/channel.rs:1067-1076 - probe_readiness then probe_chat_target(target) when an outbound target is routed"
+          ],
+          "tests": [
+            "SRC/neothd/src/channels/imessage_bluebubbles.rs:987 - channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password: mock requires path /api/v1/chat/<guid> and password query; wrong guid, bad JSON and 401 fail; password never in error chain; invalid GUIDs rejected",
+            "SRC/neothd/src/cli/channel.rs:8354 - cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files (name-level)"
+          ],
+          "note": "Runs in the default feature set (module not feature-gated)."
+        },
+        {
+          "clause": "The exact-target probe is authenticated, read-only and wrong-target-sensitive for Google Chat (configured space must match exactly, bearer token)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/channels/gchat.rs:434-464 - probe_space_target / probe_space_target_at: GET /v1/<space> with bearer_auth, then parse_space_target_probe",
+            "SRC/neothd/src/channels/gchat.rs:620-637 - HTTP status, malformed JSON and different-space mismatch errors",
+            "SRC/neothd/src/cli/channel.rs:1092-1126 - GoogleChat plan probes subscription then space; without gchat-channel returns unavailable"
+          ],
+          "tests": [
+            "SRC/neothd/src/channels/gchat.rs:1090 - channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space: mock requires 'Bearer test-bearer' and path /v1/spaces/AAAA; other space, malformed JSON, 403 fail without leaking the bearer; path-escape names rejected"
+          ],
+          "note": "channels/gchat.rs is compiled only with feature gchat-channel (channels/mod.rs:32-33); default features are wizard, cluster, keychain (Cargo.toml:42). ci.yml runs the workspace with default features, so this test is not in the default suite. It is run only by .github/workflows/gchat-live-regressions.yml (run_case 12, line 495), which is on: workflow_dispatch only and main-ref only. The test calls probe_space_target_at directly with a fixed bearer, so token minting is not covered by it."
+        },
+        {
+          "clause": "In a binary without the gchat-channel runtime, a Google Chat relink cannot become ready (fail closed)",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/cli/channel.rs:1119-1125 - not(gchat-channel) => unavailable('this binary lacks the `gchat-channel` runtime feature')",
+            "SRC/neothd/src/cli/channel/converted_relink.rs:294-304 - any status other than 'ok' bails"
+          ],
+          "tests": [],
+          "note": "Searched converted_relink/tests.rs and cli/channel.rs tests: the default-build tests inject status 'fail' with a closure; none runs the real not(gchat-channel) branch through prepare_converted_relink_at. docs/converted-channel-relink.md states this behaviour but it is not asserted."
+        },
+        {
+          "clause": "Inbound, reply, adapter startup and proactive traffic for the converted destination are blocked while the relink is Pending or Prepared (and on generation change)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/channels/relink.rs:47-90 - RelinkGate and traffic_binding_at (Pending/Prepared => error)",
+            "SRC/neothd/src/cli/serve_tasks.rs:5993-6031 - converted_relink_traffic_handler checks before and after the pipeline",
+            "SRC/neothd/src/cli/serve_tasks.rs:6036-6043 - converted_relink_traffic_binding blocks adapter startup",
+            "SRC/neothd/src/daemon/proactive_dispatcher.rs:508-530 - RelinkCheckedChannel rechecks at the provider call (not opened beyond the grep hit)"
+          ],
+          "tests": [
+            "SRC/neothd/src/cli/serve_tasks.rs:6138 - cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline: iMessage and Google Chat Pending => handler errors, pipeline calls == 0",
+            "SRC/neothd/src/cli/serve_tasks.rs:6166 - cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
+            "SRC/neothd/src/cli/serve_tasks.rs:6126 - cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
+            "SRC/neothd/src/channels/relink.rs:1522 - channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked: gate stays Prepared after drift"
+          ],
+          "note": "Tests use the real begin_pending_at with a real selected source (serve_tasks.rs:6094-6123). The proactive-side test named in the workflow (daemon::proactive_dispatcher::tests::reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index) was not opened by me."
+        },
+        {
+          "clause": "iMessage and Google Chat relinks are independent: completing one preserves the other's Ready state",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/channels/relink.rs:481-492 - per-destination transaction file",
+            "SRC/neothd/src/cli/channel/converted_relink.rs:341-420 - commit per destination"
+          ],
+          "tests": [
+            "SRC/neothd/src/cli/channel/converted_relink/tests.rs:341 - cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready: both traffic bindings Some after two sequential relinks (mock probe)"
+          ],
+          "note": "Default feature run; probe is mocked."
+        },
+        {
+          "clause": "Conversion is blocked from the moment an iMessage/Google Chat import is performed (docs: 'Importing a conversion first blocks that destination's traffic')",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/cli/channel/converted_relink.rs:228-236 - the only production caller of begin_pending_at; the Pending/blocked state starts inside the explicit relink command, before the probe",
+            "SRC/neoth-openclaw-custody/src/lib.rs:1701-1718 - import classifies imsg fields NeedsRelink; it creates no Pending record and no config for the destination"
+          ],
+          "tests": [],
+          "note": "grep for begin_pending_at/begin_pending( shows non-test callers only at converted_relink.rs:231 (the other hits are tests or helper test setup in serve_tasks.rs:6117, channel_live_registry.rs:450, proactive_dispatcher.rs:1758 which sit in test modules by position - not opened). Hence before the operator runs relink there is no converted gate; nothing converted exists either, so this is a documentation claim (docs/converted-channel-relink.md) rather than necessarily a box requirement."
+        },
+        {
+          "clause": "Guide: the operator is guided to the explicit relink (guidance text in migration output/docs naming the iMessage and Google Chat relink path)",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neoth-openclaw-custody/src/lib.rs:1716 - iMessage import note: 'a guided transport relink is required'",
+            "SRC/neoth-openclaw-custody/src/lib.rs:1746 - Google Chat note says webhook config cannot supply the Pub/Sub subscription and uses NeedsRuntime, not NeedsRelink, and does not name the relink command",
+            "docs/converted-channel-relink.md:7-18 and docs/cli-commands.md:754 - command documentation",
+            "SRC/neoth-migrate/src/main.rs:692 - generic 'blocked: N unknown/unsupported/relink/runtime field(s)'"
+          ],
+          "tests": [
+            "SRC/neoth-openclaw-custody/src/lib.rs:2960 - tests::w1837_policy_binding_checks_direct_sensitive_and_fail_closed_outcomes: asserts NeedsRelink only for channels.whatsapp.authDir and NeedsRuntime for googlechat.audience"
+          ],
+          "note": "grep for 'relink-openclaw' outside docs and cli/mod.rs finds no runtime message that tells the operator the command; no test asserts the iMessage cliPath => NeedsRelink disposition or the guidance string. docs/converted-channel-relink.md:3-5 still says 'W1772 source review passed; hosted compilation and behavioral validation are pending. The command ... is not yet an accepted release capability.'"
+        },
+        {
+          "clause": "End-to-end public CLI relink against loopback BlueBubbles and Google Chat services: wrong target refused, state remains pending, nothing published, no message posted",
+          "status": "needs_non_ci_evidence",
+          "code": [
+            "packaging/converted_channel_relink_product_canary.py:413-420 - wrong target must return nonzero, password absent from output, pending record present",
+            "packaging/gchat_converted_relink_product_canary.py:643-666 - wrong space and wrong returned space refused, pending unchanged"
+          ],
+          "tests": [
+            ".github/workflows/gchat-live-regressions.yml:920-1031 - steps exercising the canaries; workflow trigger is workflow_dispatch only (lines 3-5) with a main-ref guard (line 11)"
+          ],
+          "note": "These canaries are the only evidence that the real probe closure (converted_relink.rs:189-196) rejects a wrong target end to end. They use loopback fakes, not live providers, and run only when someone dispatches the workflow on main; they are not part of ci.yml (pull_request/weekly/dispatch) nor of a default nextest run. A green ordinary suite does not include them."
+        }
+      ],
+      "requiredTestIdentities": [
+        "cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials",
+        "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
+        "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
+        "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary",
+        "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
+        "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
+        "channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked",
+        "channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate",
+        "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
+        "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
+        "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
+        "channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password",
+        "cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files",
+        "channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space (requires --features gchat-channel; only in workflow_dispatch gchat-live-regressions.yml)",
+        "neoth-openclaw-custody crate: tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
+        "neoth-openclaw-custody crate: tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift"
+      ],
+      "boxTextCorrections": [
+        "docs/converted-channel-relink.md says importing a conversion first blocks the destination's traffic; the only production caller of begin_pending_at is the relink command itself (cli/channel/converted_relink.rs:231), so the block starts at relink begin, not at import.",
+        "docs/converted-channel-relink.md:3-5 states the command is not yet an accepted release capability (stale or hedged status line); box text itself has no contradiction.",
+        "The box says 'guide'; the Google Chat import ledger does not classify as NeedsRelink and its note (custody lib.rs:1746) never mentions the relink command."
+      ],
+      "residualScope": [
+        "Live-provider qualification (real BlueBubbles server, real Google Chat space and service account) is not proven by any test; only mocks and loopback fakes",
+        "Google Chat exact-space probe and loopback canaries run only via workflow_dispatch gchat-live-regressions.yml on main",
+        "Operator-facing runtime guidance toward 'neoth channel relink-openclaw' (migration output) is not implemented or tested",
+        "Import-time blocking of the converted destination is not implemented (only relink-time)",
+        "Only the default NEOTH account is supported for both transports (cli/channel_relink.rs:54, doc line 'currently support only the default NEOTH account')"
+      ],
+      "smallestMissingWork": "Make the operator guidance real and tested (emit the exact relink-openclaw command for iMessage and Google Chat ledger entries and assert it in a custody/migrate test), add a default-feature test for the not(gchat-channel) fail-closed path of prepare_converted_relink_at, and either run a green gchat-live-regressions.yml dispatch on the closing commit (evidence receipt) or move the Google Chat probe and canary tests into the default CI gate; update the stale status line and import-blocking sentence in docs/converted-channel-relink.md.",
+      "uncertainty": "I did not open the tests ready_retry_is_idempotent..., every_durable_checkpoint_recovers..., gchat_key_replaced_during_successful_probe..., the proactive_dispatcher relink test, or the stdin envelope reader tests; they are listed from the workflow and test listing only. Whether GOLD-LF-001-12 intends live-provider acceptance is not stated in the box; I treated loopback/mocks as the achievable ceiling. I could not determine from files alone whether the gchat-live-regressions workflow has been dispatched green on 36956f07."
+    },
+    {
+      "id": "ADOPT31-A1",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "AtomicU32 generation counter with is_stale(gen) primitive, zero new deps",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/conversation_scope.rs:21 - CancelScope holds Arc<AtomicU32>",
+            "SRC/neothd/src/media/conversation_scope.rs:72 - snapshot() issues GenerationToken",
+            "SRC/neothd/src/media/conversation_scope.rs:88 - invalidate() fetch_update +1, u32::MAX terminal sentinel",
+            "SRC/neothd/src/media/conversation_scope.rs:115 - is_stale() = ptr_eq mismatch || generation != token.generation"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/conversation_scope.rs:136 - fresh_token_is_current asserts !is_stale",
+            "SRC/neothd/src/media/conversation_scope.rs:144 - invalidation_stales_prior_token_and_new_token_is_current",
+            "SRC/neothd/src/media/conversation_scope.rs:158 - clones_share_the_same_cancellation_boundary",
+            "SRC/neothd/src/media/conversation_scope.rs:169 - token_from_another_scope_is_always_stale",
+            "SRC/neothd/src/media/conversation_scope.rs:180 - token_identity_requires_the_same_scope_and_generation",
+            "SRC/neothd/src/media/conversation_scope.rs:192 - concurrent_invalidations_advance_one_shared_generation_per_call (8 threads)",
+            "SRC/neothd/src/media/conversation_scope.rs:220 - exhaustion_invalidates_without_wrapping_or_revalidating_old_tokens"
+          ],
+          "note": "Module is `pub mod conversation_scope` with no cfg gate (media/mod.rs:34), so these 7 tests run in the default nextest workspace run. Primitive is 232 lines (not ~60) because of the exhaustion sentinel; harmless."
+        },
+        {
+          "clause": "is_stale polled inside the LLM stream path",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:1111 - VisibleDelta handler drops deltas when response_scope.is_stale(&generation)",
+            "SRC/neothd/src/media/conversation_loop.rs:1316-1328 - start_visible_stage cancels the LLM turn via oneshot cancel_rx + cancel_and_settle, not by polling is_stale",
+            "SRC/neothd/src/media/conversation_loop.rs:981-990 - BargeIn control and 1046-1052 qualified speech invalidate response_scope and fire the oneshot"
+          ],
+          "tests": [],
+          "note": "No test drives run_a2_session or the VisibleDelta/barge-in arms (needs cpal/live audio and a supervisor). Only helper-level tests at conversation_loop.rs:2177 (response_scope_barge_in_is_independent_from_capture_scope) and :2225 exist. The LLM stream is cancelled by a oneshot, with is_stale used as a delta filter after the fact."
+        },
+        {
+          "clause": "is_stale polled inside the TTS synthesis loop",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:1385-1400 - spawn_tts_stage calls synthesize_configured_response once, no scope/token passed in, no polling",
+            "SRC/neothd/src/media/conversation_loop.rs:1156-1180 - staleness only checked when TtsComplete arrives; stale result discarded",
+            "SRC/neothd/src/media/conversation_loop.rs:1417-1419 - take_next_audio_stage skips stale queued batches",
+            "SRC/neothd/src/media/playback.rs:611 - playback loop polls scope_is_stale"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/playback.rs - tests::stale_generation_is_rejected_before_ready_or_callback_render (listed in docs/verification/gold-wave186-live-audio-tests.json; body not opened)"
+          ],
+          "note": "grep for is_stale|CancelScope|GenerationToken in tts_dispatch.rs / tts_cloud.rs returns nothing. The named consumer media/tts_dispatch.rs is untouched. Synthesis is a one-shot cloud call; the 'TTS loop' that polls is the CPAL playback loop."
+        },
+        {
+          "clause": "Consumers media/tts_dispatch.rs + media/conversation_loop.rs (A2) exist",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:10 - imports CancelScope, GenerationToken",
+            "SRC/neothd/src/cli/serve.rs:649 - constructs A2 dependencies (min_fragment_ms)"
+          ],
+          "tests": [],
+          "note": "conversation_loop is #[cfg(feature = \"live-audio\")] (media/mod.rs:29-30) and live-audio is not in default features (Cargo.toml:42,64). Its tests run only in the live-audio hosted workflow (.github/workflows/live-audio.yml via ci.yml:1166), not in the default nextest run."
+        }
+      ],
+      "requiredTestIdentities": [
+        "media::conversation_scope::tests::fresh_token_is_current",
+        "media::conversation_scope::tests::invalidation_stales_prior_token_and_new_token_is_current",
+        "media::conversation_scope::tests::clones_share_the_same_cancellation_boundary",
+        "media::conversation_scope::tests::token_from_another_scope_is_always_stale",
+        "media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation",
+        "media::conversation_scope::tests::concurrent_invalidations_advance_one_shared_generation_per_call",
+        "media::conversation_scope::tests::exhaustion_invalidates_without_wrapping_or_revalidating_old_tokens",
+        "media::conversation_loop::tests::response_scope_barge_in_is_independent_from_capture_scope (live-audio)",
+        "media::playback::tests::stale_generation_is_rejected_before_ready_or_callback_render (live-audio)"
+      ],
+      "boxTextCorrections": [
+        "Box says the stale poll is inside the TTS synthesis loop and consumer is tts_dispatch.rs; code has no poll in tts_dispatch.rs/tts_cloud.rs (spawn_tts_stage conversation_loop.rs:1385 is one-shot). Stale is checked at TtsComplete (conversation_loop.rs:1158) and inside playback (playback.rs:611).",
+        "Box says LLM stream is polled; the LLM stream is cancelled via oneshot (conversation_loop.rs:1312-1321), is_stale only filters deltas (1111).",
+        "Box says ~60 lines; file is 232 lines."
+      ],
+      "residualScope": [
+        "Barge-in end to end (A2 loop behaviour) stays open and untested without hardware.",
+        "No in-synthesis cancellation of the cloud TTS request."
+      ],
+      "smallestMissingWork": "Either reword the box to the primitive plus boundary polling (TtsComplete, playback, VisibleDelta) and accept the 7 scope tests as closing evidence, or add a test that drives the VisibleDelta/TtsComplete stale-discard arms and a stale check inside TTS dispatch.",
+      "uncertainty": "Did not open playback.rs test bodies; the stale_generation test is taken from the catalog name only. Did not verify tts_cloud internals beyond grep for is_stale."
+    },
+    {
+      "id": "ADOPT31-A3",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "Silero VAD backend exists and returns a bounded speech probability per 512-sample 16 kHz frame",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/vad/silero.rs:31 - SileroVad struct",
+            "SRC/neothd/src/media/vad/silero.rs:99 - speech_probability rejects wrong length and non-finite PCM, validates probability in [0,1] and state shape",
+            "SRC/neothd/src/media/vad/silero.rs:176 - reset()"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/vad/silero.rs:187 - embedded_graph_accepts_silence_with_a_valid_probability",
+            "SRC/neothd/src/media/vad/silero.rs:196 - invalid_frames_fail_before_inference",
+            "SRC/neothd/src/media/vad/silero.rs:205 - reset_restores_the_initial_recurrent_result_for_the_same_frame"
+          ],
+          "note": "Tests only feed silence and invalid frames; no test shows a positive speech probability for real speech. Module is cfg(feature=live-audio) (vad/mod.rs:51-52). Tests are listed in docs/verification/gold-wave186-live-audio-tests.json."
+        },
+        {
+          "clause": "Uses the ort crate",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/Cargo.toml:252 - tract-onnx = =0.23.8 optional",
+            "SRC/neothd/src/media/vad/silero.rs:10 - use tract_onnx::prelude::*"
+          ],
+          "tests": [],
+          "note": "No ort dependency exists. Backend is tract-onnx. Box text is contradicted."
+        },
+        {
+          "clause": "Weights supervised by media/model_manager.rs",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/media/vad/silero.rs:22-23 - include_bytes!(assets/silero-vad/silero_vad_16k_op15_tract_16k.onnx)"
+          ],
+          "tests": [],
+          "note": "Weights are compiled into the binary. grep silero in model_manager.rs and models/catalog.rs found nothing. Box text is contradicted (embedded design is stated in silero.rs:3-5)."
+        },
+        {
+          "clause": "Plugs in behind the existing VadBackend trait seam",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/media/vad/smoothed.rs:45 - pub trait VadBackend",
+            "SRC/neothd/src/media/vad/smoothed.rs:66 - only EnergyBackend implements it",
+            "SRC/neothd/src/media/dictation.rs:445,466 - LiveUtteranceAssembler holds SileroVad directly and calls speech_probability"
+          ],
+          "tests": [],
+          "note": "SileroVad does not implement VadBackend; grep VadBackend finds only smoothed.rs and a doc comment. It is a parallel path via LiveUtteranceState, not a backend of SmoothedVad."
+        },
+        {
+          "clause": "File is media/vad/silero_backend.rs with consumer media/vad/mod.rs",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/vad/mod.rs:42-43 - cfg(live-audio) pub(crate) use silero::SileroVad",
+            "SRC/neothd/src/media/dictation.rs:42 - production consumer constructs SileroVad::new()"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/dictation.rs:738 - live_utterance_state_uses_probability_not_synthetic_audio_claims",
+            "SRC/neothd/src/media/dictation.rs:753 - live_utterance_state_reports_ordered_progress_after_the_first_speech_block"
+          ],
+          "note": "File name is silero.rs not silero_backend.rs. The state tests exercise LiveUtteranceState with injected probabilities, not Silero itself."
+        }
+      ],
+      "requiredTestIdentities": [
+        "media::vad::silero::tests::embedded_graph_accepts_silence_with_a_valid_probability",
+        "media::vad::silero::tests::invalid_frames_fail_before_inference",
+        "media::vad::silero::tests::reset_restores_the_initial_recurrent_result_for_the_same_frame",
+        "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
+        "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
+        "media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress",
+        "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio"
+      ],
+      "boxTextCorrections": [
+        "Box says `ort` crate; Cargo.toml:252 and silero.rs:10 use tract-onnx.",
+        "Box says weights supervised by model_manager.rs; silero.rs:22 embeds them with include_bytes!.",
+        "Box says behind VadBackend trait; SileroVad does not implement it (dictation.rs:445 uses it directly).",
+        "Box names media/vad/silero_backend.rs; file is media/vad/silero.rs.",
+        "Box says 'a backend, not a refactor'; in fact a separate Silero-only utterance path (LiveUtteranceAssembler, dictation.rs:444) beside SmoothedVad."
+      ],
+      "residualScope": [
+        "Model-manager supervision / download of weights is excluded (embedded instead).",
+        "VadBackend-trait integration is excluded or must be dropped from the box.",
+        "No positive real-speech probability test; parity provenance was not checked."
+      ],
+      "smallestMissingWork": "Rewrite the box to the delivered design (tract-onnx, embedded weights, direct LiveUtteranceAssembler consumer); then the three silero tests plus the dictation state tests are the closing evidence. A strict reading of the original text would instead need an ort backend and a VadBackend impl.",
+      "uncertainty": "Did not inspect the .onnx asset or its provenance docs. Silero tests are feature-gated and only run in the live-audio workflow."
+    },
+    {
+      "id": "ADOPT31-A5",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "A processor module batches up to 3 completed sentences between the LLM stream and TTS",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/lm_output_processor.rs:5 - MAX_SENTENCES_PER_BATCH = 3",
+            "SRC/neothd/src/media/lm_output_processor.rs:48 - push_visible_delta splits on . ! ? newline",
+            "SRC/neothd/src/media/lm_output_processor.rs:66 - next_batch joins up to 3 sentences within max_chars",
+            "SRC/neothd/src/media/lm_output_processor.rs:101 - flush_terminal emits the tail once"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/lm_output_processor.rs:151 - batches_three_sentences_and_flushes_final_fragment_once asserts 'One. Two? Three!' then 'Four'",
+            "SRC/neothd/src/media/lm_output_processor.rs:205 - coalesced_four_sentence_delta_yields_two_batches",
+            "SRC/neothd/src/media/lm_output_processor.rs:161,176,191,213 - buffer cap, Unicode scalar limit, repeated flush, queue-full bounds"
+          ],
+          "note": "Module is cfg(live-audio) (media/mod.rs:58-59), so the tests run only in the live-audio workflow. All tests deliver sentences in one delta; none feeds sentences incrementally."
+        },
+        {
+          "clause": "Wired as consumer in the A2 loop (stream deltas into batches into TTS)",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:949 - LmOutputProcessor::new(max_chars_per_request)",
+            "SRC/neothd/src/media/conversation_loop.rs:1110-1133 - VisibleDelta pushes and spawns TTS per next_batch",
+            "SRC/neothd/src/media/conversation_loop.rs:1135 - VisibleTerminal flushes"
+          ],
+          "tests": [],
+          "note": "No test runs the loop. next_batch returns whatever is complete (1 to 3 sentences) and the loop dispatches immediately when the audio slot is free, so one-sentence-per-delta streams yield one-sentence batches. It does not wait for 3."
+        },
+        {
+          "clause": "Cuts first-audio latency without word-by-word lag",
+          "status": "needs_non_ci_evidence",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:1113-1132 - first completed sentence goes to TTS at once"
+          ],
+          "tests": [],
+          "note": "A latency claim; no measurement or benchmark found."
+        }
+      ],
+      "requiredTestIdentities": [
+        "media::lm_output_processor::tests::batches_three_sentences_and_flushes_final_fragment_once",
+        "media::lm_output_processor::tests::repeated_unterminated_deltas_fail_before_pending_growth",
+        "media::lm_output_processor::tests::multibyte_limits_are_unicode_scalar_limits",
+        "media::lm_output_processor::tests::repeated_terminal_flush_preserves_order_and_never_duplicates_tail",
+        "media::lm_output_processor::tests::coalesced_four_sentence_delta_yields_two_batches",
+        "media::lm_output_processor::tests::completed_queue_rejects_before_sixty_fifth_sentence_grows_it"
+      ],
+      "boxTextCorrections": [
+        "Box says 'batch 3 sentences before synthesis'; next_batch (lm_output_processor.rs:66-99) emits 1 to 3 already-complete sentences and does not wait for three; the loop (conversation_loop.rs:1113) dispatches each batch immediately.",
+        "Box says Consumer: A2 (future); the consumer already exists at conversation_loop.rs:949."
+      ],
+      "residualScope": [
+        "Latency benefit is unmeasured.",
+        "Loop-level wiring is verified only by reading the code.",
+        "Tests exist only under feature live-audio."
+      ],
+      "smallestMissingWork": "Add an incremental-delta test (one sentence per push_visible_delta call) pinning real streaming behaviour, and either drop the latency wording or give it evidence. Tick only if the live-audio workflow counts as part of 'full suite green'.",
+      "uncertainty": "Assumes the live-audio CI job (ci.yml:1166, live-audio.yml) runs the lm_output_processor tests; I read the catalog names but not the full workflow run path."
+    },
+    {
+      "id": "ADOPT31-A6",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "SmoothedVad has a 100 ms minimum-fragment guard (DEFAULT_MIN_FRAGMENT_MS + candidate_speech_ms accumulator)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/vad/smoothed.rs:32 - DEFAULT_MIN_FRAGMENT_MS: u32 = 100",
+            "SRC/neothd/src/media/vad/smoothed.rs:127 - candidate_speech_ms",
+            "SRC/neothd/src/media/vad/smoothed.rs:231-244 - candidate accumulates and resets on break; opens only at >= min_fragment_ms"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/vad/smoothed.rs:337 - a_burst_shorter_than_the_minimum_fragment_does_not_open_a_turn asserts 40 ms burst gives Silence",
+            "SRC/neothd/src/media/vad/smoothed.rs:361 - speech_past_the_minimum_fragment_still_opens_a_turn asserts 200 ms gives Speaking"
+          ],
+          "note": "This is the primitive the box already calls built. Default build, no feature gate."
+        },
+        {
+          "clause": "Live Silero path: a barge-in only after the qualified-speech threshold (>=100 ms voiced), exactly once per speech",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:42 - DEFAULT_MIN_FRAGMENT_MS = 100",
+            "SRC/neothd/src/media/conversation_loop.rs:44-53 - voiced_samples_for_fragment_ms, qualifies_barge_in(already_qualified, ...)",
+            "SRC/neothd/src/media/conversation_loop.rs:1035-1057 - SpeechStarted does not cancel; SpeechProgress qualified triggers response_scope.invalidate once",
+            "SRC/neothd/src/media/conversation_loop.rs:513-514 - rejects min_fragment_ms below 100"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/conversation_loop.rs:2202 - one_vad_block_never_invalidates_an_active_response",
+            "SRC/neothd/src/media/conversation_loop.rs:2242 - four_ordered_vad_blocks_qualify_once_without_a_later_reset",
+            "SRC/neothd/src/media/conversation_loop.rs:2255 - configured_250ms_does_not_qualify_at_128ms_and_noise_never_qualifies",
+            "SRC/neothd/src/media/dictation.rs:753 - live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
+            "SRC/neothd/src/media/dictation.rs:771 - noise_and_hangover_silence_emit_no_speech_progress"
+          ],
+          "note": "These test the pure helper qualifies_barge_in and the state machine, not the loop. one_vad_block_never_invalidates... never calls the loop; it asserts a CancelScope the test itself never touches stays current, so it is close to vacuous for the production arm."
+        },
+        {
+          "clause": "Acceptance: simulate active playback; <100 ms noise cancels zero times, qualified speech cancels exactly once",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:1042-1056 - SpeechProgress arm",
+            "SRC/neothd/src/media/conversation_loop.rs:1058-1064 - UtteranceReady arm, short fragment gives CancelShortFragment"
+          ],
+          "tests": [],
+          "note": "No test runs run_a2_session or counts invalidations against simulated playback. run_a2_session needs cpal capture and playback owners. Searched conversation_loop.rs tests (lines 1494-2284), dictation.rs and playback.rs for a loop-level simulation: none."
+        },
+        {
+          "clause": "Runtime min_fragment_ms is operator-configurable",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/cli/serve.rs:649 - passes the constant DEFAULT_MIN_FRAGMENT_MS",
+            "SRC/neothd/src/config/features.rs:767 - media.vad.min_fragment_ms exists but serve.rs does not read it"
+          ],
+          "tests": [],
+          "note": "Not strictly in the box text, but the live guard ignores the media.vad.min_fragment_ms config key."
+        }
+      ],
+      "requiredTestIdentities": [
+        "media::vad::smoothed::tests::a_burst_shorter_than_the_minimum_fragment_does_not_open_a_turn",
+        "media::vad::smoothed::tests::speech_past_the_minimum_fragment_still_opens_a_turn",
+        "media::conversation_loop::tests::one_vad_block_never_invalidates_an_active_response",
+        "media::conversation_loop::tests::four_ordered_vad_blocks_qualify_once_without_a_later_reset",
+        "media::conversation_loop::tests::configured_250ms_does_not_qualify_at_128ms_and_noise_never_qualifies",
+        "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
+        "media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress"
+      ],
+      "boxTextCorrections": [
+        "Box says no Capture/VAD/Playback-Cancel-Loop exists and the only VAD consumer is the Dictation prefilter; conversation_loop.rs (2284 lines, cfg live-audio) implements capture, Silero VAD, STT, LLM, TTS, playback and barge-in, and cli/serve.rs:649 constructs it.",
+        "Box locates the live guard in smoothed.rs; the Silero live path does not use SmoothedVad, it uses voiced_samples_for_fragment_ms/qualifies_barge_in (conversation_loop.rs:44-53).",
+        "Box says A4 keys / A7 reopen keys are pending; features.rs:750 confirms speculative_reopen_ms/unanswered_reopen_ms still do not exist."
+      ],
+      "residualScope": [
+        "The stated end-to-end acceptance (simulated playback, zero vs. exactly one cancel) stays open.",
+        "The live loop ignores media.vad.min_fragment_ms."
+      ],
+      "smallestMissingWork": "Extract the SpeechProgress/UtteranceReady barge-in decision from run_a2_session into a pure function or a mockable harness. Add a test that feeds <100 ms and >=128 ms probability sequences and asserts response_scope invalidation counts 0 and 1. Fix the box text.",
+      "uncertainty": "Did not read playback.rs tests or the full live-audio.yml run path. Loop behaviour was judged from code reading only."
+    },
+    {
+      "id": "ADOPT31-A7",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "TurnTracker with soft-end / reopen / committed states in media/turn_tracker.rs",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/media/turn_tracker.rs:10 - TurnTracker",
+            "SRC/neothd/src/media/turn_tracker.rs:36 - begin_speech returns Reopened if soft_ended and uncommitted",
+            "SRC/neothd/src/media/turn_tracker.rs:65 - soft_end",
+            "SRC/neothd/src/media/turn_tracker.rs:71 - ready returns CancelShortFragment, Commit or AlreadyCommitted"
+          ],
+          "tests": [
+            "SRC/neothd/src/media/turn_tracker.rs:99 - speculative_pause_reopens_once_but_committed_turn_never_replays",
+            "SRC/neothd/src/media/turn_tracker.rs:120 - short_fragment_never_reaches_a_turn_commit",
+            "SRC/neothd/src/media/conversation_loop.rs:2188 - qualified_turn_is_once_and_zero_length_fragment_is_cancelled"
+          ],
+          "note": "Pure state machine, unit-tested. Module is cfg(live-audio) (media/mod.rs:104-105), so tests run only in the live-audio workflow."
+        },
+        {
+          "clause": "A mid-sentence pause does not read as end-of-turn in the live loop (reopen is effective)",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:1039 - begin_speech result discarded",
+            "SRC/neothd/src/media/conversation_loop.rs:1059-1061 - UtteranceReady calls add_speech, soft_end() then ready() in the same arm",
+            "SRC/neothd/src/media/turn_tracker.rs:75-78 - ready() clears open on short fragment, commits otherwise",
+            "SRC/neothd/src/media/turn_tracker.rs:87 - clear_uncommitted has no caller outside the file"
+          ],
+          "tests": [],
+          "note": "soft_end is immediately followed by ready, so an open soft-ended uncommitted turn never survives to a later begin_speech. Reopened is never acted on, and begin_speech's return value is discarded. Pause tolerance in production comes from the VAD hangover (dictation.rs:79-82), not the tracker. A second burst after a short fragment starts a new turn."
+        },
+        {
+          "clause": "Consumer: A2 loop owns the tracker and commit-once STT hand-off",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/media/conversation_loop.rs:947 - TurnTracker::default()",
+            "SRC/neothd/src/media/conversation_loop.rs:1061-1074 - Commit spawns STT once; short fragment is dropped"
+          ],
+          "tests": [],
+          "note": "Loop not driven by any test."
+        },
+        {
+          "clause": "Config keys speculative_reopen_ms / unanswered_reopen_ms (promised by the A4 box to move to A7)",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/config/features.rs:750 - comment states they are deliberately not carried"
+          ],
+          "tests": [],
+          "note": "grep speculative_reopen|unanswered_reopen finds only that comment. Not in the A7 text itself, but A4 handed them over."
+        }
+      ],
+      "requiredTestIdentities": [
+        "media::turn_tracker::tests::speculative_pause_reopens_once_but_committed_turn_never_replays",
+        "media::turn_tracker::tests::short_fragment_never_reaches_a_turn_commit",
+        "media::conversation_loop::tests::qualified_turn_is_once_and_zero_length_fragment_is_cancelled"
+      ],
+      "boxTextCorrections": [
+        "Box implies reopen prevents a mid-sentence pause from ending the turn; in conversation_loop.rs:1059-1061 soft_end() and ready() run back to back, so the reopen branch (turn_tracker.rs:38-41) is unreachable from production and clear_uncommitted is unused."
+      ],
+      "residualScope": [
+        "Effective speculative reopen/soft-end in the loop is not built.",
+        "speculative_reopen_ms and unanswered_reopen_ms config keys do not exist."
+      ],
+      "smallestMissingWork": "Make the loop defer ready() after soft_end (arm a short timer and let a following SpeechStarted reopen the same turn) with a loop-level test of pause then resume yielding one Commit. Otherwise narrow the box to the commit-once and short-fragment tracker.",
+      "uncertainty": "Reachability of Reopened was judged by reading conversation_loop.rs:1035-1075 and turn_tracker.rs; I did not run anything. Not checked whether another file mutates TurnTracker (grep found none)."
+    },
+    {
+      "id": "ADOPT31-E2",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "A tree-sitter based chunker exists in code_map/chunk.rs that splits on syntax-node boundaries, not lines",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/code_map/chunk.rs:52 - tree_sitter::Parser::new()",
+            "SRC/neothd/src/code_map/chunk.rs:67 - iterates root.named_children, chunk ranges are whole declaration nodes",
+            "SRC/neothd/Cargo.toml:259 - tree-sitter = \"=0.27.0\" (and :260 tree-sitter-rust = \"=0.24.2\")"
+          ],
+          "tests": [
+            "SRC/neothd/src/code_map/chunk.rs:180 - code_map::chunk::tests::rust_ast_chunks_are_deterministic_node_bounded_and_utf8_safe asserts text == source[start..end] and char boundaries"
+          ],
+          "note": "Only the Rust grammar is wired (chunk.rs:13 module doc says Rust-only; snapshot.rs:1115 skips every non-Rust file). The box text names no language restriction."
+        },
+        {
+          "clause": "About 2500-char chunk target",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/code_map/chunk.rs:13 - RUST_CHUNK_TARGET_CHARS = 2_500",
+            "SRC/neothd/src/code_map/chunk.rs:96 - packs adjacent declarations while char count <= target"
+          ],
+          "tests": [
+            "SRC/neothd/src/code_map/chunk.rs:198 - code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap asserts every chunk <= RUST_CHUNK_TARGET_CHARS"
+          ],
+          "note": "A single declaration larger than 16 KiB makes the whole file produce zero chunks (chunk.rs:78), covered by oversize_declaration_refuses_ast_text_without_changing_metadata_recall."
+        },
+        {
+          "clause": "About 300-char overlap between consecutive chunks",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/code_map/chunk.rs:14 - RUST_CHUNK_MAX_OVERLAP_CHARS = 300",
+            "SRC/neothd/src/code_map/chunk.rs:103 - trailing whole-node overlap reuse capped at 300 chars"
+          ],
+          "tests": [
+            "SRC/neothd/src/code_map/chunk.rs:213 - asserts non-empty overlap and overlap chars <= 300",
+            "SRC/neothd/src/code_map/chunk.rs:243 - overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes"
+          ],
+          "note": "300 is an upper cap on node-granular overlap, not an exact 300."
+        },
+        {
+          "clause": "Consumer: chunks reach code embedding / recall (code_map/recall.rs + memory/embeddings.rs)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/code_map/snapshot.rs:1138 - rust_chunks_from_verified_source called per scanned Rust file",
+            "SRC/neothd/src/code_map/vector_embeddings.rs:362 - crate::memory::embeddings::embed_one(&chunk.text, provider)",
+            "SRC/neothd/src/cli/code.rs:1366 - query_pre_ranked_files semantic query at prompt time",
+            "SRC/neothd/src/cli/code_map.rs:647 - reindex_current in run_reindex_embeddings"
+          ],
+          "tests": [
+            "SRC/neothd/src/cli/code.rs:2283 - cli::code::tests::semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors",
+            "SRC/neothd/src/code_map/snapshot.rs:1733 - code_map::snapshot::tests::full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files",
+            "SRC/neothd/src/code_map/vector_embeddings.rs:808 - code_map::vector_embeddings::tests::delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity"
+          ],
+          "note": "The box names code_map/recall.rs as consumer, but recall.rs only carries chunk_generation (recall.rs:109); the real consumers are code_map/vector_embeddings.rs, cli/code.rs and cli/code_map.rs."
+        },
+        {
+          "clause": "Ordering: lands after CRG-01 decomposer wiring",
+          "status": "not_applicable",
+          "code": [],
+          "tests": [],
+          "note": "Sequencing note, not behaviour; I did not open the CRG-01 box so its state is unverified."
+        }
+      ],
+      "requiredTestIdentities": [
+        "code_map::chunk::tests::rust_ast_chunks_are_deterministic_node_bounded_and_utf8_safe",
+        "code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap",
+        "code_map::chunk::tests::unsupported_invalid_or_error_tree_keeps_existing_file_symbol_recall",
+        "code_map::chunk::tests::oversize_declaration_refuses_ast_text_without_changing_metadata_recall",
+        "code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes",
+        "code_map::snapshot::tests::ast_source_change_after_materialization_before_commit_rolls_back_without_mixed_chunks",
+        "code_map::snapshot::tests::full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files",
+        "code_map::vector_embeddings::tests::delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity",
+        "cli::code::tests::semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors"
+      ],
+      "boxTextCorrections": [
+        "Box says NEOTH has zero AST-aware chunking: false now; code_map/chunk.rs exists (Rust only).",
+        "Box names code_map/recall.rs as consumer: actual consumers are code_map/vector_embeddings.rs, cli/code.rs (:1366) and cli/code_map.rs (:647)."
+      ],
+      "residualScope": [
+        "Only Rust is chunked; all other languages stay metadata-only. Either state Rust-only in the box text or keep other grammars open.",
+        "Embedding is explicit via code-map reindex-embeddings, not automatic."
+      ],
+      "smallestMissingWork": "Operator decision to ratify Rust-only scope in the box text (edit the box to say Rust-only and list other languages as residual). No code change needed if ratified.",
+      "uncertainty": "Whether the CRG-01 ordering clause is satisfied is unverified. Test module paths for snapshot and vector_embeddings were derived by assuming `mod tests`; only snapshot.rs:1503 and code.rs:2093 were confirmed."
+    },
+    {
+      "id": "ADOPT31-W1",
+      "closableOnGreenSuite": true,
+      "clauses": [
+        {
+          "clause": "adw/goal.rs defines Goal{id,intent,constraints,acceptance,non_goals,open_questions}",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:425 - pub struct Goal with exactly these six fields (+ serde-skipped derived intent_classification)",
+            "SRC/neothd/src/lib.rs:273 - pub mod adw;"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:809 - adw::goal::tests::deserialization_rejects_forged_classification_and_invalid_goal round-trips a Goal"
+          ],
+          "note": ""
+        },
+        {
+          "clause": "AcceptanceCriterion{id,statement,evidence,required}",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:332 - pub struct AcceptanceCriterion{id,statement,evidence,required}"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:691 - adw::goal::tests::criterion_rejects_whitespace_only_statement",
+            "SRC/neothd/src/adw/goal.rs:864 - adw::goal::tests::deserialization_rejects_invalid_leaf_payloads"
+          ],
+          "note": ""
+        },
+        {
+          "clause": "EvidenceKind has exactly TestPasses, CommandExits, FileContains, DiffTouches, HumanConfirms, CouncilVerdict, Absent",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:195-203 - enum EvidenceKind with those 7 variants"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:701 - adw::goal::tests::every_evidence_payload_rejects_empty_values",
+            "SRC/neothd/src/adw/goal.rs:737 - adw::goal::tests::council_threshold_is_explicit_and_bounded"
+          ],
+          "note": "No single test asserts the variant set is exactly seven; it is enforced by the type. CommandExits and CouncilVerdict are only exercised through the leaf tests."
+        },
+        {
+          "clause": "Constructor rejects an empty acceptance",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:454 - if acceptance.is_empty() return Err(GoalError::EmptyAcceptance)"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:643 - adw::goal::tests::goal_rejects_empty_acceptance asserts Err(GoalError::EmptyAcceptance)"
+          ],
+          "note": "Constructor also rejects duplicate ids and no required criterion (extra, tested)."
+        },
+        {
+          "clause": "Non-empty open_questions => Draft, not Ready",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:515 - status() returns Draft when open_questions non-empty"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:753 - adw::goal::tests::open_questions_keep_valid_goal_in_draft",
+            "SRC/neothd/src/adw/goal.rs:764 - adw::goal::tests::no_open_questions_marks_valid_goal_ready"
+          ],
+          "note": ""
+        },
+        {
+          "clause": "intent goes through defang_prompt_delimiters before any prompt use",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:524 - intent_for_prompt calls defang_prompt_delimiters",
+            "SRC/neothd/src/adw/goal.rs:572 - defang_prompt_delimiters uses sanitize_tool_output + defang_fence_tags"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:794 - adw::goal::tests::prompt_boundary_defangs_but_display_accessor_stays_audit_only"
+          ],
+          "note": "No prompt builder consumes Goal yet (W1 is type-only), so nothing can bypass the accessor today."
+        },
+        {
+          "clause": "Reuses coding/intent.rs and general_task_intent.rs for classification",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/adw/goal.rs:560 - classify_intent calls detect_coding_intent then detect_general_task_intent",
+            "SRC/neothd/src/coding/intent.rs:206 - pub fn detect_coding_intent",
+            "SRC/neothd/src/coding/general_task_intent.rs:149 - pub fn detect_general_task_intent"
+          ],
+          "tests": [
+            "SRC/neothd/src/adw/goal.rs:771 - adw::goal::tests::coding_intent_reuses_existing_classifier_and_wins_precedence",
+            "SRC/neothd/src/adw/goal.rs:784 - adw::goal::tests::general_task_intent_reuses_existing_classifier"
+          ],
+          "note": ""
+        }
+      ],
+      "requiredTestIdentities": [
+        "adw::goal::tests::goal_rejects_empty_acceptance",
+        "adw::goal::tests::goal_requires_a_required_criterion",
+        "adw::goal::tests::goal_rejects_duplicate_criterion_ids",
+        "adw::goal::tests::criterion_rejects_whitespace_only_statement",
+        "adw::goal::tests::every_evidence_payload_rejects_empty_values",
+        "adw::goal::tests::council_threshold_is_explicit_and_bounded",
+        "adw::goal::tests::open_questions_keep_valid_goal_in_draft",
+        "adw::goal::tests::no_open_questions_marks_valid_goal_ready",
+        "adw::goal::tests::coding_intent_reuses_existing_classifier_and_wins_precedence",
+        "adw::goal::tests::general_task_intent_reuses_existing_classifier",
+        "adw::goal::tests::prompt_boundary_defangs_but_display_accessor_stays_audit_only",
+        "adw::goal::tests::deserialization_rejects_forged_classification_and_invalid_goal",
+        "adw::goal::tests::deserialization_rejects_invalid_leaf_payloads"
+      ],
+      "boxTextCorrections": [],
+      "residualScope": [
+        "W1 is type-only: no map ingestion (W2), no executor, no evidence gate, no CLI or GUI consumer. These stay open under later ADOPT31 items.",
+        "Goal constructor also demands at least one required criterion and unique ids (stricter than box)."
+      ],
+      "smallestMissingWork": "none",
+      "uncertainty": "I did not read the intent/general-task classifier test fixtures beyond their use in goal.rs; they rely on those classifiers keeping the two sample phrases classified."
+    },
+    {
+      "id": "GOLD-CC-01",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "One closed descriptor and capability vocabulary covering AgentChannel, ContextSource, ResearchBackend and ActionSink roles",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:311 - enum ConnectorRole{AgentChannel,ContextSource,ResearchBackend,ActionSink}",
+            "SRC/neothd/src/connectors/mod.rs:574 - struct ConnectorDescriptor",
+            "SRC/neothd/src/connectors/mod.rs:647-661 - four descriptor-only traits",
+            "SRC/neothd/src/connectors/mod.rs:607 - CONNECTOR_REGISTRY holds only LocalImport, Obsidian, AgentReachResearch"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:965 - connectors::tests::registry_is_closed_complete_and_has_only_safe_reference_descriptors",
+            "SRC/neothd/src/connectors/mod.rs:1215 - connectors::tests::action_capabilities_are_not_agent_authority"
+          ],
+          "note": "Vocabulary is closed, but no registry row has an AgentChannel or ActionSink role; existing channels live in a separate channels/registry.rs (validate_registry there at :689) and are not unified here. ActionSink is exercised only by a synthetic descriptor in a test."
+        },
+        {
+          "clause": "Distinct account, subject, read/write/import, consent, retention, egress, credential, side-effect and resource-limit classes",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:350 - AccountBinding",
+            "SRC/neothd/src/connectors/mod.rs:358 - ContextAccess{None,ReadOnly}",
+            "SRC/neothd/src/connectors/mod.rs:365 - ImportClass",
+            "SRC/neothd/src/connectors/mod.rs:372 - EgressClass",
+            "SRC/neothd/src/connectors/mod.rs:380 - CredentialClass",
+            "SRC/neothd/src/connectors/mod.rs:387 - SideEffectClass",
+            "SRC/neothd/src/connectors/mod.rs:435 - ResourceLimits",
+            "SRC/neothd/src/connectors/mod.rs:460-474 - ConsentState, RetentionClass, PolicyEgress",
+            "SRC/neothd/src/connectors/mod.rs:545 - ConnectorConfiguration.subject_id"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1007 - connectors::tests::strict_ids_and_connector_names_never_normalize_ambiguous_input",
+            "SRC/neothd/src/connectors/mod.rs:1159 - connectors::tests::config_validation_is_fail_closed_for_policy_identity_feature_and_credentials"
+          ],
+          "note": "No write class exists: ContextAccess has only None and ReadOnly; writing is represented only by ActionCapabilities booleans. Subject is a config id, not a descriptor class."
+        },
+        {
+          "clause": "Connector health is a timestamped observation, not mutable global authority",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:565 - HealthObservation{observed_at_unix_ms,reachable,error_code}"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1246 - connectors::tests::health_observation_has_no_authority_bearing_fields"
+          ],
+          "note": "The test only checks the serialized JSON lacks the words ready and credential; weak, and no production code consumes HealthObservation (grep found only the definition and the test)."
+        },
+        {
+          "clause": "Fallback across credential, egress or provider boundaries requires a fresh policy decision",
+          "status": "not_implemented",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:496 - doc comment only: 'A later supervisor must take a fresh snapshot for each credential, egress, or provider-boundary fallback'"
+          ],
+          "tests": [],
+          "note": "Searched connectors/ for fallback/fresh: no fallback API, no policy-decision type, no test. Only a comment states the rule."
+        },
+        {
+          "clause": "Registry/config validation rejects duplicate or ambiguous identities",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:675 - validate_registry (DuplicateCanonicalId, MissingDescriptor)",
+            "SRC/neothd/src/connectors/mod.rs:759 - validate_configurations (DuplicateOrAmbiguousInstance)",
+            "SRC/neothd/src/config/mod.rs:3885 - FreedomConfig validation calls context_connectors.validate()",
+            "SRC/neothd/src/connectors/control_state.rs:112 - validate_configurations on stored accounts"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1159 - config_validation_is_fail_closed_for_policy_identity_feature_and_credentials asserts DuplicateOrAmbiguousInstance",
+            "SRC/neothd/src/connectors/mod.rs:1007 - strict ids reject ambiguous names",
+            "SRC/neothd/src/connectors/control_state.rs:192 - connectors::control_state::tests::duplicate_instances_are_rejected_even_when_disabled_or_revoked"
+          ],
+          "note": "The registry-level DuplicateCanonicalId arm cannot be reached with the static registry and has no negative test."
+        },
+        {
+          "clause": "Validation rejects forbidden capability combinations",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:694 - validate_descriptor (ContextSourceCannotBeAgentChannel, UnsafeResearchBackend, ContextSourceNotReadOnly, ContextSourceMissingExplicitImport, ActionCapabilityWithoutSink)"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1051 - connectors::tests::research_backend_cannot_cross_source_action_process_mcp_egress_or_credential_boundaries",
+            "SRC/neothd/src/connectors/mod.rs:1108 - connectors::tests::context_source_cannot_be_channel_writable_or_implicit_import"
+          ],
+          "note": "ActionCapabilityWithoutSink (mod.rs:743) has no direct negative test."
+        },
+        {
+          "clause": "Validation rejects feature-off adapters",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:781 - availability != Available => FeatureDisabled",
+            "SRC/neothd/src/connectors/mod.rs:749 - disabled descriptor must be research-only"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1187 - config_validation_is_fail_closed_for_policy_identity_feature_and_credentials asserts FeatureDisabled for agent_reach_research"
+          ],
+          "note": "Availability is a static descriptor flag, not a cargo feature check."
+        },
+        {
+          "clause": "Tests prove a context account cannot silently enter channel routing, MCP dispatch or action execution",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:854 - admit_entry_point: ActionExecution/McpDispatch/DirectExecution always false, ChannelRouting only for AgentChannel role"
+          ],
+          "tests": [
+            "SRC/neothd/src/connectors/mod.rs:1198 - connectors::tests::context_accounts_cannot_enter_channel_mcp_or_action_routes asserts Forbidden for all four routes",
+            "SRC/neothd/tests/connector_control_plane_contract.rs:123 - only_cc01_admission_can_precede_context_import_authority (source-text check, not behavioural)"
+          ],
+          "note": "Proof is at the admission function. The real channel router and MCP dispatcher do not call admit_entry_point (call sites are only obsidian.rs:1257 and control_plane.rs:940), so 'cannot silently enter' is not proven end to end; it holds because no code connects them."
+        },
+        {
+          "clause": "Install/repair remains a separately authorized integration job",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/src/connectors/mod.rs:645 - traits expose no sync, execute, MCP or credential methods"
+          ],
+          "tests": [
+            "SRC/neothd/tests/connector_control_plane_contract.rs:13 - control_plane_exposes_no_public_capability_mint_or_effect_surface (source-text grep)"
+          ],
+          "note": "Absence of any install/repair code; only a source-text contract test, no behavioural assertion that nothing installs."
+        }
+      ],
+      "requiredTestIdentities": [
+        "connectors::tests::registry_is_closed_complete_and_has_only_safe_reference_descriptors",
+        "connectors::tests::strict_ids_and_connector_names_never_normalize_ambiguous_input",
+        "connectors::tests::credential_ref_is_opaque_and_never_accepts_credential_material",
+        "connectors::tests::research_backend_cannot_cross_source_action_process_mcp_egress_or_credential_boundaries",
+        "connectors::tests::context_source_cannot_be_channel_writable_or_implicit_import",
+        "connectors::tests::config_validation_is_fail_closed_for_policy_identity_feature_and_credentials",
+        "connectors::tests::context_accounts_cannot_enter_channel_mcp_or_action_routes",
+        "connectors::tests::action_capabilities_are_not_agent_authority",
+        "connectors::tests::health_observation_has_no_authority_bearing_fields",
+        "connectors::control_state::tests::duplicate_instances_are_rejected_even_when_disabled_or_revoked",
+        "connector_control_plane_contract (integration test binary): only_cc01_admission_can_precede_context_import_authority, control_plane_exposes_no_public_capability_mint_or_effect_surface"
+      ],
+      "boxTextCorrections": [
+        "Box implies a vocabulary for AgentChannel and ActionSink connectors; the static registry (connectors/mod.rs:607) contains none, only the role enum, traits and a synthetic test descriptor.",
+        "Box lists read/write/import classes; ContextAccess (mod.rs:358) has only None and ReadOnly, no write class."
+      ],
+      "residualScope": [
+        "Fallback-requires-fresh-policy-decision rule: implement or move to a later CC item (CC-03 supervisor).",
+        "Real channel routing, MCP dispatch and action execution paths are not wired to admit_entry_point.",
+        "Unification of the existing channels registry with the connector registry.",
+        "CC-02..CC-12 stay open; Windows control RPC unavailable (mod.rs:7)."
+      ],
+      "smallestMissingWork": "Add a typed fresh-policy-decision gate for credential/egress/provider-boundary fallback (a function requiring a new ConnectorPolicySnapshot revision plus a negative test), or amend the box to move that sentence to GOLD-CC-03; add a behavioural test for ActionCapabilityWithoutSink and register an AgentChannel descriptor or state that none is in scope.",
+      "uncertainty": "I did not read connectors/control_plane.rs beyond the admit_entry_point call site, nor control_plane unit tests; the control_state tests beyond duplicate_instances were not opened."
+    },
+    {
+      "id": "GOLD-DEP-RUSSH-01",
+      "closableOnGreenSuite": false,
+      "clauses": [
+        {
+          "clause": "Direct optional russh moves to a version patched for GHSA-g9hv-x236-4qp3, GHSA-cqjc-rmpq-xprq, GHSA-5xvq-cp9x-6p6r (box says 0.62.5)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/Cargo.toml:675 - russh = { version = \"=0.65.0\", default-features = false, features = [\"ring\"], optional = true }",
+            "SRC/Cargo.lock:10872-10873 - name = \"russh\" version = \"0.65.0\""
+          ],
+          "tests": [],
+          "note": "Code is above the box's 0.62.5. There is no test, only the locked build (CI cargo check/test --locked --features ssh-tunnel, ci.yml:988-1010). I did not verify that 0.65.0 is patched for these GHSAs (no network); the ordering implies it."
+        },
+        {
+          "clause": "Keep default-features = false and exactly the ring leaf; compression and RSA leaves forbidden",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/Cargo.toml:675 - default-features = false, features = [\"ring\"]",
+            "SRC/Cargo.lock:10876-10936 - russh dependency list shows no flate2/rsa entry (ssh-key is listed, its feature set not visible in the lock)"
+          ],
+          "tests": [],
+          "note": "No source-gate test asserts the feature set; grep for russh in tests/gate files and deny/audit configs found nothing."
+        },
+        {
+          "clause": "TOFU identity is host-wide: once any host-key algorithm is pinned, an unseen algorithm fails closed; exact legacy pins remain usable",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/transport/ssh_tofu.rs - check_and_update returns TofuOutcome::AlgorithmChanged",
+            "SRC/neothd/src/transport/ssh_tunnel.rs:95 - tofu_allows only Accepted|Matched",
+            "SRC/neothd/src/transport/ssh_tunnel.rs:136 - handler runs the TOFU check in check_server_key"
+          ],
+          "tests": [
+            "SRC/neothd/src/transport/ssh_tofu.rs:272 - transport::ssh_tofu::tests::known_host_rejects_never_pinned_algorithm_without_mutation",
+            "SRC/neothd/src/transport/ssh_tofu.rs:289 - transport::ssh_tofu::tests::legacy_multi_algorithm_pins_survive_reopen_but_third_algorithm_is_rejected",
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:355 - transport::ssh_runtime_tests::connect_endpoint_test_fixture_auth_and_handler_tofu_rejects_cross_algorithm_host_key asserts russh::Error::UnknownKey, no auth events, pin count stays 1"
+          ],
+          "note": ""
+        },
+        {
+          "clause": "Production password authentication stays fail-closed until a reviewed upstream removes the packet dump and zeroizes the method on every terminal path",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/transport/ssh_tunnel.rs:64 - rejected_password_authentication returns a fatal config error unless #[cfg(test)] prefix",
+            "SRC/neothd/src/transport/ssh_tunnel.rs:231-241 - #[cfg(not(test))] arm never calls authenticate_password",
+            "SRC/neothd/src/transport/ssh_tunnel.rs:394 - second rejection check before listener bind"
+          ],
+          "tests": [
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:422 - transport::ssh_runtime_tests::connect_endpoint_ordinary_password_fails_closed_without_sending_auth",
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:468 - transport::ssh_runtime_tests::spawn_tunnel_rejects_password_final_endpoint_before_listener_bind",
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:489 - transport::ssh_runtime_tests::spawn_tunnel_rejects_password_jump_host_before_listener_bind"
+          ],
+          "note": "The test-only password path exists under cfg(test), so the 'production does not compile the call' property is by cfg, not tested. The upstream fix is a non-goal here; the box clause is a fail-closed requirement."
+        },
+        {
+          "clause": "Private-key authentication remains the supported path and proves encrypted OpenSSH-key/passphrase behaviour",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/transport/ssh_tunnel.rs:243 - SshAuth::PrivateKey path with deadline-bound blocking key load"
+          ],
+          "tests": [
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:521 - transport::ssh_runtime_tests::connect_endpoint_private_key_auth_decrypts_openssh_key_and_accepts_exact_public_key (AES256-CTR + bcrypt encrypted Ed25519 key, server sees exact public key, no password fallback)"
+          ],
+          "note": ""
+        },
+        {
+          "clause": "ssh-tunnel is source-build opt-in, absent from default, release-desktop and release-server",
+          "status": "code_without_test",
+          "code": [
+            "SRC/neothd/Cargo.toml:42 - default = [\"wizard\",\"cluster\",\"keychain\"]",
+            "SRC/neothd/Cargo.toml:49-61 - release-server and release-desktop lists do not contain ssh-tunnel",
+            "SRC/neothd/Cargo.toml:107 - ssh-tunnel = [\"dep:russh\"]"
+          ],
+          "tests": [],
+          "note": "grep of release*.yml and security.yml found no ssh-tunnel mention (consistent), but no test pins this."
+        },
+        {
+          "clause": "CI feature matrix locked-builds ssh-tunnel on Ubuntu and runs focused hermetic transport tests",
+          "status": "covered",
+          "code": [
+            ".github/workflows/ci.yml:941-943 - matrix ssh-tunnel on ubuntu-24.04, windows-2022, macos-15",
+            ".github/workflows/ci.yml:988 - cargo check -p neoth --locked --features ssh-tunnel",
+            ".github/workflows/ci.yml:1004-1015 - discovers exactly 40 transport::ssh_ cases and requires each 'ok' exactly once"
+          ],
+          "tests": [
+            "transport::ssh_* (40 cases, whole filter) executed by the CI step"
+          ],
+          "note": "Gate hard-codes 40; any added or removed ssh test breaks it. Only a green exact-head CI run proves it."
+        },
+        {
+          "clause": "Keychain authority regressions: successful keychain open/read before a missing compound bundle may authorize legacy fallback; unavailable-store regression runs",
+          "status": "covered",
+          "code": [
+            ".github/workflows/ci.yml:1043-1049 - seven exact tests run one at a time with discovery count 1 and 'ok' count 1",
+            "SRC/neothd/src/config/credentials.rs:8938 - unavailable-store test body (store.get bails for ssh_tunnels, asserts migration aborts)"
+          ],
+          "tests": [
+            "SRC/neothd/src/config/credentials.rs:8938 - config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing",
+            "SRC/neothd/src/config/credentials.rs:8927 - config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file",
+            "SRC/neothd/src/config/credentials.rs:8933 - config::credentials::tests::keychain_empty_ssh_authority_disables_legacy_without_file_copy",
+            "SRC/neothd/src/config/keychain.rs:1862 - config::keychain::tests::ssh_tunnel_bundle_round_trips_through_every_keychain_path",
+            "SRC/neothd/src/config/keychain.rs:1892 - config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle",
+            "SRC/neothd/src/config/keychain.rs:1910 - config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed",
+            "SRC/neothd/src/config/keychain.rs:1925 - config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite"
+          ],
+          "note": "I read the credentials.rs tests (helper at 8856-8924 asserts no leak into credentials.yaml); the keychain.rs bodies were not opened, only located."
+        },
+        {
+          "clause": "Multi-hop jump and reconnect behaviour proofs (11/11 password/private-key/jump/reconnect proofs)",
+          "status": "covered",
+          "code": [
+            "SRC/neothd/src/transport/ssh_jump.rs - jump chain",
+            "SRC/neothd/src/transport/ssh_tunnel.rs - spawn_tunnel"
+          ],
+          "tests": [
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:590 - transport::ssh_runtime_tests::spawn_tunnel_forwards_loopback_bytes_over_real_direct_tcpip",
+            "SRC/neothd/src/transport/ssh_runtime_tests.rs:635 - transport::ssh_runtime_tests::connect_via_jumps_forwards_hops_in_declared_order",
+            "SRC/neothd/src/transport/ssh_resilience_tests.rs:937 - transport::ssh_resilience_tests::ssh_resilience_dead_session_reconnects_to_replacement_on_same_listener"
+          ],
+          "note": "Bodies of the jump and reconnect tests were not opened, only their names and locations."
+        },
+        {
+          "clause": "No advisory ignore or dismissal permitted",
+          "status": "code_without_test",
+          "code": [],
+          "tests": [],
+          "note": "grep of deny.toml and audit.toml locations for russh and the three GHSA ids found no match, but no test or gate enforces it; HEAD commit 36956f07 added bounded exceptions for the Matrix stack, which I did not inspect."
+        },
+        {
+          "clause": "Exact-head CI, Security and CodeQL green and the final integration/full-release gate run (box: OPEN until then)",
+          "status": "needs_non_ci_evidence",
+          "code": [],
+          "tests": [],
+          "note": "Box requires broader matrix and the final release gate and says repeated local passes are deferred; the CodeQL, Security and release-gate evidence is not a unit test and I cannot establish it from the tree."
+        }
+      ],
+      "requiredTestIdentities": [
+        "transport::ssh_tofu::tests::known_host_rejects_never_pinned_algorithm_without_mutation",
+        "transport::ssh_tofu::tests::legacy_multi_algorithm_pins_survive_reopen_but_third_algorithm_is_rejected",
+        "transport::ssh_runtime_tests::connect_endpoint_test_fixture_auth_and_handler_tofu_rejects_cross_algorithm_host_key",
+        "transport::ssh_runtime_tests::connect_endpoint_ordinary_password_fails_closed_without_sending_auth",
+        "transport::ssh_runtime_tests::spawn_tunnel_rejects_password_final_endpoint_before_listener_bind",
+        "transport::ssh_runtime_tests::spawn_tunnel_rejects_password_jump_host_before_listener_bind",
+        "transport::ssh_runtime_tests::connect_endpoint_private_key_auth_decrypts_openssh_key_and_accepts_exact_public_key",
+        "transport::ssh_runtime_tests::spawn_tunnel_forwards_loopback_bytes_over_real_direct_tcpip",
+        "transport::ssh_runtime_tests::connect_via_jumps_forwards_hops_in_declared_order",
+        "transport::ssh_resilience_tests::ssh_resilience_dead_session_reconnects_to_replacement_on_same_listener",
+        "config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing",
+        "config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file",
+        "config::credentials::tests::keychain_empty_ssh_authority_disables_legacy_without_file_copy",
+        "config::keychain::tests::ssh_tunnel_bundle_round_trips_through_every_keychain_path",
+        "config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle",
+        "config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed",
+        "config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite"
+      ],
+      "boxTextCorrections": [
+        "Box says the worktree declares the patched 0.62.5 line; SRC/neothd/Cargo.toml:675 and SRC/Cargo.lock:10873 pin russh 0.65.0.",
+        "Box says the 0.62.5 patch 'does not by itself re-authorize password authentication'; the password path is compiled out of non-test builds (ssh_tunnel.rs:231), consistent with the box. The box counts (11/11, 39/39, 40) are historical; CI hard-codes 40 transport cases (ci.yml:1008).",
+        "Box says 'Windows test compilation' as local evidence; CI now runs the ssh-tunnel matrix on Windows, Ubuntu and macOS (ci.yml:941-943)."
+      ],
+      "residualScope": [
+        "Production password authentication stays disabled; closing this box must not be read as re-enabling it (needs reviewed upstream or fork).",
+        "Decision on pageant being a russh dependency (lock line 10911) is not covered by the box.",
+        "R3-10 parent stays open; this child ticks only the SSH dependency scope."
+      ],
+      "smallestMissingWork": "Add a source-gate test (or CI step) asserting russh features are exactly ring with default-features false, ssh-tunnel absent from default/release-server/release-desktop and the lock has no compression or RSA leaf; then record exact-head CI, Security and CodeQL runs and the release-gate run as evidence.",
+      "uncertainty": "Not verified: that russh 0.65.0 is patched for the three GHSAs (no network); the ssh-key crate's feature set in the lock (RSA could enter there); keychain.rs test bodies; ssh_jump.rs; that CI is green at the exact head; whether the SSH-related advisory entries in the repo's deny/audit configs exist under a different file path than the ones I grepped."
+    }
+  ]
+}

@@ -1,5 +1,24 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**Claude lane 2026-11-11 (operator-assigned; Codex quota pause):**
+Exact-head repair of 7b2b7fbe: one Clippy finding and seven fixture drifts are
+fixed, Codex's uncommitted Bedrock/Cohere terminal-reason work is completed, and
+three Windows-only stack overflows in daemon::chat_runtime tests (present since
+at least 7b2b7fbe, reported by nextest as ABORT) have their turn futures
+heap-pinned. Published advisories are remediated by pin moves (wasmtime 36.0.20,
+cap-std family 4.0.3, rustix 1.1.6, tokio 1.53.3, pulldown-cmark 0.13.6, three
+yanked crates); RUSTSEC-2026-0451 and RUSTSEC-2026-0459 carry an operator-approved
+exception that the advisory gate ends on 2026-12-01. GOLD-LF-P1-23 and
+GOLD-LF-001-19 are accepted on the mechanical plan-leaf gate. The live
+conversation loop now honours media.vad.min_fragment_ms above its 100 ms floor.
+All 261 open boxes were classified and 13 near-complete boxes were audited clause
+by clause: only ADOPT31-W1 is closable on a green suite; the others have named
+gaps. Evidence: `docs/verification/gold-claude-20261111-open-item-triage.json`
+and `docs/verification/gold-claude-20261111-open-box-audit.json`. CodeQL Rust
+still ends in a runner shutdown, so no Security-complete claim is made. No local
+compile, test or link ran; hosted CI 43066720078 on 0f4971db is the pending
+exact-head evidence. Original backlog below is preserved verbatim.
+
 **W2064-2066 hosted provider integration repair (2026-10-01):**
 The 325-case producer da0ddd run36904912363 stopped at compilation before
 any test executed. Six diagnostics identify two metadata partial moves,
