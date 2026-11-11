@@ -238,6 +238,45 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             "an allowlisted moving source is gone; remove its entry",
         )
 
+    def test_optional_features_without_a_hosted_lane_do_not_grow(self) -> None:
+        # Code behind a Cargo feature that no workflow names is never compiled
+        # or tested on a hosted runner, so a green suite says nothing about it
+        # (GOLD-R4-15k1 audit, 2026-11-11). This freezes that set: a new
+        # feature needs a lane, and giving one of these a lane shrinks the list.
+        known_without_lane = {
+            "browser-import": "source-build opt-in for wizard browser credential import",
+            "hash-bench": "ignored benchmark spike behind the optional opthash dependency",
+            "pty-subprocess": "source-build opt-in PTY transport; its 4 MiB read bound is untested",
+            "recursive-mas": "source-build opt-in sidecar; its 1 MiB line bound is untested",
+        }
+        features = self.manifest["features"]
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+        )
+
+        def named(feature: str) -> bool:
+            pattern = rf"(?<![A-Za-z0-9_-]){re.escape(feature)}(?![A-Za-z0-9_-])"
+            return re.search(pattern, workflows) is not None
+
+        covered = {"default"} | {feature for feature in features if named(feature)}
+        # The GUI crate is a workspace member; features it requests from the
+        # core crate are compiled by every workspace build and test lane.
+        for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+            for dependency in self.gui_manifest.get(table, {}).values():
+                if isinstance(dependency, dict) and dependency.get("package") == "neoth":
+                    covered.update(dependency.get("features", []))
+        grew = True
+        while grew:
+            grew = False
+            for feature in sorted(covered):
+                for enabled in features.get(feature, []):
+                    if enabled in features and enabled not in covered:
+                        covered.add(enabled)
+                        grew = True
+
+        self.assertSetEqual(set(features) - covered, set(known_without_lane))
+
     def test_every_native_desktop_target_uses_the_desktop_release_path(self) -> None:
         matrix = release_matrix(self.workflow)
 
