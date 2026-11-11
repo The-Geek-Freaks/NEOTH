@@ -3933,4 +3933,71 @@ mod tests {
             Some("deadbeef-dead-beef-dead-beefdeadbeef".to_string())
         );
     }
+
+    #[tokio::test]
+    async fn oversize_cli_stdout_is_cut_at_the_cap_and_flagged_truncated() {
+        // Same reader and cap `wait_with_output` applies to the child's
+        // stdout. The marker sits past the cap and must never be retained.
+        let marker = b"SECRET_MARKER_STDOUT";
+        let mut input = vec![b'a'; MAX_CLI_STDOUT_BYTES + 4096];
+        let start = input.len() - marker.len();
+        input[start..].copy_from_slice(marker);
+        let mut reader = input.as_slice();
+
+        let read = response_bounds::read_bounded(&mut reader, MAX_CLI_STDOUT_BYTES)
+            .await
+            .expect("bounded stdout read");
+
+        assert!(read.truncated);
+        assert_eq!(read.bytes.len(), MAX_CLI_STDOUT_BYTES);
+        assert!(read.bytes.iter().all(|byte| *byte == b'a'));
+        assert!(reader.is_empty(), "reader must drain through EOF");
+    }
+
+    #[tokio::test]
+    async fn newline_free_stream_json_line_over_the_cap_fails_without_echo() {
+        let marker = "SECRET_MARKER_STREAM";
+        let mut input = marker.as_bytes().to_vec();
+        input.extend(std::iter::repeat_n(b'a', MAX_CLI_STREAM_LINE_BYTES + 4096));
+        let mut reader = BufReader::new(input.as_slice());
+
+        let error = response_bounds::read_bounded_line(
+            &mut reader,
+            "claude_cli",
+            CLI_STREAM_EVIDENCE_DOMAIN,
+            MAX_CLI_STREAM_LINE_BYTES,
+        )
+        .await
+        .expect_err("newline-free line over the cap must fail");
+
+        for rendered in [
+            error.to_string(),
+            format!("{error:#}"),
+            format!("{error:?}"),
+        ] {
+            assert!(rendered.contains("claude_cli: output line exceeded"));
+            assert!(rendered.contains("frame_sha256="));
+            assert!(rendered.contains("truncated=true"));
+            assert!(!rendered.contains(marker));
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_json_line_exactly_at_the_cap_is_accepted() {
+        let mut input = vec![b'a'; MAX_CLI_STREAM_LINE_BYTES];
+        input.push(b'\n');
+        let mut reader = BufReader::new(input.as_slice());
+
+        let line = response_bounds::read_bounded_line(
+            &mut reader,
+            "claude_cli",
+            CLI_STREAM_EVIDENCE_DOMAIN,
+            MAX_CLI_STREAM_LINE_BYTES,
+        )
+        .await
+        .expect("line at the cap")
+        .expect("one line");
+
+        assert_eq!(line.len(), MAX_CLI_STREAM_LINE_BYTES);
+    }
 }

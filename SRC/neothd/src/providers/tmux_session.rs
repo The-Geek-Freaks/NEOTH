@@ -629,6 +629,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn capture_streams_fold_back_oversize_stdout_and_keep_the_newest_window() {
+        let head = b"HEAD_SECRET_MARKER";
+        let tail = b"TAIL_END";
+        let mut input = vec![b'x'; MAX_CAPTURE_BYTES * 2 + 64 * 1024];
+        input[..head.len()].copy_from_slice(head);
+        let start = input.len() - tail.len();
+        input[start..].copy_from_slice(tail);
+        let mut stdout = input.as_slice();
+        let mut stderr: &[u8] = &[];
+
+        let streams = read_capture_streams(&mut stdout, &mut stderr)
+            .await
+            .expect("read capture streams");
+
+        assert_eq!(streams.stdout.len(), MAX_CAPTURE_BYTES);
+        assert!(streams.stdout.ends_with(tail));
+        // Everything before the tail is filler, so the scrolled-away head
+        // marker cannot be present.
+        assert!(
+            streams.stdout[..MAX_CAPTURE_BYTES - tail.len()]
+                .iter()
+                .all(|byte| *byte == b'x')
+        );
+        assert!(stdout.is_empty(), "stdout must drain through EOF");
+        assert!(streams.stderr.is_empty());
+        assert!(!streams.stderr_truncated);
+    }
+
     #[test]
     fn validate_session_name_accepts_clean_names() {
         assert!(validate_session_name("neoth-cc-1").is_ok());

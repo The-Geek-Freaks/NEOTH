@@ -743,6 +743,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_media_call_intent_gets_exactly_one_terminal_result() {
+        // GOLD-LF-P1-01b. One failing and one answering upload share a writer:
+        // every intent id must be closed by exactly one result, whatever the
+        // provider outcome, and two calls must never share an id.
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        struct FailingSynth;
+        #[async_trait]
+        impl MultimodalSynthesizer for FailingSynth {
+            fn provider(&self) -> MultimodalProvider {
+                MultimodalProvider::AnthropicClaude
+            }
+            async fn synthesize(&self, _request: &MultimodalRequest) -> Result<String, String> {
+                Err("provider unavailable".into())
+            }
+        }
+
+        let decoder = MockDecoder {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let ok_synth = MockSynth {
+            provider: MultimodalProvider::AnthropicClaude,
+            answer: "ok".into(),
+            seen_frames: std::sync::Mutex::new(0),
+        };
+        let (writer, join, dir) = test_writer();
+        let seg = dir.path().join("vd.wal");
+
+        let failed = dispatch_video_analysis(
+            &decoder,
+            &FailingSynth,
+            &asset(),
+            &[0, 500],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            Some(&writer),
+            None,
+            &frames_on(),
+        )
+        .await;
+        assert!(
+            failed.is_err(),
+            "the failing provider must surface its error"
+        );
+        dispatch_video_analysis(
+            &decoder,
+            &ok_synth,
+            &asset(),
+            &[0, 500],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            Some(&writer),
+            None,
+            &frames_on(),
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut intents: Vec<serde_json::Value> = Vec::new();
+        let mut results: Vec<serde_json::Value> = Vec::new();
+        let mut cursor = SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            let Ok(frame) = decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            if frame.header.event_type == 0x00 {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).unwrap_or(serde_json::Value::Null);
+                if frame.header.event_subtype == ExtendedSubtype::MediaCallIntent as u8 {
+                    intents.push(payload);
+                } else if frame.header.event_subtype == ExtendedSubtype::MediaCallResult as u8 {
+                    results.push(payload);
+                }
+            }
+            cursor += frame.header.total_len as usize;
+        }
+
+        assert_eq!(intents.len(), 2, "one intent per upload attempt");
+        assert_eq!(results.len(), 2, "one terminal result per upload attempt");
+        assert_ne!(intents[0]["intent_id"], intents[1]["intent_id"]);
+        for intent in &intents {
+            let matching = results
+                .iter()
+                .filter(|result| result["intent_id"] == intent["intent_id"])
+                .count();
+            assert_eq!(
+                matching, 1,
+                "exactly one result for {}",
+                intent["intent_id"]
+            );
+        }
+        let mut outcomes: Vec<&str> = results
+            .iter()
+            .map(|result| result["outcome"].as_str().unwrap())
+            .collect();
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, ["answered", "failed"]);
+    }
+
+    #[tokio::test]
     async fn dispatch_caps_frames_to_provider_max_before_perceptual_dedup() {
         // OpenAI's documented cap is 10; feeding 15 timestamps must truncate
         // before decode/dedup. Mock JPEG frames are intentionally ineligible

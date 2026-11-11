@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T16:55:37.3257110Z",
-  "validationStatus": "Claude lane: live-audio catalog rebound for the barge-in floor change; hosted CI pending",
+  "capturedUtc": "2026-11-11T17:08:52.7998890Z",
+  "validationStatus": "Claude lane: wire-body output-cap tests (GOLD-R4-14a), bounded CLI reader tests (GOLD-R4-15k1), one-result-per-intent tests (GOLD-LF-P1-01); hosted CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5009,7 +5009,7 @@
     {
       "path": "docs/verification/gold-wave339-p208-acceptance.json",
       "bytes": 18818,
-      "sha256": "B83A4E1C98E0BD98CA45AD167DAEA09A23CA21B100B6583DDA22E430F4711994"
+      "sha256": "3F4832B8EC96774C10D47903A6DF220512CCCB7A0C9E4CB36DF015E926BB9FA5"
     },
     {
       "path": "docs/verification/gold-wave339-p211-acceptance.json",
@@ -9193,8 +9193,8 @@
     },
     {
       "path": "SRC/neothd/src/media/video_dispatch.rs",
-      "bytes": 31165,
-      "sha256": "C3F5D227919BBBB1F31F3292DA9ACA257511F01D8F12238E7C71CB236255437E"
+      "bytes": 34942,
+      "sha256": "E36E2D20CD4D8E0D633E40622177D9ECF1ECD2C0C0A56D0665F51981981FC4D1"
     },
     {
       "path": "SRC/neothd/src/media/video_frames.rs",
@@ -9488,8 +9488,8 @@
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
-      "bytes": 100269,
-      "sha256": "80E7048F4D8F6EF92A7A0A8BE637A70614A6A6F902228AC803605D74F9A2C143"
+      "bytes": 103818,
+      "sha256": "C1FD6D85DCB790F057014277196B8A4981BA061B93840628A72B89A41EA11C17"
     },
     {
       "path": "SRC/neothd/src/os_tools/mod.rs",
@@ -9658,8 +9658,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/anthropic_api.rs",
-      "bytes": 53383,
-      "sha256": "00CBB667A816FE0000EFA23A81C1C1856A392F699F1D9151009247E99849A1B8"
+      "bytes": 54788,
+      "sha256": "1C277185056B0E25CA9055EB59610D26472B3AE23D10506CA6E4C699BD71F984"
     },
     {
       "path": "SRC/neothd/src/providers/aws_bedrock.rs",
@@ -9668,8 +9668,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/azure_openai.rs",
-      "bytes": 46707,
-      "sha256": "298F8DF7E242A4040647D88B88CB41548279ED64148044D0F1D867D91C5024DB"
+      "bytes": 48073,
+      "sha256": "5B15C546D305D8AF0E643218B771B7ED877334BB77273309F28E8AEA9F5C4F73"
     },
     {
       "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
@@ -9683,8 +9683,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/claude_cli.rs",
-      "bytes": 163402,
-      "sha256": "8CAFB722DAF38D8522D30B60D4136ED5A65DF06334B5CA6F8EB13DB46DB4E466"
+      "bytes": 165861,
+      "sha256": "6906DD0CDA039088920EB6314DEF4D98AACBBD65C907A9389B4ECBD913973EB9"
     },
     {
       "path": "SRC/neothd/src/providers/claude_retry.rs",
@@ -9698,8 +9698,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cohere_api.rs",
-      "bytes": 38927,
-      "sha256": "A1B3548F5FB7FDB4ACA9855C790E545BB341D67C929F64D97AB22053E77086FA"
+      "bytes": 40345,
+      "sha256": "39CD2ACB565F8AEAC4F30723B3D3FB044ED9B00808A4ED058DD89827E5DDF656"
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
@@ -9728,8 +9728,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
-      "bytes": 39952,
-      "sha256": "E32389EB9C75AFF7DBEAE0D8AE678A53A50621E487471E00F296CB3F8E8D633D"
+      "bytes": 41479,
+      "sha256": "E8CFC60B0A6E9A24B9FF76EDC035E0B1080379DD28BF7B3721778BF35767BE72"
     },
     {
       "path": "SRC/neothd/src/providers/known_endpoints.rs",
@@ -9788,8 +9788,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/tmux_session.rs",
-      "bytes": 34559,
-      "sha256": "E9C1B730BDF751D2ED923D75F5E30B3D347226989DB2D9C87146EACE177D3E82"
+      "bytes": 35709,
+      "sha256": "C86B31DC90EF2D032FB0C78E178B612A8B328FB5999F7D9CD6E7F6ED3E042202"
     },
     {
       "path": "SRC/neothd/src/providers/token_cap.rs",

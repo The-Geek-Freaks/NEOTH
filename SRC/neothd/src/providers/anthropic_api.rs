@@ -1084,6 +1084,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requested_output_cap_reaches_the_wire_body_and_default_applies_otherwise() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "ok" }],
+                "stop_reason": "end_turn"
+            })))
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+        adapter
+            .complete(Request {
+                prompt: "ping".into(),
+                max_output_tokens: Some(88),
+                ..Default::default()
+            })
+            .await
+            .expect("capped request succeeds");
+        adapter
+            .complete(Request {
+                prompt: "ping".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("uncapped request succeeds");
+        let received = mock.received_requests().await.unwrap();
+        assert_eq!(received.len(), 2);
+        let capped: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        let uncapped: serde_json::Value = serde_json::from_slice(&received[1].body).unwrap();
+        assert_eq!(capped["max_tokens"], 88);
+        assert_eq!(uncapped["max_tokens"], DEFAULT_MAX_TOKENS);
+    }
+
+    #[tokio::test]
     async fn mock_429_returns_quota_error_with_retry_after() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))

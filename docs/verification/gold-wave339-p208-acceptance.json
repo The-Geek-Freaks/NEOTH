@@ -190,12 +190,12 @@
     {
       "test": "media::video_dispatch::tests::dispatch_decodes_synthesises_and_emits_0xc9",
       "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
-      "sourceSha256": "c3f5d227919bbbb1f31f3292da9aca257511f01d8f12238e7c71cb236255437e"
+      "sourceSha256": "E36E2D20CD4D8E0D633E40622177D9ECF1ECD2C0C0A56D0665F51981981FC4D1"
     },
     {
       "test": "media::video_dispatch::tests::media_intent_is_durable_before_the_frames_leave_the_device",
       "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
-      "sourceSha256": "c3f5d227919bbbb1f31f3292da9aca257511f01d8f12238e7c71cb236255437e"
+      "sourceSha256": "E36E2D20CD4D8E0D633E40622177D9ECF1ECD2C0C0A56D0665F51981981FC4D1"
     },
     {
       "test": "memory::indexer::tests::replay_indexes_raw_text_frames",

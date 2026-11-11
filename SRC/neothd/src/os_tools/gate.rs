@@ -2506,6 +2506,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_write_intent_gets_exactly_one_terminal_result() {
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::spawn as wal_spawn;
+
+        let dir = tempdir().unwrap();
+        let cfg = cfg_for(dir.path());
+        let segdir = tempdir().unwrap();
+        let seg = segdir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        for name in ["first.txt", "second.txt"] {
+            write_os_file(
+                &dir.path().join(name),
+                b"payload",
+                &cfg,
+                AutonomyLevel::Full,
+                AuditSink::Writer(&writer),
+                1_700_000_000,
+            )
+            .await
+            .unwrap();
+        }
+        drop(writer);
+        join.await.unwrap();
+
+        let frames = decode_segment(&seg).await;
+        let intents: Vec<_> = frames
+            .iter()
+            .filter(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsFileWriteIntent as u8)
+            .collect();
+        let results: Vec<_> = frames
+            .iter()
+            .filter(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsFileWriteResult as u8)
+            .collect();
+        assert_eq!(intents.len(), 2, "one intent per write");
+        assert_eq!(results.len(), 2, "one terminal result per write");
+        assert_ne!(intents[0].2["intent_id"], intents[1].2["intent_id"]);
+        for intent in &intents {
+            let matching = results
+                .iter()
+                .filter(|result| result.2["intent_id"] == intent.2["intent_id"])
+                .count();
+            assert_eq!(
+                matching, 1,
+                "exactly one result for {}",
+                intent.2["intent_id"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn each_launch_intent_gets_exactly_one_terminal_result() {
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::spawn as wal_spawn;
+
+        let Some(exe) = real_arg_free_exe() else {
+            return;
+        };
+        let cfg = exec_cfg(&exe);
+        let segdir = tempdir().unwrap();
+        let seg = segdir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        for _ in 0..2 {
+            launch_os_app(
+                &exe,
+                &cfg,
+                AutonomyLevel::Full,
+                AuditSink::Writer(&writer),
+                1_700_000_000,
+            )
+            .await
+            .expect("full launch");
+        }
+        drop(writer);
+        join.await.unwrap();
+
+        let frames = decode_segment(&seg).await;
+        let intents: Vec<_> = frames
+            .iter()
+            .filter(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsAppLaunchIntent as u8)
+            .collect();
+        let results: Vec<_> = frames
+            .iter()
+            .filter(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsAppLaunchResult as u8)
+            .collect();
+        assert_eq!(intents.len(), 2, "one intent per launch");
+        assert_eq!(results.len(), 2, "one terminal result per launch");
+        assert_ne!(intents[0].2["intent_id"], intents[1].2["intent_id"]);
+        for intent in &intents {
+            let matching = results
+                .iter()
+                .filter(|result| result.2["intent_id"] == intent.2["intent_id"])
+                .count();
+            assert_eq!(
+                matching, 1,
+                "exactly one result for {}",
+                intent.2["intent_id"]
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn write_is_refused_when_an_authoritative_sink_cannot_record_the_intent() {
         use crate::wal::spawn as wal_spawn;
 

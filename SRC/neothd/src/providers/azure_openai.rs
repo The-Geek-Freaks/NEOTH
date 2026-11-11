@@ -1211,6 +1211,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requested_output_cap_reaches_the_wire_body_and_default_applies_otherwise() {
+        let mock = MockServer::start().await;
+        mount_completions(
+            &mock,
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+        )
+        .await;
+        let adapter = build_adapter_against(&mock.uri());
+        adapter
+            .complete(Request {
+                prompt: "fixture".into(),
+                max_output_tokens: Some(88),
+                ..Default::default()
+            })
+            .await
+            .expect("capped request succeeds");
+        adapter
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("uncapped request succeeds");
+        let received = mock.received_requests().await.unwrap();
+        assert_eq!(received.len(), 2);
+        let capped: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        let uncapped: serde_json::Value = serde_json::from_slice(&received[1].body).unwrap();
+        assert_eq!(capped["max_completion_tokens"], 88);
+        assert_eq!(
+            uncapped["max_completion_tokens"],
+            crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING
+        );
+    }
+
+    #[tokio::test]
     async fn quota_body_retains_digest_evidence_only() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
