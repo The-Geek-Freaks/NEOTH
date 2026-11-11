@@ -266,7 +266,7 @@
     {
       "test": "config::features::conversation_follow_up_tests::follow_up_is_opt_in_and_accepts_only_explicit_bounded_seconds",
       "sourcePath": "SRC/neothd/src/config/features.rs",
-      "sourceSha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC"
+      "sourceSha256": "939515D2FE94DCE22E1AC2FE2B805B62002F560786BEC8CA11E0613410F95A01"
     },
     {
       "test": "media::conversation_loop::tests::follow_up_stop_projection_preserves_cleanup_and_delivery_failures",

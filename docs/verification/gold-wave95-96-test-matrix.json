@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Claude lane: live conversation barge-in floor honours media.vad.min_fragment_ms; SSH leaf and advisory-exception contract; hosted CI pending",
+  "status": "Claude lane: live-audio catalog rebound for the barge-in floor change; hosted CI pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477614,
-    "sha256": "F49811E500E4D7CFF4E3C03AC6357A941D8E3894CEEC3778A0BB784F8312C117"
+    "bytes": 477562,
+    "sha256": "9A0AD9F17633ECBD6E5DE0BCADEBCDEF79F194F3F9A18E7AF82EAF420F6EEE14"
   },
   "sourceInputs": 2605,
   "requiredNativeTests": [
