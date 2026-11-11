@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-gold-criterion-acceptance/v1",
+  "criteria": [
+    "GOLD-LF-P1-23",
+    "GOLD-LF-001-19"
+  ],
+  "decision": "ACCEPTED_MECHANICAL_TRACKER_GATE",
+  "producer": "a64970eaa1d8af755d25d38ab0e47cf29f702e39",
+  "contract": {
+    "path": "scripts/test_lost_feature_integrity.py",
+    "validator": "validate_plan_leaves",
+    "wiredInto": "validate_contract",
+    "requiredBy": [
+      ".github/workflows/preflight.yml: Run offline packaging and release contracts",
+      ".github/workflows/ci.yml: license-notices / Verify lost-feature inventory contract"
+    ]
+  },
+  "enforced": [
+    "Plans 001, 002 and 003 keep exactly 19, 22 and 24 individually numbered ROAD leaves in order; a missing, duplicated or partial leaf fails.",
+    "A closed plan leaf must carry a dated acceptance and at least one docs/verification JSON record that exists in the tree.",
+    "GOLD-R4-07 cannot be done or partial while any Plan 001 leaf is open (plans/001 names it as primary release gate).",
+    "GOLD-R4-04, GOLD-R4-05, GOLD-R4-06 and GOLD-R4-09 cannot be done or partial while any leaf of Plan 001, 002 or 003 is open (plans/003 owns them and declares plans/001 and plans/002 as dependencies)."
+  ],
+  "tests": [
+    "LostFeatureIntegrityTests.test_plan_parent_cannot_close_before_its_plan_leaves",
+    "LostFeatureIntegrityTests.test_plan_parent_follows_only_its_own_plan",
+    "LostFeatureIntegrityTests.test_all_plan_leaves_done_release_every_parent",
+    "LostFeatureIntegrityTests.test_closed_plan_leaf_requires_dated_existing_evidence",
+    "LostFeatureIntegrityTests.test_plan_leaf_inventory_drift_fails_closed",
+    "LostFeatureIntegrityTests.test_gui_parent_and_all_linked_children_may_complete"
+  ],
+  "hosted": {
+    "workflow": "Preflight",
+    "run": 43053104483,
+    "head": "a64970eaa1d8af755d25d38ab0e47cf29f702e39",
+    "conclusion": "success"
+  },
+  "repairedByGate": [
+    "GOLD-LF-002-09 was closed without an inline dated acceptance; its W1200 record docs/verification/gold-wave1200-managed-installs-acceptance.json is now cited on the leaf."
+  ],
+  "excluded": [
+    "The open Plan 001/002/003 leaves themselves; each remains an open release blocker.",
+    "The content quality of a cited acceptance record; the gate proves presence and dating, not sufficiency.",
+    "GOLD-LF-002-22 and GOLD-LF-003-24, which demand broader publication and evidence rules."
+  ],
+  "localExecutableValidationRan": "Python contract only (24/24 locally); no Rust build or test ran locally."
+}

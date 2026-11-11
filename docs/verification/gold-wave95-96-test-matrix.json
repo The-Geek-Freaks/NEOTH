@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Claude lane: plan-leaf parent guard (GOLD-LF-P1-23), codegraph reference drift test, impact direction semantics test; hosted CI pending",
+  "status": "Claude lane: GOLD-LF-P1-23 and GOLD-LF-001-19 accepted on the mechanical plan-leaf gate; other gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477609,
-    "sha256": "B0E23D21C7A198CAB1E9B98EFF0D5B62E5075440826DE0DF7111B84CF9C9C3EE"
+    "bytes": 477582,
+    "sha256": "7DB06A42B7FBBB5F62AC6F4846FEED14912007B8CA3363442BF762DB57A7AA74"
   },
   "sourceInputs": 2605,
   "requiredNativeTests": [

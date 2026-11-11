@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T15:53:49.0346180Z",
-  "validationStatus": "Claude lane: plan-leaf parent guard (GOLD-LF-P1-23), codegraph reference drift test, impact direction semantics test; hosted CI pending",
+  "capturedUtc": "2026-11-11T15:58:00.5113770Z",
+  "validationStatus": "Claude lane: GOLD-LF-P1-23 and GOLD-LF-001-19 accepted on the mechanical plan-leaf gate; other gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6258,13 +6258,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1635741,
-      "sha256": "8085250B528C8AFB9447D5031E3697C29D37FE34A1E38B1E90335C3A7EA70EF2"
+      "bytes": 1635812,
+      "sha256": "1E8F32C1503809D352B640417E11C92CCCE2664F6708D0D68BD507E6E35BEAA2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2827221,
-      "sha256": "AFFCBD89D5ACE4D9D12460E797461633C3223FB67B39166F047F2A7460902156"
+      "bytes": 2828697,
+      "sha256": "8CE93237F459BC7CE0DECDC7E83162ED517D60ED4F6A3ACFB8AB4F6E8894224D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
