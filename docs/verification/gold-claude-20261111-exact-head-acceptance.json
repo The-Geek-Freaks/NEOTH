@@ -20,7 +20,23 @@
       "nextest": "19867 run, 19867 passed, 32 skipped",
       "junitArtifact": "nextest-junit-linux"
     },
-    "windowsIdentitiesChecked": true
+    "windowsIdentitiesChecked": true,
+    "completion": {
+      "recordedAfterAcceptance": true,
+      "runConclusion": "success",
+      "goldCiAggregate": "success",
+      "macos": {
+        "job": "macos-15 tests / Rust 1.91",
+        "conclusion": "success",
+        "nextest": "19850 run, 19850 passed, 35 skipped"
+      },
+      "windows": {
+        "job": "windows-2022 tests / Rust 1.91",
+        "conclusion": "success",
+        "nextest": "19724 run, 19724 passed, 34 skipped"
+      },
+      "note": "Every job of the run concluded success. Later commits up to 3e8532f1 change only PLAN, docs/verification and packaging/tests; their Preflight runs are green."
+    }
   },
   "requiredTestIdentities": {
     "GOLD-R3-13b": [

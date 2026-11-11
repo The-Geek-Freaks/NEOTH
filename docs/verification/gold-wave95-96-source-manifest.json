@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T19:11:55.1583580Z",
-  "validationStatus": "Claude lane: optional-feature hosted-lane ratchet and unversioned-source ratchet; exact-head CI 43066720078 macOS pending",
+  "capturedUtc": "2026-11-11T21:04:41.0360260Z",
+  "validationStatus": "Claude lane: exact-head CI 43066720078 concluded success on Linux, Windows and macOS; CodeQL Rust still open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6263,8 +6263,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2832327,
-      "sha256": "CD1946883ED237723D540321F9D484DA2BC95CAB8FB23FBE371A9CB8B093B8BC"
+      "bytes": 2832583,
+      "sha256": "9CA07C3B02FB048C7B1A6AB1E2F91F07044DCB24FA3AF9CC53C62270501B91EF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

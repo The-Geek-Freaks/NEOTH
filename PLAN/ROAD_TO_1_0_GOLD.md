@@ -16,8 +16,11 @@ by clause: only ADOPT31-W1 is closable on a green suite; the others have named
 gaps. Evidence: `docs/verification/gold-claude-20261111-open-item-triage.json`
 and `docs/verification/gold-claude-20261111-open-box-audit.json`. CodeQL Rust
 still ends in a runner shutdown, so no Security-complete claim is made. No local
-compile, test or link ran; hosted CI 43066720078 on 0f4971db is the pending
-exact-head evidence. Original backlog below is preserved verbatim.
+compile, test or link ran. Hosted CI 43066720078 on 0f4971db concluded success in
+every job: Linux 19867/19867, Windows 19724/19724 and macOS 19850/19850 tests,
+strict Clippy and format, the feature matrix, live-audio on three platforms and
+the Gold CI aggregate. Commits after 0f4971db change only PLAN, docs/verification
+and packaging contract tests. Original backlog below is preserved verbatim.
 
 **W2064-2066 hosted provider integration repair (2026-10-01):**
 The 325-case producer da0ddd run36904912363 stopped at compilation before
