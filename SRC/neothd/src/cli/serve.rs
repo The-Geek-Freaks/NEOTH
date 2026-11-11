@@ -646,7 +646,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             reasoning_display: false,
                             attachment_paths: Vec::new(),
                         },
-                        min_fragment_ms: crate::media::conversation_loop::DEFAULT_MIN_FRAGMENT_MS,
+                        min_fragment_ms: config.media.vad.barge_in_min_fragment_ms(),
                         task_registry: conversation_tasks.clone(),
                     },
                     capture: crate::media::live_capture::CpalCaptureConfig::default(),

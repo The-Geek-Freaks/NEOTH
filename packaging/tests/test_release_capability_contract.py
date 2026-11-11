@@ -146,6 +146,36 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             self.ci_workflow,
         )
 
+    def test_ssh_dependency_has_no_forbidden_leaf_or_advisory_exception(self) -> None:
+        # GOLD-DEP-RUSSH-01: the resolved SSH client keeps the compression and
+        # RSA leaves out, and its advisories may never be ignored or dismissed.
+        lock = tomllib.loads((ROOT / "SRC" / "Cargo.lock").read_text(encoding="utf-8"))
+        resolved = {
+            name: [package for package in lock["package"] if package["name"] == name]
+            for name in ("russh", "ssh-key")
+        }
+        for name, packages in resolved.items():
+            with self.subTest(package=name):
+                self.assertEqual(len(packages), 1)
+                leaves = {
+                    entry.split(" ", 1)[0] for entry in packages[0]["dependencies"]
+                }
+                self.assertFalse(leaves & {"flate2", "rsa"}, sorted(leaves))
+        self.assertEqual(resolved["russh"][0]["version"], "0.65.0")
+
+        forbidden = (
+            "russh",
+            "ghsa-g9hv-x236-4qp3",
+            "ghsa-cqjc-rmpq-xprq",
+            "ghsa-5xvq-cp9x-6p6r",
+            "ghsa-m65r-rprj-r5rg",
+        )
+        for relative in ("SRC/deny.toml", "SRC/.cargo/audit.toml", ".trivyignore.yaml"):
+            text = (ROOT / relative).read_text(encoding="utf-8").lower()
+            for marker in forbidden:
+                with self.subTest(config=relative, marker=marker):
+                    self.assertNotIn(marker, text)
+
     def test_every_native_desktop_target_uses_the_desktop_release_path(self) -> None:
         matrix = release_matrix(self.workflow)
 

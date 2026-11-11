@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T16:12:01.1316360Z",
-  "validationStatus": "Claude lane: operator-approved Matrix-stack advisory exceptions bounded to 2026-12-01 by the advisory gate; hosted Security pending",
+  "capturedUtc": "2026-11-11T16:54:37.3147570Z",
+  "validationStatus": "Claude lane: live conversation barge-in floor honours media.vad.min_fragment_ms; SSH leaf and advisory-exception contract; hosted CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6103,8 +6103,8 @@
     },
     {
       "path": "packaging/tests/test_release_capability_contract.py",
-      "bytes": 21733,
-      "sha256": "006D0F1F8F6FD4ED97EAE20F0DC16604612EDC00FCE7596935D925AD9318D582"
+      "bytes": 23159,
+      "sha256": "84FE569B658C3AEC0BB57CAC6221A6B438F9EDC3ED33485A51E321BF3C468A3D"
     },
     {
       "path": "packaging/tests/test_roadmap_release_gate.py",
@@ -7648,8 +7648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 186043,
-      "sha256": "2E120D2CE7DE4F6AC63051C26B79A84A93A7AE14C9D8E40DAABA29073EB89D88"
+      "bytes": 186030,
+      "sha256": "A56742E4D41CF92C216AE8D902B47ADE63B0F33FB58E1A387443FD8D5EFFFE98"
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",
@@ -8103,8 +8103,8 @@
     },
     {
       "path": "SRC/neothd/src/config/features.rs",
-      "bytes": 58266,
-      "sha256": "B81D1388BEBDB9E90EDA57DFCBA1AA801540527567361EED0332E6C497A22CEC"
+      "bytes": 59515,
+      "sha256": "939515D2FE94DCE22E1AC2FE2B805B62002F560786BEC8CA11E0613410F95A01"
     },
     {
       "path": "SRC/neothd/src/config/inference.rs",

@@ -836,6 +836,20 @@ impl VadTuning {
         );
         Ok(())
     }
+
+    /// Contiguous speech the live conversation loop requires before an
+    /// utterance may cancel playback (ADOPT31-A6).
+    ///
+    /// The operator's `media.vad.min_fragment_ms` is honoured when it asks for
+    /// a longer fragment. It can never go below the shipped default: that floor
+    /// is what keeps a short transient from interrupting a spoken answer, and
+    /// the loop refuses to start beneath it.
+    pub fn barge_in_min_fragment_ms(&self) -> u64 {
+        u64::from(
+            self.min_fragment_ms
+                .max(crate::media::vad::DEFAULT_MIN_FRAGMENT_MS),
+        )
+    }
 }
 
 /// device for a cloud provider. Audio/image/video are more sensitive than text.
@@ -1216,6 +1230,23 @@ mod vad_tuning_tests {
         );
         assert_eq!(t.hangover_ms, crate::media::vad::DEFAULT_HANGOVER_MS);
         t.validate().expect("shipped defaults must be valid");
+    }
+
+    #[test]
+    fn barge_in_fragment_honours_longer_operator_values_and_keeps_the_floor() {
+        let floor = u64::from(crate::media::vad::DEFAULT_MIN_FRAGMENT_MS);
+        for (configured, expected) in [(0, floor), (60, floor), (100, 100), (240, 240)] {
+            let tuning = VadTuning {
+                min_fragment_ms: configured,
+                ..VadTuning::default()
+            };
+            assert_eq!(
+                tuning.barge_in_min_fragment_ms(),
+                expected,
+                "configured={configured}"
+            );
+        }
+        assert_eq!(VadTuning::default().barge_in_min_fragment_ms(), floor);
     }
 
     #[test]
