@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T17:08:52.7998890Z",
-  "validationStatus": "Claude lane: wire-body output-cap tests (GOLD-R4-14a), bounded CLI reader tests (GOLD-R4-15k1), one-result-per-intent tests (GOLD-LF-P1-01); hosted CI pending",
+  "capturedUtc": "2026-11-11T17:16:15.5805270Z",
+  "validationStatus": "Claude lane: heap-pin three Windows stack-overflowing chat runtime tests; hosted CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -8318,8 +8318,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 103243,
-      "sha256": "371AD5C91DEBFA38ED30B390CD2C989D4E77D8FA59A0606E1AEC1E4845F8A571"
+      "bytes": 103560,
+      "sha256": "002E916E68CD29C13743E7B10CFC90B3539F6E980027B5E4E4AF49B92E181200"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",

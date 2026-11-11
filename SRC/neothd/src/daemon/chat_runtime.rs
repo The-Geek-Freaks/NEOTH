@@ -1735,7 +1735,9 @@ mod tests {
         let (mut sink, mut receiver) =
             super::super::companion_stream::CompanionStreamSink::new(request.request_id);
         {
-            let chat = runtime.execute_companion_stream_turn(
+            // Heap-pinned: this turn future is too large to pin on a Windows
+            // test-thread stack in a debug build (0xc00000fd in hosted CI).
+            let mut chat = Box::pin(runtime.execute_companion_stream_turn(
                 DaemonPlainChatRequest {
                     schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
                     message: request.message,
@@ -1744,8 +1746,7 @@ mod tests {
                 lease.chat_effect_gate(),
                 None,
                 &mut sink,
-            );
-            tokio::pin!(chat);
+            ));
             tokio::select! {
                 result = &mut chat => panic!("completed before first live text: {result:?}"),
                 changed = receiver.changed(), if allow_live => changed.unwrap(),
@@ -1797,21 +1798,23 @@ mod tests {
         incognito: bool,
     ) -> Result<ChatTurnTerminal> {
         let mut sink = DiscardingGuiSink;
-        runtime
-            .execute_gui_stream_turn(
-                message,
-                None,
-                None,
-                admitted_session_id,
-                incognito,
-                false,
-                Vec::new(),
-                crate::consent::EphemeralConsent::default(),
-                chat_turn_pipeline::ChatTurnCancellation::default(),
-                &mut sink,
-                None,
-            )
-            .await
+        // Heap-pinned so a test that drives several turns does not inline one
+        // full turn future per call into its own stack-allocated body; the
+        // multi-turn tests overflowed the Windows debug test stack otherwise.
+        Box::pin(runtime.execute_gui_stream_turn(
+            message,
+            None,
+            None,
+            admitted_session_id,
+            incognito,
+            false,
+            Vec::new(),
+            crate::consent::EphemeralConsent::default(),
+            chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut sink,
+            None,
+        ))
+        .await
     }
 
     #[tokio::test]
