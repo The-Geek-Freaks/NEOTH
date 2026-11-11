@@ -1,0 +1,69 @@
+{
+  "schema": "neoth-gold-criterion-acceptance/v1",
+  "criteria": [
+    "GOLD-R3-13b",
+    "CRG-02 seed and direction leaf",
+    "ADOPT31-W1"
+  ],
+  "decision": "ACCEPTED_EXACT_HEAD_HOSTED_REGRESSIONS",
+  "producer": "0f4971db5caa76a1b3eefc9b500b4e2dbbe7f1dc",
+  "hosted": {
+    "workflow": "CI",
+    "run": 43066720078,
+    "head": "0f4971db5caa76a1b3eefc9b500b4e2dbbe7f1dc",
+    "legs": "Linux quality 19867/19867 and windows-2022 19724/19724 passed, each identity verified in both JUnit reports; the macos-15 leg was still compiling",
+    "linux": {
+      "job": "Linux quality / Rust 1.91",
+      "conclusion": "success",
+      "fmt": "success",
+      "clippyWorkspaceAllTargets": "success",
+      "nextest": "19867 run, 19867 passed, 32 skipped",
+      "junitArtifact": "nextest-junit-linux"
+    },
+    "windowsIdentitiesChecked": true
+  },
+  "requiredTestIdentities": {
+    "GOLD-R3-13b": [
+      "cli::docgen::tests::reference_names_exactly_the_runtime_codegraph_tools",
+      "cli::docgen::tests::cli_commands_md_is_up_to_date",
+      "mcp::codegraph_server::tests::tool_names_constant_matches_codegraph_tools_list",
+      "cli::mcp::tests::built_in_codegraph_registration_is_hardened_and_complete",
+      "cli::mcp::tests::codegraph_registration_repairs_trusted_legacy_catalogue_and_preserves_non_codegraph_extras",
+      "cli::mcp::tests::codegraph_registration_refuses_legacy_lookalike_without_widening_its_security",
+      "cli::mcp::tests::codegraph_registration_refuses_unrecognized_codegraph_catalogue",
+      "cli::mcp::tests::codegraph_registration_rejects_current_catalogue_with_unknown_codegraph_tool",
+      "cli::mcp::tests::codegraph_registration_rejects_current_catalogue_with_non_codegraph_extra",
+      "cli::mcp::tests::codegraph_registration_rejects_current_catalogue_with_duplicate_builtin",
+      "cli::mcp::tests::codegraph_install_refuses_custom_command_or_invocation_without_mutating_it"
+    ],
+    "CRG-02 seed and direction leaf": [
+      "code_map::impact::tests::direction_semantics_separate_callers_callees_and_their_union",
+      "code_map::impact::tests::file_seed_expands_declarations_and_mixed_missing_seeds_are_reported",
+      "code_map::impact::tests::all_invalid_seeds_fail_closed",
+      "code_map::impact::tests::same_name_in_another_root_never_enters_result",
+      "code_map::impact::tests::unresolved_sources_targets_and_reference_edges_remain_visible"
+    ],
+    "ADOPT31-W1": [
+      "adw::goal::tests::goal_rejects_empty_acceptance",
+      "adw::goal::tests::goal_requires_a_required_criterion",
+      "adw::goal::tests::goal_rejects_duplicate_criterion_ids",
+      "adw::goal::tests::criterion_rejects_whitespace_only_statement",
+      "adw::goal::tests::every_evidence_payload_rejects_empty_values",
+      "adw::goal::tests::council_threshold_is_explicit_and_bounded",
+      "adw::goal::tests::open_questions_keep_valid_goal_in_draft",
+      "adw::goal::tests::no_open_questions_marks_valid_goal_ready",
+      "adw::goal::tests::coding_intent_reuses_existing_classifier_and_wins_precedence",
+      "adw::goal::tests::general_task_intent_reuses_existing_classifier",
+      "adw::goal::tests::prompt_boundary_defangs_but_display_accessor_stays_audit_only",
+      "adw::goal::tests::deserialization_rejects_forged_classification_and_invalid_goal",
+      "adw::goal::tests::deserialization_rejects_invalid_leaf_payloads"
+    ]
+  },
+  "method": "Each identity was looked up as a passed testcase of suite neoth in the hosted nextest JUnit report of the named run.",
+  "excluded": [
+    "CodeQL Rust: the Security workflow still ends in a runner shutdown during Analyze.",
+    "Consumer, surface, packaged clean-machine and native acceptance of CRG-02.",
+    "Every ADOPT31 item after W1."
+  ],
+  "localExecutableValidationRan": false
+}

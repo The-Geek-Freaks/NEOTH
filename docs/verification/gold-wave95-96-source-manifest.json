@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T17:26:41.0281930Z",
-  "validationStatus": "Claude lane: open-item triage and clause audit published; hosted CI 43066720078 pending",
+  "capturedUtc": "2026-11-11T19:07:14.4733970Z",
+  "validationStatus": "Claude lane: GOLD-R3-13b, CRG-02 seed leaf and ADOPT31-W1 accepted on exact-head CI 43066720078 (Linux and Windows green; macOS pending)",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6263,8 +6263,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2830085,
-      "sha256": "13369B9645FA15D9359E0A678CFEFC41588490C713F082F50DB2CE3437EA623E"
+      "bytes": 2832327,
+      "sha256": "CD1946883ED237723D540321F9D484DA2BC95CAB8FB23FBE371A9CB8B093B8BC"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
