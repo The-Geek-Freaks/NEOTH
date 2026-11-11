@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Claude lane: GOLD-LF-P1-23 and GOLD-LF-001-19 accepted on the mechanical plan-leaf gate; other gates pending",
+  "status": "Claude lane: operator-approved Matrix-stack advisory exceptions bounded to 2026-12-01 by the advisory gate; hosted Security pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 477582,
-    "sha256": "7DB06A42B7FBBB5F62AC6F4846FEED14912007B8CA3363442BF762DB57A7AA74"
+    "bytes": 477605,
+    "sha256": "3C46DDC8D37DCCEA0889F0190401C6F5D204DD04C46A64FA581A4CD4D2162EDF"
   },
   "sourceInputs": 2605,
   "requiredNativeTests": [

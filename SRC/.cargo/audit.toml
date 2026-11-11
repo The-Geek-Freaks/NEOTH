@@ -27,4 +27,6 @@ ignore = [
     "RUSTSEC-2026-0370", # zvariant retired into zbus 6, no vuln — transitive via secret-service/zbus 5.15; see deny.toml
     "RUSTSEC-2026-0371", # zbus_names retired into zbus 6, no vuln — same chain
     "RUSTSEC-2026-0372", # zvariant_derive retired into zbus 6, no vuln — same chain
+    "RUSTSEC-2026-0451", # vodozemac 0.10 via pinned matrix-sdk 0.18; operator-approved, expires 2026-12-01 (gate-enforced)
+    "RUSTSEC-2026-0459", # libsqlite3-sys 0.35 via rusqlite 0.37 / matrix-sdk-sqlite; operator-approved, expires 2026-12-01 (gate-enforced)
 ]

@@ -52,6 +52,18 @@ REVIEWED_PACKAGE_VERSIONS = {
 }
 
 
+# Operator-approved 2026-11-11. Both advisories are held in place by the pinned
+# Matrix stack: matrix-sdk 0.18 fixes vodozemac 0.10 and, through
+# matrix-sdk-sqlite, rusqlite 0.37 with its bundled SQLite. Each entry names
+# the affected crate and its first patched release. The exception is bounded by
+# date and fails closed once the resolved graph no longer needs it.
+MATRIX_STACK_EXPIRY_DATE = date(2026, 12, 1)
+MATRIX_STACK_ADVISORIES = {
+    "RUSTSEC-2026-0451": ("vodozemac", (0, 11, 2)),
+    "RUSTSEC-2026-0459": ("libsqlite3-sys", (0, 39, 0)),
+}
+
+
 class AdvisoryExceptionGateError(ValueError):
     """The temporary advisory exception no longer has its required evidence."""
 
@@ -443,6 +455,96 @@ def require_no_bitmaps(metadata: object) -> None:
         )
 
 
+def _release_triple(version: object) -> tuple[int, int, int] | None:
+    if not isinstance(version, str):
+        return None
+    parts = version.split("+", 1)[0].split("-", 1)[0].split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def require_matrix_stack_exceptions(
+    audit_config: dict[str, object],
+    deny_config: dict[str, object],
+    metadata: object,
+    *,
+    today: date,
+) -> str:
+    """Bound the Matrix-stack advisory exceptions and return their state."""
+
+    audit_advisories = audit_config.get("advisories")
+    deny_advisories = deny_config.get("advisories")
+    if not isinstance(audit_advisories, dict):
+        raise AdvisoryExceptionGateError("audit.toml has no [advisories] table")
+    if not isinstance(deny_advisories, dict):
+        raise AdvisoryExceptionGateError("deny.toml has no [advisories] table")
+    audit_ignore = audit_advisories.get("ignore")
+    deny_ignore = deny_advisories.get("ignore")
+    if not isinstance(audit_ignore, list) or not isinstance(deny_ignore, list):
+        raise AdvisoryExceptionGateError(
+            "audit.toml and deny.toml [advisories].ignore must be lists"
+        )
+    audit_counts = Counter(
+        value for value in audit_ignore if value in MATRIX_STACK_ADVISORIES
+    )
+    deny_entries = [
+        entry
+        for entry in deny_ignore
+        if isinstance(entry, dict) and entry.get("id") in MATRIX_STACK_ADVISORIES
+    ]
+    deny_counts = Counter(entry["id"] for entry in deny_entries)
+    if not audit_counts and not deny_counts:
+        return "closed"
+
+    if today >= MATRIX_STACK_EXPIRY_DATE:
+        raise AdvisoryExceptionGateError(
+            "Matrix-stack advisory exceptions expired on "
+            f"{MATRIX_STACK_EXPIRY_DATE.isoformat()}; remove or explicitly re-review them"
+        )
+    if audit_counts != deny_counts or any(
+        count != 1 for count in audit_counts.values()
+    ):
+        raise AdvisoryExceptionGateError(
+            "Matrix-stack advisory exceptions must occur exactly once in both "
+            "SRC/.cargo/audit.toml and SRC/deny.toml; "
+            f"audit={dict(audit_counts)!r}, deny={dict(deny_counts)!r}"
+        )
+    for entry in deny_entries:
+        reason = entry.get("reason")
+        if (
+            not isinstance(reason, str)
+            or MATRIX_STACK_EXPIRY_DATE.isoformat() not in reason
+        ):
+            raise AdvisoryExceptionGateError(
+                f"{entry['id']} deny.toml reason must state the "
+                f"{MATRIX_STACK_EXPIRY_DATE.isoformat()} expiry"
+            )
+
+    packages, _, _ = _metadata_packages(metadata)
+    for identifier in sorted(audit_counts):
+        name, patched = MATRIX_STACK_ADVISORIES[identifier]
+        versions = [
+            _release_triple(package.get("version"))
+            for package in packages.values()
+            if package.get("name") == name
+        ]
+        if not versions:
+            raise AdvisoryExceptionGateError(
+                f"{identifier} exception is stale: {name} is no longer resolved"
+            )
+        if any(version is None for version in versions):
+            raise AdvisoryExceptionGateError(
+                f"{identifier} exception cannot be evaluated: {name} has an "
+                "unparseable resolved version"
+            )
+        if all(version >= patched for version in versions):  # type: ignore[operator]
+            raise AdvisoryExceptionGateError(
+                f"{identifier} exception is stale: every resolved {name} is patched"
+            )
+    return "active"
+
+
 def validate(
     *,
     audit_config: dict[str, object],
@@ -452,6 +554,7 @@ def validate(
 ) -> str:
     """Validate exactly one fail-closed exception state and return its name."""
 
+    require_matrix_stack_exceptions(audit_config, deny_config, metadata, today=today)
     audit_counts, deny_counts = _configuration_counts(audit_config, deny_config)
     if not audit_counts and not deny_counts:
         require_closed_configurations(audit_config, deny_config)

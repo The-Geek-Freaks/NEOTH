@@ -188,6 +188,23 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant standalone crate retired into zbus 6 — transitive via secret-service 4.0 and zbus 5.15 (ashpd, ksni, Slint); maintenance notice, no vulnerability, no compatible upgrade. Drop when those consumers adopt zbus 6." },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names standalone crate retired into zbus 6 — same secret-service/zbus 5.15 chain; maintenance notice, no vulnerability, no compatible upgrade. Drop with RUSTSEC-2026-0370." },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive standalone crate retired into zbus 6 — same secret-service/zbus 5.15 chain; maintenance notice, no vulnerability, no compatible upgrade. Drop with RUSTSEC-2026-0370." },
+    # Operator-approved temporary exceptions (Alex, 2026-11-11). Both are real
+    # vulnerabilities whose fixes need crate lines the pinned Matrix stack does
+    # not accept: matrix-sdk 0.18 and its matrix-sdk-sqlite fix vodozemac 0.10
+    # and rusqlite 0.37 (one `links = "sqlite3"` graph for the whole product).
+    # packaging/advisory_exception_gate.py enforces the date, the audit.toml
+    # mirror and removal once the resolved graph no longer needs them.
+    #
+    # vodozemac <= 0.11.1: the Olm root-key ratchet leaves root/chain key copies
+    # in freed heap memory. Exploitation needs a separate way to read this
+    # process's memory, a core dump or swap; it weakens forward secrecy of the
+    # opt-in Matrix channel's Olm sessions. There is no remote vector.
+    { id = "RUSTSEC-2026-0451", reason = "vodozemac 0.10 via pinned matrix-sdk 0.18 — degraded Olm key zeroization; needs local process-memory disclosure, Matrix channel only. Operator-approved; expires 2026-12-01 with the Matrix stack bump and must be removed or re-reviewed then." },
+    # libsqlite3-sys < 0.39 bundles SQLite < 3.54 (CVE-2026-119375): a crafted
+    # database plus `-wal` pair with mismatched page sizes can return
+    # uninitialized page-cache memory. The vector is local and requires NEOTH
+    # to open a database that a less trusted party wrote next to its WAL file.
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys 0.35 (bundled SQLite < 3.54) via rusqlite 0.37, pinned by matrix-sdk-sqlite 0.18 — local crafted db/-wal pair only. Operator-approved; expires 2026-12-01 with the Matrix stack bump and must be removed or re-reviewed then." },
 ]
 
 [sources]

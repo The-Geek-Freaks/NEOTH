@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T15:58:00.5113770Z",
-  "validationStatus": "Claude lane: GOLD-LF-P1-23 and GOLD-LF-001-19 accepted on the mechanical plan-leaf gate; other gates pending",
+  "capturedUtc": "2026-11-11T16:12:01.1316360Z",
+  "validationStatus": "Claude lane: operator-approved Matrix-stack advisory exceptions bounded to 2026-12-01 by the advisory gate; hosted Security pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -388,8 +388,8 @@
     },
     {
       "path": ".trivyignore.yaml",
-      "bytes": 2353,
-      "sha256": "DECE4F4948A88A5D8F0750335D510349111C1E9DB61BFC1831A6D0A3F9FAF9BD"
+      "bytes": 3303,
+      "sha256": "75142B9E8FA2A1BB6D147EE0F8FF2A2A4AF92C3C434AF9BF486148F1B1303366"
     },
     {
       "path": "apps/neoth_companion/analysis_options.yaml",
@@ -5828,8 +5828,8 @@
     },
     {
       "path": "packaging/advisory_exception_gate.py",
-      "bytes": 20656,
-      "sha256": "1443FC1E2F862AB31B56A4FF0BB5D7B238C4D16C5CE095002B202D71B52CEBB2"
+      "bytes": 24928,
+      "sha256": "A0A5E57941ABC06E189E81864B67A75D334E017CEB7462166A795B965FA38858"
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
@@ -5904,7 +5904,7 @@
     {
       "path": "packaging/matrix_backport_provenance_gate.py",
       "bytes": 54050,
-      "sha256": "E03C5E46B441E4BBF2F0E5EF6EB77C4BB9095FE7132B5F938E873ED619C8D362"
+      "sha256": "D1CEB5BA68507AD2C57B6F58105D057C34CAC35D1327224466FF5F9EBA3C3741"
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
@@ -6003,8 +6003,8 @@
     },
     {
       "path": "packaging/tests/test_advisory_exception_gate.py",
-      "bytes": 11007,
-      "sha256": "676D511CACE64338ACB4DBB8D4993EC328EC1AEB5055AAA15250B47904663EEB"
+      "bytes": 16182,
+      "sha256": "5A72F6214682ACB7DBDC14A1B2FD4FC4A8673D449536153F003AE560F47FA9A1"
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
@@ -6348,8 +6348,8 @@
     },
     {
       "path": "SRC/.cargo/audit.toml",
-      "bytes": 2160,
-      "sha256": "5382940776859B3BDDC949DE606151F69EA942A576721E4B2463E3DC7FC2F0E3"
+      "bytes": 2424,
+      "sha256": "EE41DD6E686071DBEA17DFB5E8179F9868F7AC98B68A6403790996032F241346"
     },
     {
       "path": "SRC/.config/nextest.toml",
@@ -6368,8 +6368,8 @@
     },
     {
       "path": "SRC/deny.toml",
-      "bytes": 12317,
-      "sha256": "84EE7C52391C1CCB25F11CCEE29CB73C8359551C5DBB697E252041D76D8B27A3"
+      "bytes": 13973,
+      "sha256": "9167773C68F4D06075EFEA7D45E7FA7994799214B8413ED6C69FAFF5089E71DF"
     },
     {
       "path": "SRC/freedom.yaml.example",

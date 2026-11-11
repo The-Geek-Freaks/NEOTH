@@ -87,6 +87,128 @@ def closed_metadata_fixture() -> dict[str, Any]:
     }
 
 
+def matrix_stack_configs() -> tuple[dict[str, Any], dict[str, Any]]:
+    expiry = gate.MATRIX_STACK_EXPIRY_DATE.isoformat()
+    audit: dict[str, Any] = {"advisories": {"ignore": list(gate.MATRIX_STACK_ADVISORIES)}}
+    deny: dict[str, Any] = {
+        "advisories": {
+            "ignore": [
+                {"id": identifier, "reason": f"fixture; expires {expiry}"}
+                for identifier in gate.MATRIX_STACK_ADVISORIES
+            ],
+        },
+    }
+    return audit, deny
+
+
+def matrix_stack_metadata(
+    vodozemac: str | None = "0.10.0", sqlite: str | None = "0.35.0"
+) -> dict[str, Any]:
+    metadata = closed_metadata_fixture()
+    for name, version in (("vodozemac", vodozemac), ("libsqlite3-sys", sqlite)):
+        if version is not None:
+            metadata["packages"].append(package(name, name, version))
+            metadata["resolve"]["nodes"].append({"id": name, "dependencies": []})
+    return metadata
+
+
+class MatrixStackExceptionTests(unittest.TestCase):
+    TODAY = date(2026, 11, 12)
+
+    def check(
+        self,
+        audit: dict[str, Any],
+        deny: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        *,
+        today: date | None = None,
+    ) -> str:
+        return gate.require_matrix_stack_exceptions(
+            audit,
+            deny,
+            matrix_stack_metadata() if metadata is None else metadata,
+            today=self.TODAY if today is None else today,
+        )
+
+    def test_synchronized_exception_is_active_and_keeps_the_bitmaps_state(self) -> None:
+        audit, deny = matrix_stack_configs()
+        self.assertEqual(self.check(audit, deny), "active")
+        self.assertEqual(
+            gate.validate(
+                audit_config=audit,
+                deny_config=deny,
+                metadata=matrix_stack_metadata(),
+                today=self.TODAY,
+            ),
+            "closed",
+        )
+
+    def test_absent_exception_is_closed_without_reading_the_graph(self) -> None:
+        empty: dict[str, Any] = {"advisories": {"ignore": []}}
+        self.assertEqual(
+            self.check(empty, deepcopy(empty), today=gate.MATRIX_STACK_EXPIRY_DATE),
+            "closed",
+        )
+
+    def test_expiry_is_exclusive_and_fails_closed(self) -> None:
+        audit, deny = matrix_stack_configs()
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "expired on 2026-12-01"):
+            self.check(audit, deny, today=gate.MATRIX_STACK_EXPIRY_DATE)
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "expired on 2026-12-01"):
+            gate.validate(
+                audit_config=audit,
+                deny_config=deny,
+                metadata=matrix_stack_metadata(),
+                today=gate.MATRIX_STACK_EXPIRY_DATE,
+            )
+
+    def test_one_sided_or_duplicate_exception_fails_closed(self) -> None:
+        audit, deny = matrix_stack_configs()
+        one_sided = deepcopy(audit)
+        one_sided["advisories"]["ignore"].pop()
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "exactly once"):
+            self.check(one_sided, deny)
+        duplicate = deepcopy(deny)
+        duplicate["advisories"]["ignore"].append(deepcopy(deny["advisories"]["ignore"][0]))
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "exactly once"):
+            self.check(audit, duplicate)
+        deny_only: dict[str, Any] = {"advisories": {"ignore": []}}
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "exactly once"):
+            self.check(deny_only, deny)
+
+    def test_reason_must_state_the_expiry(self) -> None:
+        audit, deny = matrix_stack_configs()
+        deny["advisories"]["ignore"][0]["reason"] = "no date"
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "must state the 2026-12-01"):
+            self.check(audit, deny)
+
+    def test_stale_exception_fails_once_the_graph_no_longer_needs_it(self) -> None:
+        audit, deny = matrix_stack_configs()
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "vodozemac is no longer"):
+            self.check(audit, deny, matrix_stack_metadata(vodozemac=None))
+        with self.assertRaisesRegex(
+            gate.AdvisoryExceptionGateError, "every resolved vodozemac is patched"
+        ):
+            self.check(audit, deny, matrix_stack_metadata(vodozemac="0.11.2"))
+        with self.assertRaisesRegex(
+            gate.AdvisoryExceptionGateError, "every resolved libsqlite3-sys is patched"
+        ):
+            self.check(audit, deny, matrix_stack_metadata(sqlite="0.39.1"))
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "unparseable"):
+            self.check(audit, deny, matrix_stack_metadata(sqlite="next"))
+
+    def test_checked_in_configuration_is_synchronized_or_removed(self) -> None:
+        # Present entries must be mirrored, dated and reasoned; removing both
+        # with the Matrix stack bump is the other valid state.
+        self.assertIn(
+            self.check(
+                gate._load_toml(gate.DEFAULT_AUDIT_CONFIG),
+                gate._load_toml(gate.DEFAULT_DENY_CONFIG),
+            ),
+            {"active", "closed"},
+        )
+
+
 class AdvisoryExceptionGateTests(unittest.TestCase):
     def validate(
         self, metadata: object | None = None, *, today: date = date(2026, 11, 12)

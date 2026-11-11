@@ -19,6 +19,30 @@ vulnerabilities:
   - id: RUSTSEC-2026-0371 # zbus_names; same chain.
   - id: RUSTSEC-2026-0372 # zvariant_derive; same chain.
 
+  # Operator-approved temporary exceptions (2026-11-11), mirrored from
+  # SRC/deny.toml and bounded by packaging/advisory_exception_gate.py.
+  - id: RUSTSEC-2026-0451
+    expired_at: 2026-12-01
+    statement: >-
+      vodozemac 0.10 through the pinned matrix-sdk 0.18; degraded Olm key
+      zeroization needs local process-memory disclosure. Removed with the
+      Matrix stack bump.
+  - id: GHSA-v27v-f96q-qhjq
+    expired_at: 2026-12-01
+    statement: Alias of RUSTSEC-2026-0451.
+  - id: RUSTSEC-2026-0459
+    expired_at: 2026-12-01
+    statement: >-
+      libsqlite3-sys 0.35 (bundled SQLite before 3.54) through rusqlite 0.37,
+      pinned by matrix-sdk-sqlite 0.18; local crafted database and WAL pair
+      only. Removed with the Matrix stack bump.
+  - id: CVE-2026-119375
+    expired_at: 2026-12-01
+    statement: Alias of RUSTSEC-2026-0459.
+  - id: GHSA-72w2-rjgg-q729
+    expired_at: 2026-12-01
+    statement: Alias of RUSTSEC-2026-0459.
+
   - id: GHSA-4w2j-m93h-cj5j
     paths:
       - SRC/vendor/matrix-sdk/Cargo.lock
