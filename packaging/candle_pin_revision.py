@@ -21,6 +21,15 @@ _SPEC = "packaging/vendor-provenance/candle-core-0.8.4-zip9.json"
 _REVISION = "packaging/vendor-provenance/candle-core-0.8.4-pin-revision.json"
 _PATCH = "packaging/vendor-provenance/zip9.0.5-russh0.64.1.patch"
 _SSH_REVISION = "packaging/vendor-provenance/ssh0.65.0-pin-revision.json"
+_ADVISORY_REVISION = "packaging/vendor-provenance/advisory-20261111-pin-revision.json"
+# RUSTSEC-2026-0424 (wasmtime), -0482 (cap-primitives through the cap-std
+# family) and -0486 (rustix): patch-level pin moves only.
+_ADVISORY_EDITS = [
+    ('wasmtime = { version = "=36.0.19"', 'wasmtime = { version = "=36.0.20"'),
+    ('cap-std    = "=4.0.2"', 'cap-std    = "=4.0.3"'),
+    ('cap-fs-ext = "=4.0.2"', 'cap-fs-ext = "=4.0.3"'),
+    ('rustix      = { version = "=1.1.4"', 'rustix      = { version = "=1.1.6"'),
+]
 
 
 def _require(condition, message):
@@ -89,6 +98,43 @@ def _ssh_predecessor(root: Path, current: bytes, expected: str) -> bytes:
     return previous
 
 
+def _advisory_predecessor(root: Path, current: bytes) -> bytes:
+    """Peel the exact advisory-only pin successor above the SSH successor.
+
+    The receipt binds the SSH receipt it extends, so it can neither stand alone
+    nor be reordered; only the four fixed patch-level pin substitutions exist.
+    """
+    if not (Path(root) / _ADVISORY_REVISION).exists():
+        return current
+    receipt = json.loads(_read(root, _ADVISORY_REVISION), object_pairs_hook=_object)
+    _require(isinstance(receipt, dict) and set(receipt) == {
+        "schema", "predecessorRevisionSha256", "path", "before", "after", "edits"
+    }, "unexpected advisory successor fields")
+    _require(receipt["schema"] == "neoth.advisory-pin-successor.v1",
+             "advisory successor schema")
+    _require((Path(root) / _SSH_REVISION).exists(),
+             "advisory successor lacks predecessor")
+    _require(_digest(_read(root, _SSH_REVISION))
+             == _sha(receipt["predecessorRevisionSha256"]),
+             "advisory predecessor receipt differs")
+    _require(receipt["path"] == "SRC/neothd/Cargo.toml",
+             "advisory successor path")
+    _require(receipt["edits"] == [
+        {"before": old, "after": new} for old, new in _ADVISORY_EDITS
+    ], "advisory successor edits")
+    _require(_digest(current) == _sha(receipt["after"]),
+             "advisory successor effective digest")
+    previous = current
+    for old, new in _ADVISORY_EDITS:
+        old, new = old.encode("ascii"), new.encode("ascii")
+        _require(previous.count(new) == 1 and previous.count(old) == 0,
+                 "ambiguous advisory successor substitution")
+        previous = previous.replace(new, old, 1)
+    _require(_digest(previous) == _sha(receipt["before"]),
+             "advisory successor reconstructed digest")
+    return previous
+
+
 def revision_sources(root: Path, spec: dict) -> dict[str, bytes]:
     """Return original postimages after proving this one exact pin-only revision.
 
@@ -149,6 +195,7 @@ def revision_sources(root: Path, spec: dict) -> dict[str, bytes]:
                  "revision predecessor is not the original postimage")
         current = _read(root, path)
         if path == "SRC/neothd/Cargo.toml":
+            current = _advisory_predecessor(root, current)
             current = _ssh_predecessor(root, current, change["after"])
         _require(_digest(current) == _sha(change["after"]), "effective source digest")
         previous = current

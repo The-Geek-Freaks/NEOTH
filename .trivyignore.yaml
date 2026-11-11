@@ -14,6 +14,10 @@ vulnerabilities:
   - id: RUSTSEC-2026-0206 # rustybuzz; no compatible safe Slint/usvg/lopdf upgrade.
   - id: RUSTSEC-2026-0194 # quick-xml; build-time vendored wayland scanner only.
   - id: RUSTSEC-2026-0195 # quick-xml; build-time vendored wayland scanner only.
+  - id: RUSTSEC-2026-0441 # pin-utils; archived, transitive only.
+  - id: RUSTSEC-2026-0370 # zvariant; retired into zbus 6, transitive via secret-service/zbus 5.15.
+  - id: RUSTSEC-2026-0371 # zbus_names; same chain.
+  - id: RUSTSEC-2026-0372 # zvariant_derive; same chain.
 
   - id: GHSA-4w2j-m93h-cj5j
     paths:
@@ -23,6 +27,16 @@ vulnerabilities:
       The immutable authenticated Matrix SDK reference lock is not the root
       workspace resolver; the patched root workspace lock is enforced by the
       Matrix provenance gate and resolves quinn-proto 0.11.18.
+
+  - id: GHSA-82j2-j2ch-gfr8
+    paths:
+      - SRC/vendor/candle-core/Cargo.lock
+    expired_at: 2026-12-01
+    statement: >-
+      The authenticated vendored candle-core archive carries its upstream
+      reference lock, which Cargo never reads for a path dependency; it is not
+      the root workspace resolver. The root SRC/Cargo.lock resolves
+      rustls-webpki 0.103.16, which contains the fix.
 secrets:
   - id: gcp-service-account
     paths:

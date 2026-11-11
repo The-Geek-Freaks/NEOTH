@@ -23,4 +23,8 @@ ignore = [
     "RUSTSEC-2026-0206", # rustybuzz unmaintained — latest Slint/usvg graph; no safe upgrade, see deny.toml
     "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner; see deny.toml
     "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same build-time-only chain; runtime copies are 0.41
+    "RUSTSEC-2026-0441", # pin-utils archived, no vuln — transitive only; see deny.toml
+    "RUSTSEC-2026-0370", # zvariant retired into zbus 6, no vuln — transitive via secret-service/zbus 5.15; see deny.toml
+    "RUSTSEC-2026-0371", # zbus_names retired into zbus 6, no vuln — same chain
+    "RUSTSEC-2026-0372", # zvariant_derive retired into zbus 6, no vuln — same chain
 ]

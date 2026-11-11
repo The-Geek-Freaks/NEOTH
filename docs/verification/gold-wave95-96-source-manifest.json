@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-11-11T15:18:15.7576470Z",
-  "validationStatus": "Claude lane: exact-head CI repair of 7b2b7fbe (clippy, 7 fixture drifts, CLI reference, Bedrock/Cohere terminals); hosted runtime pending",
+  "capturedUtc": "2026-11-11T15:39:30.8045850Z",
+  "validationStatus": "Claude lane: advisory remediation (wasmtime, cap-std family, rustix, tokio, pulldown-cmark, yanked crates) with advisory pin successor; hosted Security and CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -388,8 +388,8 @@
     },
     {
       "path": ".trivyignore.yaml",
-      "bytes": 1676,
-      "sha256": "F301C42597AEA73F5FD93DCFC0204EEF2302A976AFF45DA6F51F89A6AFFC5632"
+      "bytes": 2353,
+      "sha256": "DECE4F4948A88A5D8F0750335D510349111C1E9DB61BFC1831A6D0A3F9FAF9BD"
     },
     {
       "path": "apps/neoth_companion/analysis_options.yaml",
@@ -4689,7 +4689,7 @@
     {
       "path": "docs/verification/gold-wave2635-native-dependencies.json",
       "bytes": 5082,
-      "sha256": "04878D2F0D1866DDC2672A570F959F3DF3AFFF2280F6ABDA1EED9836D387C154"
+      "sha256": "BEE54CDD092C2AB4C8AE598FD04A76C4F25C05C995702A595986BF6D37C6817C"
     },
     {
       "path": "docs/verification/gold-wave2636-acquisition-fixture-repair.json",
@@ -4809,7 +4809,7 @@
     {
       "path": "docs/verification/gold-wave2664-ssh-advisory-remediation.json",
       "bytes": 9955,
-      "sha256": "603E4FFCD727D93B3D822063EBC61F9AC0C09C7B6C578271D9872B537B87E090"
+      "sha256": "B9C7C314800E9A01E4C81C0EC51365B9352D59F2A6A5E883A4B51D21575BB751"
     },
     {
       "path": "docs/verification/gold-wave2665-ssh-provenance-successor.json",
@@ -5838,13 +5838,13 @@
     },
     {
       "path": "packaging/candle_pin_revision.py",
-      "bytes": 9146,
-      "sha256": "ED94B033E075D542C32F36EAAE8108AA7D5F09A7FAA0CB210CE69B435BBE11C2"
+      "bytes": 11544,
+      "sha256": "7A3D89BCE188CB910BEC16B322D34A9D6C5604B4752EB78882854C55E086B68C"
     },
     {
       "path": "packaging/candle_zip_migration.py",
       "bytes": 13714,
-      "sha256": "F895579C8A44A656ED9AA1247FBEBFE454A8D636BA640864CDA52B855B47F819"
+      "sha256": "D5796897E524983853C71E064C8CE5B5EE56C723412B5AF2809C4DB9A4736ECA"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -5904,7 +5904,7 @@
     {
       "path": "packaging/matrix_backport_provenance_gate.py",
       "bytes": 54050,
-      "sha256": "B1F73A37364E08085146C6247DFE752FFB35AE03DF46AA98333345539A76E9F4"
+      "sha256": "E03C5E46B441E4BBF2F0E5EF6EB77C4BB9095FE7132B5F938E873ED619C8D362"
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
@@ -5964,7 +5964,7 @@
     {
       "path": "packaging/qualify_pin_revision.py",
       "bytes": 18001,
-      "sha256": "6FFB2E8606B636B94CC13F8A25C45DF13FBCF619F2FFD4032C0D2C4FBCBA7BA2"
+      "sha256": "98CB1739FE1DE3B049C4ADEE24CCBC1B4DF9F53F9C5324ADD6B90FBCBB1BD7FA"
     },
     {
       "path": "packaging/roadmap_release_gate.py",
@@ -5973,8 +5973,8 @@
     },
     {
       "path": "packaging/rust-license-snapshots.json",
-      "bytes": 1374317,
-      "sha256": "D9486D54A6DA51F2B243E1E9CC8A96EB5BB3C9999D54F3FBE9A4FFD78D82432B"
+      "bytes": 1402012,
+      "sha256": "AF6902F041AA2E755F9BDD4DA32EC5915356B56F45E793836DE0C92F1CA4D19B"
     },
     {
       "path": "packaging/specialize_silero.py",
@@ -5988,8 +5988,8 @@
     },
     {
       "path": "packaging/test_ssh_pin_revision.py",
-      "bytes": 6899,
-      "sha256": "7565399CCAD271987FAAB772D76D71E7FA021E3C1E4A3D787AC0CA92501E7F66"
+      "bytes": 12576,
+      "sha256": "D823356D572786E51129DFAA812B82B8A4BE371C9ED8C511B12313D12E733425"
     },
     {
       "path": "packaging/tests/citation_acceptance.py",
@@ -6348,8 +6348,8 @@
     },
     {
       "path": "SRC/.cargo/audit.toml",
-      "bytes": 1777,
-      "sha256": "0AABD57FBBBCFC543BAF0289AB69FFD7F6692D2AE1C1CDDDAFA92B45E9CC3E67"
+      "bytes": 2160,
+      "sha256": "5382940776859B3BDDC949DE606151F69EA942A576721E4B2463E3DC7FC2F0E3"
     },
     {
       "path": "SRC/.config/nextest.toml",
@@ -6358,8 +6358,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 387150,
-      "sha256": "969FA9A6BA14D36F54EA10974E146D774A424D91C6CC6885146A4246A4B5C9C7"
+      "bytes": 387145,
+      "sha256": "0090F42EF735452A3100393911CB9332FF23F86A0954952377373223A4DC8D74"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -6368,8 +6368,8 @@
     },
     {
       "path": "SRC/deny.toml",
-      "bytes": 10633,
-      "sha256": "94DFFB7A9C24929C2BFE4F60BD40A5F631F2F9C48463CA072A3C23222DD29D6C"
+      "bytes": 12317,
+      "sha256": "84EE7C52391C1CCB25F11CCEE29CB73C8359551C5DBB697E252041D76D8B27A3"
     },
     {
       "path": "SRC/freedom.yaml.example",
@@ -7004,7 +7004,7 @@
     {
       "path": "SRC/neothd/Cargo.toml",
       "bytes": 46688,
-      "sha256": "03D269218BBD9E32E72541CAA6F99CB14957A86DB91F3A4183696AB3C6071A5E"
+      "sha256": "4C4308EA81CABEA51134176E2967FA32D8784AA6A046C913B883B6CFB0D31D46"
     },
     {
       "path": "SRC/neothd/src/adr/extractor.rs",
@@ -13018,8 +13018,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2326597,
-      "sha256": "E5C4E6B63B8CD010E01971DAB1335C3170C9912A024E588EA05A12777B5DDF34"
+      "bytes": 2326475,
+      "sha256": "2531E39BB0F1B847C59D61CF0D78860313455ACE0CF7C526DBFEF4B4F419C0AD"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",

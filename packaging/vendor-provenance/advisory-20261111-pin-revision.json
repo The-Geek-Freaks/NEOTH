@@ -1,0 +1,25 @@
+{
+  "schema": "neoth.advisory-pin-successor.v1",
+  "predecessorRevisionSha256": "00b5fadccb8d85f4ca9c2440c186f1a5dc10046a6926de9a179cf303f6403fe4",
+  "path": "SRC/neothd/Cargo.toml",
+  "before": "03d269218bbd9e32e72541caa6f99cb14957a86db91f3a4183696ab3c6071a5e",
+  "after": "4c4308ea81cabea51134176e2967fa32d8784aa6a046c913b883b6cfb0d31d46",
+  "edits": [
+    {
+      "before": "wasmtime = { version = \"=36.0.19\"",
+      "after": "wasmtime = { version = \"=36.0.20\""
+    },
+    {
+      "before": "cap-std    = \"=4.0.2\"",
+      "after": "cap-std    = \"=4.0.3\""
+    },
+    {
+      "before": "cap-fs-ext = \"=4.0.2\"",
+      "after": "cap-fs-ext = \"=4.0.3\""
+    },
+    {
+      "before": "rustix      = { version = \"=1.1.4\"",
+      "after": "rustix      = { version = \"=1.1.6\""
+    }
+  ]
+}

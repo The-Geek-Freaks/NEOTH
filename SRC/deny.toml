@@ -173,6 +173,21 @@ ignore = [
     # both resolve to 0.41. Drop both ignores when wayland-scanner bumps.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner over vendored protocol XML; all runtime copies are 0.41. Drop when wayland-scanner bumps." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same build-time-only wayland-scanner chain; no operator-controlled XML. Drop when wayland-scanner bumps." },
+    # pin-utils 0.1.0 — repository archived 2026-10-01 after its final
+    # release; maintenance notice only, no vulnerability. It is pulled
+    # transitively (futures-util consumers such as async-imap, nix 0.25 via
+    # portable-pty, and the Slint build graph); NEOTH has no direct use to
+    # migrate to core::pin::pin!.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils archived — transitive only (futures-util consumers, portable-pty, Slint); maintenance notice, no vulnerability and no safe upgrade. Re-evaluate every release." },
+    # zvariant / zbus_names / zvariant_derive — merged into zbus 6.0.0 as its
+    # `wire` module (2026-10-16); the standalone crates stopped receiving
+    # releases. Maintenance notice only, no vulnerability. NEOTH resolves them
+    # through secret-service 4.0 (zbus 4.4) and through zbus 5.15 used by
+    # ashpd/rfd, ksni and the Slint winit backend. They disappear once those
+    # consumers move to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant standalone crate retired into zbus 6 — transitive via secret-service 4.0 and zbus 5.15 (ashpd, ksni, Slint); maintenance notice, no vulnerability, no compatible upgrade. Drop when those consumers adopt zbus 6." },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names standalone crate retired into zbus 6 — same secret-service/zbus 5.15 chain; maintenance notice, no vulnerability, no compatible upgrade. Drop with RUSTSEC-2026-0370." },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive standalone crate retired into zbus 6 — same secret-service/zbus 5.15 chain; maintenance notice, no vulnerability, no compatible upgrade. Drop with RUSTSEC-2026-0370." },
 ]
 
 [sources]

@@ -395,8 +395,8 @@ tempfile = "3"
 # a concurrent symlink/junction or namespace swap cannot redirect them outside
 # the selected skills root. `cap-fs-ext` supplies the cross-platform
 # open-directory-without-following-links primitive missing from std/cap-std.
-cap-std    = "=4.0.2"
-cap-fs-ext = "=4.0.2"
+cap-std    = "=4.0.3"
+cap-fs-ext = "=4.0.3"
 
 # Cluster auto-discovery Phase 2 (R-2 SPEC):
 # mDNS service announcer + listener. Pure-Rust, no system zeroconf
@@ -691,7 +691,7 @@ neoth-openclaw-custody = { path = "../neoth-openclaw-custody", version = "1.0.0"
 # (feature `wasm-plugin-host`). Pinned to 36.0.16; the 2026 API is stable
 # enough for the Engine + Store + Linker surface we need. Compile-cost:
 # ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
-wasmtime = { version = "=36.0.19", default-features = false, features = ["cranelift", "runtime"], optional = true }
+wasmtime = { version = "=36.0.20", default-features = false, features = ["cranelift", "runtime"], optional = true }
 
 # PC-01 (clipboard slice, feature `os-clipboard`) — cross-platform OS clipboard.
 # `default-features = false` drops the `image-data` feature (we only ever move
@@ -721,7 +721,7 @@ matrix-sdk = { version = "0.18", features = ["e2e-encryption", "sqlite"], option
 # crate for any future syscall.
 [target.'cfg(unix)'.dependencies]
 libc        = "0.2"
-rustix      = { version = "=1.1.4", features = ["fs"] }
+rustix      = { version = "=1.1.6", features = ["fs"] }
 
 # Windows DACL restriction is implemented via icacls.exe subprocess in
 # src/wal/win_acl.rs. icacls ships with every Windows install since XP and

@@ -185,11 +185,11 @@ def slint(proof: Path) -> None:
     require(run_bounded(
         proof, "slint-markdown-features",
         ["cargo", "+1.91.0", "tree", "-p", "neothd-gui", "--locked", "-e", "features",
-         "-i", "pulldown-cmark@0.13.5"], cwd=ROOT / "SRC", timeout=180,
+         "-i", "pulldown-cmark@0.13.6"], cwd=ROOT / "SRC", timeout=180,
     ) == 0, "Slint feature evidence failed")
     features = (proof / "slint-markdown-features.log").read_text()
     require(all(marker in features for marker in (
-        "pulldown-cmark v0.13.5", "i-slint-common v1.16.1",
+        "pulldown-cmark v0.13.6", "i-slint-common v1.16.1",
         'i-slint-common feature "markdown"', "neothd-gui v1.0.0",
     )), "actual GUI Markdown feature path missing")
     require(run_bounded(
